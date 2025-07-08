@@ -22,8 +22,8 @@ jobs:
 
     - name: Build the Docker image
       run: |
-        docker build . --file Dockerfile --tag ghcr.io/${{ github.repository_owner }}.lowercase()/linux-iso-seeder:latest
+        docker build . --file Dockerfile --tag ghcr.io/squazz/linux-iso-seeder:latest
 
     - name: Push the Docker image
       run: |
-        docker push ghcr.io/${{ github.repository_owner }}.lowercase()/linux-iso-seeder:latest
+        docker push ghcr.io/squazz/linux-iso-seeder:latest
