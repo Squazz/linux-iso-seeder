@@ -11,10 +11,9 @@
 ✅ Automatically fetches the latest torrent files for:
 
 - Ubuntu (All LTS & ESM)
-- Debian (latest stable DVD-1)  
-- Fedora (latest Workstation)  
-- Arch Linux (latest rolling ISO)  
-- Kali Linux (latest installer ISO)
+- Debian (latest stable DVD-1)
+- Arch Linux (latest rolling ISO)
+- Kali Linux (latest installer, netInstaller & everything ISO)
 
 ✅ **Optional DistroWatch integration** to seed additional distributions  
 ✅ Daily updates with minimal resource usage  
