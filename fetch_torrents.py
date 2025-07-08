@@ -100,20 +100,26 @@ def fetch_arch_latest():
     return download_torrent("archlinux-latest", torrent_url)
 
 def fetch_kali_latest():
+    T_PATTERN = re.compile(r"kali-linux-(\d+\.\d+)-installer(?:-(netinst|everything))?-amd64\.iso\.torrent$")
     url = "https://www.kali.org/get-kali/#kali-installer-images"
-    try:
+    try:        
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if href.endswith(".torrent"):
-                torrent_url = href
+        results = {}
+        
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if T_PATTERN.search(href):
                 name = os.path.basename(href).replace(".torrent", "")
-                return download_torrent(name, torrent_url)
-        logging.warning("No Kali torrent found.")
-        return False
+                results[name] = download_torrent(name, href)
+
+        if not results:
+            logging.warning("No Kali installer torrents found.")
+            return False           # or return {} if you prefer
+
+        return results
     except Exception as e:
         logging.error(f"Kali fetch error: {e}")
         return False
