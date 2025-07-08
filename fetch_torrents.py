@@ -106,12 +106,9 @@ def fetch_kali_latest():
             f"{baseCD}-amd64.iso.torrent",
             f"{baseCD}-netinst-amd64.iso.torrent",
             f"{baseCD}-everything-amd64.iso.torrent",
-
             f"{baseCD}-arm64.iso.torrent",
-            f"{baseCD}-netinst-arm64.iso.torrent",
-            
+            f"{baseCD}-netinst-arm64.iso.torrent",            
             f"{baseCD}-purple-amd64.iso.torrent",
-
             f"{baseARM}-raspberry-pi-armhf.img.xz.torrent",
             f"{baseARM}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
             f"{baseARM}-raspberry-pi-zero-w-armel.img.xz.torrent",
