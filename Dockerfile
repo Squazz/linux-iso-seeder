@@ -1,3 +1,5 @@
+LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
+
 FROM alpine:latest
 
 # Install prerequisites
