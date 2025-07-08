@@ -108,16 +108,4 @@ Seeding Linux ISOs improves global availability, helps users download faster, an
 
 ---
 
-## 📜 **License**
-
-MIT License – see [LICENSE](LICENSE) for details.
-
----
-
-### **Maintainer**
-
-Developed by [Your Name or GitHub Handle] – PRs and improvements are welcome!
-
----
-
 ### **⭐️ If you find this project useful, please star it and share with others to spread the initiative.**
