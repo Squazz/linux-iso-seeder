@@ -37,23 +37,20 @@ def download_torrent(name, url):
 def fetch_ubuntu_lts():
     url = "https://releases.ubuntu.com/"
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        text = requests.get("https://changelogs.ubuntu.com/meta-release-lts", timeout=30).text
+        blocks  = [b for b in text.strip().split("\n\n") if "Supported: 1" in b]
+        results = {}
 
-        lts_versions = []
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if re.match(r"^\d{2}\.\d{2}/$", href) and "lts" in link.text.lower():
-                lts_versions.append(href.strip("/"))
+        # newest first (optional – remove reversed() if order is irrelevant)
+        for block in reversed(blocks):
+            version  = re.search(r"Version:\s*([\d.]+)", block).group(1)
+            codename = re.search(r"Dist:\s*(\w+)",   block).group(1)
 
-        if not lts_versions:
-            logging.warning("No Ubuntu LTS versions found.")
-            return False
-
-        latest_lts = sorted(lts_versions, reverse=True)[0]
-        torrent_url = f"https://releases.ubuntu.com/{latest_lts}/ubuntu-{latest_lts}-desktop-amd64.iso.torrent"
-        return download_torrent(f"ubuntu-{latest_lts}", torrent_url)
+            results[f"ubuntu-{version}-desktop"] = download_torrent(f"ubuntu-{version}-desktop", f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent")
+            results[f"ubuntu-{version}-live-server"] = download_torrent(f"ubuntu-{version}-live-server", f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent")
+            results[f"lbuntu-{version}-desktop"] = download_torrent(f"lbuntu-{version}-desktop", f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent")
+            
+        return results
     except Exception as e:
         logging.error(f"Ubuntu fetch error: {e}")
         return False
