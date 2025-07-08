@@ -106,6 +106,3 @@ docker run -d \
 
 Seeding Linux ISOs improves global availability, helps users download faster, and strengthens the open-source ecosystem. This project makes it **easy to contribute without daily maintenance**.
 
----
-
-### **⭐️ If you find this project useful, please star it and share with others to spread the initiative.**
