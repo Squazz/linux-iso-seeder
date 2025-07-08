@@ -10,7 +10,7 @@
 
 ✅ Automatically fetches the latest torrent files for:
 
-- Ubuntu (latest LTS)  
+- Ubuntu (All LTS & ESM)
 - Debian (latest stable DVD-1)  
 - Fedora (latest Workstation)  
 - Arch Linux (latest rolling ISO)  
