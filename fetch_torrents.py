@@ -21,7 +21,14 @@ logging.basicConfig(
 watch_dir = "/watch"
 
 def download_torrent(name, url):
-    dest = os.path.join(watch_dir, f"{name}.torrent")
+    dest   = os.path.join(watch_dir, f"{name}.torrent")
+    added  = os.path.join(watch_dir, f"{name}.torrent.added")
+
+    # Skip if already processed or queued 
+    if dest.exists() or added.exists():
+        logging.info("Skip %s – torrent already present.", dest.name)
+        return False
+
     try:
         logging.info(f"Fetching {url} ...")
         r = requests.get(url, timeout=30)
