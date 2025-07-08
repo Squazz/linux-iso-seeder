@@ -83,48 +83,50 @@ def fetch_debian_stable():
         logging.error(f"Debian fetch error: {e}")
         return False
 
-def fetch_fedora_latest():
-    url = "https://getfedora.org/en/workstation/download/"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if href.endswith(".torrent") and "Workstation" in href:
-                torrent_url = href
-                name = os.path.basename(href).replace(".torrent", "")
-                return download_torrent(name, torrent_url)
-        logging.warning("No Fedora torrent found.")
-        return False
-    except Exception as e:
-        logging.error(f"Fedora fetch error: {e}")
-        return False
-
 def fetch_arch_latest():
     torrent_url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.torrent"
     return download_torrent("archlinux-latest", torrent_url)
 
 def fetch_kali_latest():
-    T_PATTERN = re.compile(r"kali-linux-(\d+\.\d+)-installer(?:-(netinst|everything))?-amd64\.iso\.torrent$")
     url = "https://www.kali.org/get-kali/#kali-installer-images"
     try:        
         r = requests.get(url, timeout=30)
         r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+        matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
 
+        if not matches:
+            logging.warning("Could not detect a Kali release number on %s", url)
+            return None
+        # pick the highest version (works because <major>.<minor>)
+        latest = max(matches, key=lambda v: tuple(map(int, v.split("."))))
+
+        baseCD = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
+        baseARM = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
+        torrents = [
+            f"{baseCD}-amd64.iso.torrent",
+            f"{baseCD}-netinst-amd64.iso.torrent",
+            f"{baseCD}-everything-amd64.iso.torrent",
+
+            f"{baseCD}-arm64.iso.torrent",
+            f"{baseCD}-netinst-arm64.iso.torrent",
+            
+            f"{baseCD}-purple-amd64.iso.torrent",
+
+            f"{baseARM}-raspberry-pi-armhf.img.xz.torrent",
+            f"{baseARM}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
+            f"{baseARM}-raspberry-pi-zero-w-armel.img.xz.torrent",
+            f"{baseARM}-cloud-genericcloud-amd64.tar.xz.torrent",
+            f"{baseARM}-cloud-genericcloud-arm64.tar.xz.torrent",
+        ]
         results = {}
-        
-        for a in soup.find_all("a", href=True):
-            href = a["href"]
-            if T_PATTERN.search(href):
-                name = os.path.basename(href).replace(".torrent", "")
-                results[name] = download_torrent(name, href)
+
+        for url in torrents:
+            name = os.path.basename(url).replace(".torrent", "")
+            results[name] = download_torrent(name, url)
 
         if not results:
             logging.warning("No Kali installer torrents found.")
-            return False           # or return {} if you prefer
+            return False
 
         return results
     except Exception as e:
