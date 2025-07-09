@@ -16,7 +16,7 @@
 
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
-✅ **Logs and metrics** for transparency and future monitoring
+✅ **Logs and metrics** for transparency and future monitoring  
 ✅ Designed as a **single-container, deploy-and-forget solution**
 
 ---
