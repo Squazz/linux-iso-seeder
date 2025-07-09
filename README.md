@@ -12,10 +12,8 @@
 
 - Ubuntu (All LTS & ESM)
 - Debian (latest stable DVD-1)
-- Arch Linux (latest rolling ISO)
 - Kali Linux (latest installer, netInstaller & everything ISO)
 
-✅ **Optional DistroWatch integration** to seed additional distributions  
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
@@ -35,16 +33,6 @@
 
 ---
 
-## ⚙️ **Environment Variables**
-
-| Variable | Description | Default |
-|---|---|---|
-| `ENABLE_DISTROWATCH` | Enable fetching torrents from DistroWatch | `false` |
-| `DISTROWATCH_FILTER` | Comma-separated filters for DistroWatch torrents | *(none)* |
-| `EXTRA_TORRENTS` | Comma-separated list of additional torrent URLs to fetch | *(none)* |
-
----
-
 ## 📝 **Usage Example**
 
 ```bash
@@ -55,8 +43,6 @@ docker run -d \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
-  -e ENABLE_DISTROWATCH=true \
-  -e DISTROWATCH_FILTER=ubuntu,debian,fedora \
   -p 9091:9091 \
   linux-iso-seeder
 ```
