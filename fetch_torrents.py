@@ -26,8 +26,11 @@ def download_torrent(name, url):
     added  = os.path.join(watch_dir, f"{name}.torrent.added")
 
     # Skip if already processed or queued 
-    if os.path.exists(dest) or os.path.exists(added):
-        logging.info("Skip %s – torrent already present.", dest.name)
+    if os.path.exists(dest):
+        logging.info("Skip %s – torrent already present.", os.path.basename(dest))
+        return False
+    if os.path.exists(added):
+        logging.info("Skip %s – torrent already present.", os.path.basename(added))
         return False
 
     try:
