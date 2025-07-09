@@ -58,30 +58,43 @@ def fetch_ubuntu_lts():
             results[f"lbuntu-{version}-desktop"] = download_torrent(f"lbuntu-{version}-desktop", f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent")
             results[f"xbuntu-{version}-desktop"] = download_torrent(f"xbuntu-{version}-desktop", f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent")
             results[f"xbuntu-{version}-minimal"] = download_torrent(f"xbuntu-{version}-minimal", f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/minimal/xubuntu-{version}-minimal-amd64.iso.torrent")
-                        
+            
         return results
     except Exception as e:
         logging.error(f"Ubuntu fetch error: {e}")
         return False
 
 def fetch_debian_stable():
-    url = "https://cdimage.debian.org/debian-cd/current/amd64/iso-dvd/"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+    urls = [
+            "https://cdimage.debian.org/debian-cd/current/amd64/bt-dvd/",
+            "https://cdimage.debian.org/debian-cd/current/arm64/bt-dvd/",
+            "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/",
+            "https://cdimage.debian.org/debian-cd/current/arm64/bt-cd/"
+        ]
+    results = {}
 
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if "-DVD-1.iso.torrent" in href:
-                torrent_url = url + href
-                name = href.replace(".iso.torrent", "")
-                return download_torrent(name, torrent_url)
-        logging.warning("No Debian DVD-1 torrent found.")
-        return False
-    except Exception as e:
-        logging.error(f"Debian fetch error: {e}")
-        return False
+    for url in urls:
+        try:
+            r = requests.get(url, timeout=30)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
+            
+            results[url] = False
+            for link in soup.find_all('a', href=True):
+                href = link['href']
+                if ".iso.torrent" in href:
+                    torrent_url = url + href
+                    name = href.replace(".iso.torrent", "")
+                    results[name] = download_torrent(name, torrent_url)
+                    break
+            else:
+                logging.warning("No Debian DVD-1 torrent found.")  
+            
+        except Exception as e:
+            logging.error(f"Debian fetch error: {e}")
+            results[url] = False
+
+    return results
 
 def fetch_arch_latest():
     torrent_url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.torrent"
@@ -107,7 +120,7 @@ def fetch_kali_latest():
             f"{baseCD}-netinst-amd64.iso.torrent",
             f"{baseCD}-everything-amd64.iso.torrent",
             f"{baseCD}-arm64.iso.torrent",
-            f"{baseCD}-netinst-arm64.iso.torrent",            
+            f"{baseCD}-netinst-arm64.iso.torrent",
             f"{baseCD}-purple-amd64.iso.torrent",
             f"{baseARM}-raspberry-pi-armhf.img.xz.torrent",
             f"{baseARM}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
@@ -170,7 +183,7 @@ if __name__ == "__main__":
     success_count = 0
     failure_count = 0
 
-    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_fedora_latest, fetch_arch_latest, fetch_kali_latest, fetch_distrowatch_torrents]:
+    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest, fetch_arch_latest, fetch_distrowatch_torrents]:
         if func():
             success_count += 1
         else:
