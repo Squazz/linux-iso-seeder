@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
 import re
+import json
 import requests
 import logging
 import time
@@ -139,6 +140,20 @@ def fetch_kali_latest():
         logging.error(f"Kali fetch error: {e}")
         return False
 
+def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc",
+                             auth: tuple | None = None):
+    
+    r = requests.post(rpc_url)
+    headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
+    payload = {
+        "method": "torrent-get",
+        "arguments": {"fields": ["name", "uploadRatio"]}
+    }
+    r = requests.post(rpc_url, json=payload, headers=headers, auth=auth, timeout=15)
+    r.raise_for_status()
+    for t in r.json()["arguments"]["torrents"]:
+        logging.info("[ratio] %s  →  %.3f", t["name"], t["uploadRatio"])
+
 if __name__ == "__main__":
     start_time = time.time()
     logging.info("Starting torrent fetch run.")
@@ -151,6 +166,11 @@ if __name__ == "__main__":
             success_count += 1
         else:
             failure_count += 1
+
+    try:
+        log_seed_ratios_via_http()
+    except Exception as exc:
+        logging.warning("Could not query Transmission: %s", exc)
 
     total, used, free = shutil.disk_usage("/downloads")
     logging.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
