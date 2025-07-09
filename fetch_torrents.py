@@ -99,45 +99,48 @@ def fetch_debian_stable():
 
 def fetch_kali_latest():
     url = "https://www.kali.org/get-kali/#kali-installer-images"
-    try:        
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
+    try:
+        html = requests.get(url, timeout=30).text
 
+        matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
         if not matches:
             logging.warning("Could not detect a Kali release number on %s", url)
-            return None
-        # pick the highest version (works because <major>.<minor>)
-        latest = max(matches, key=lambda v: tuple(map(int, v.split("."))))
+            return False
 
-        baseCD = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
-        baseARM = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
+        ver = max(matches, key=lambda v: tuple(map(int, v.split("."))))  # nyeste
+
+        base_cd  = f"https://cdimage.kali.org/kali-{ver}"
+        base_arm = f"https://kali.download/arm-images/kali-{ver}"
+
         torrents = [
-            f"{baseCD}-amd64.iso.torrent",
-            f"{baseCD}-netinst-amd64.iso.torrent",
-            f"{baseCD}-everything-amd64.iso.torrent",
-            f"{baseCD}-arm64.iso.torrent",
-            f"{baseCD}-netinst-arm64.iso.torrent",
-            f"{baseCD}-purple-amd64.iso.torrent",
-            f"{baseARM}-raspberry-pi-armhf.img.xz.torrent",
-            f"{baseARM}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
-            f"{baseARM}-raspberry-pi-zero-w-armel.img.xz.torrent",
-            f"{baseARM}-cloud-genericcloud-amd64.tar.xz.torrent",
-            f"{baseARM}-cloud-genericcloud-arm64.tar.xz.torrent",
+            # --- ISO-installer-filer (cdimage) ---
+            f"{base_cd}/kali-linux-{ver}-installer-amd64.iso.torrent",
+            f"{base_cd}/kali-linux-{ver}-installer-netinst-amd64.iso.torrent",
+            f"{base_cd}/kali-linux-{ver}-installer-everything-amd64.iso.torrent",
+            f"{base_cd}/kali-linux-{ver}-installer-arm64.iso.torrent",
+            f"{base_cd}/kali-linux-{ver}-installer-netinst-arm64.iso.torrent",
+            f"{base_cd}/kali-linux-{ver}-installer-purple-amd64.iso.torrent",
+            # --- ARM-/cloud-images (arm-spejl) ---
+            f"{base_arm}/kali-linux-{ver}-raspberry-pi-armhf.img.xz.torrent",
+            f"{base_arm}/kali-linux-{ver}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
+            f"{base_arm}/kali-linux-{ver}-raspberry-pi-zero-w-armel.img.xz.torrent",
+            f"{base_arm}/kali-linux-{ver}-cloud-genericcloud-amd64.tar.xz.torrent",
+            f"{base_arm}/kali-linux-{ver}-cloud-genericcloud-arm64.tar.xz.torrent",
         ]
+
         results = {}
+        for turl in torrents:
+            name = os.path.basename(turl).replace(".torrent", "")
+            results[name] = download_torrent(name, turl)
 
-        for url in torrents:
-            name = os.path.basename(url).replace(".torrent", "")
-            results[name] = download_torrent(name, url)
-
-        if not results:
-            logging.warning("No Kali installer torrents found.")
+        if not any(results.values()):
+            logging.warning("No Kali torrents could be downloaded.")
             return False
 
         return results
-    except Exception as e:
-        logging.error(f"Kali fetch error: {e}")
+
+    except Exception as exc:
+        logging.error("Kali fetch error: %s", exc)
         return False
 
 def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc",
