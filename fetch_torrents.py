@@ -112,23 +112,23 @@ def fetch_kali_latest():
 
         ver = max(matches, key=lambda v: tuple(map(int, v.split("."))))  # nyeste
 
-        base_cd  = f"https://cdimage.kali.org/kali-{ver}"
-        base_arm = f"https://kali.download/arm-images/kali-{ver}"
-
+        base_cd  = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
+        base_arm = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
+        base_cloud = f"https://kali.download/cloud-images/kali-{ver}/kali-linux-{ver}-cloud-genericcloud"
         torrents = [
-            # --- ISO-installer-filer (cdimage) ---
-            f"{base_cd}/kali-linux-{ver}-installer-amd64.iso.torrent",
-            f"{base_cd}/kali-linux-{ver}-installer-netinst-amd64.iso.torrent",
-            f"{base_cd}/kali-linux-{ver}-installer-everything-amd64.iso.torrent",
-            f"{base_cd}/kali-linux-{ver}-installer-arm64.iso.torrent",
-            f"{base_cd}/kali-linux-{ver}-installer-netinst-arm64.iso.torrent",
-            f"{base_cd}/kali-linux-{ver}-installer-purple-amd64.iso.torrent",
-            # --- ARM-/cloud-images (arm-spejl) ---
-            f"{base_arm}/kali-linux-{ver}-raspberry-pi-armhf.img.xz.torrent",
-            f"{base_arm}/kali-linux-{ver}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
-            f"{base_arm}/kali-linux-{ver}-raspberry-pi-zero-w-armel.img.xz.torrent",
-            f"{base_arm}/kali-linux-{ver}-cloud-genericcloud-amd64.tar.xz.torrent",
-            f"{base_arm}/kali-linux-{ver}-cloud-genericcloud-arm64.tar.xz.torrent",
+            f"{base_cd}-amd64.iso.torrent",
+            f"{base_cd}-netinst-amd64.iso.torrent",
+            f"{base_cd}-everything-amd64.iso.torrent",
+            f"{base_cd}-arm64.iso.torrent",
+            f"{base_cd}-netinst-arm64.iso.torrent",
+            f"{base_cd}-purple-amd64.iso.torrent",
+
+            f"{base_arm}-raspberry-pi-armhf.img.xz.torrent",
+            f"{base_arm}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
+            f"{base_arm}-raspberry-pi-zero-w-armel.img.xz.torrent",
+            
+            f"{base_cloud}-amd64.tar.xz.torrent",
+            f"{base_cloud}-arm64.tar.xz.torrent",
         ]
 
         results = {}
