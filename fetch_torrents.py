@@ -96,10 +96,6 @@ def fetch_debian_stable():
 
     return results
 
-def fetch_arch_latest():
-    torrent_url = "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso.torrent"
-    return download_torrent("archlinux-latest", torrent_url)
-
 def fetch_kali_latest():
     url = "https://www.kali.org/get-kali/#kali-installer-images"
     try:        
@@ -143,39 +139,6 @@ def fetch_kali_latest():
         logging.error(f"Kali fetch error: {e}")
         return False
 
-def fetch_distrowatch_torrents():
-    enable = os.getenv("ENABLE_DISTROWATCH", "false").lower() == "true"
-    if not enable:
-        logging.info("DistroWatch fetching disabled.")
-        return False
-
-    filters = os.getenv("DISTROWATCH_FILTER", "").split(",")
-    filters = [f.strip().lower() for f in filters if f.strip()]
-
-    url = "https://distrowatch.com/dwres.php?resource=torrents"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        count = 0
-        for link in soup.find_all('a', href=True):
-            href = link['href']
-            if href.endswith(".torrent"):
-                distro_name = link.text.lower()
-                if filters and not any(f in distro_name for f in filters):
-                    continue
-
-                torrent_url = href if href.startswith("http") else f"https://distrowatch.com/{href}"
-                name = os.path.basename(torrent_url).replace(".torrent", "")
-                if download_torrent(name, torrent_url):
-                    count += 1
-        logging.info(f"DistroWatch torrents fetched: {count}")
-        return True
-    except Exception as e:
-        logging.error(f"DistroWatch fetch error: {e}")
-        return False
-
 if __name__ == "__main__":
     start_time = time.time()
     logging.info("Starting torrent fetch run.")
@@ -183,7 +146,7 @@ if __name__ == "__main__":
     success_count = 0
     failure_count = 0
 
-    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest, fetch_arch_latest, fetch_distrowatch_torrents]:
+    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest]:
         if func():
             success_count += 1
         else:
