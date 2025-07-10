@@ -7,6 +7,7 @@ import logging
 import time
 import shutil
 from bs4 import BeautifulSoup
+from transmission_rpc import Client
 
 # Configure logging
 log_file = "/logs/fetch_torrents.log"
@@ -146,9 +147,7 @@ def fetch_kali_latest():
         logging.error("Kali fetch error: %s", exc)
         return False
 
-def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc",
-                             auth: tuple | None = None):
-    
+def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):    
     r = requests.post(rpc_url)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
     payload = {
@@ -159,6 +158,30 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc",
     r.raise_for_status()
     for t in r.json()["arguments"]["torrents"]:
         logging.info("[ratio] %s  →  %.3f", t["name"], t["uploadRatio"])
+
+# Example: find all torrents for a distro, keep only the latest
+def cleanup_old_versions():
+    tc = Client(host='localhost', port=9091)
+    torrents = tc.get_torrents()
+    # Collect all torrents matching the distro prefix
+    matched = []
+    version_re = re.compile(rf"(\d+\.\d+)\.iso", re.IGNORECASE)
+    for torrent in torrents:
+        m = version_re.search(torrent.name)
+        if m:
+            matched.append((torrent, m.group(1)))
+    if not matched:
+        return
+
+    # Sort by version number, keep the latest
+    def version_key(t):
+        # Convert version like '1.10' to tuple (1, 10)
+        return tuple(map(int, t[1].split('.')))
+    matched.sort(key=version_key, reverse=True)
+    # Keep the first (latest), remove the rest
+    for torrent, version in matched[1:]:
+        logging.info(f"Removing old version: {torrent.name}")
+        tc.remove_torrent(torrent.id, delete_data=True)
 
 if __name__ == "__main__":
     start_time = time.time()
