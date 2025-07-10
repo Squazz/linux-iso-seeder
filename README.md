@@ -17,7 +17,7 @@
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
-✅ Automatically cleans up old containers  
+✅ Automatically cleans up old torrents and their data  
 ✅ Designed as a **single-container, deploy-and-forget solution**
 
 ---
