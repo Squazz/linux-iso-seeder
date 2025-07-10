@@ -2,9 +2,12 @@
 
 echo "Starting linux-iso-seeder container"
 
-# Update packages and transmission-daemon to latest
+# Update all packages to latest
 apk update
-apk upgrade transmission-daemon
+apk upgrade
+
+# Clean up apk cache
+rm -rf /var/cache/apk/*
 
 # Start torrent fetcher script in background, running daily
 while true; do
