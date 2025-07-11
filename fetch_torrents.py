@@ -209,7 +209,12 @@ if __name__ == "__main__":
     try:
         log_seed_ratios_via_http()
     except Exception as exc:
-        logging.warning("Could not query Transmission: %s", exc)
+        logging.error("Could not query Transmission: %s", exc)
+        
+    try:
+        cleanup_old_versions()
+    except Exception as exc:
+        logging.error("Could not clean up old versions: %s", exc)
 
     total, used, free = shutil.disk_usage("/downloads")
     logging.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
