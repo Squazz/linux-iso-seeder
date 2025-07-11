@@ -156,7 +156,17 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     }
     r = requests.post(rpc_url, json=payload, headers=headers, auth=auth, timeout=15)
     r.raise_for_status()
-    for t in r.json()["arguments"]["torrents"]:
+
+    torrents = r.json()["arguments"]["torrents"]
+
+    # sort by uploadRatio, highest first
+    torrents_sorted = sorted(
+        torrents,
+        key=lambda t: t.get("uploadRatio") or 0,
+        reverse=True,
+    )
+
+    for t in torrents_sorted:
         logging.info("[ratio] %s  →  %.3f", t["name"], t["uploadRatio"])
 
 # Example: find all torrents for a distro, keep only the latest
