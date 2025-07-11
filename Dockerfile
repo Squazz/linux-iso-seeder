@@ -2,7 +2,7 @@ FROM alpine:latest
 LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
 # Install prerequisites
 RUN apk update && \
-    apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission_rpc
+    apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission-rpc
 
 # Add fetch script
 COPY fetch_torrents.py /usr/local/bin/fetch_torrents.py
