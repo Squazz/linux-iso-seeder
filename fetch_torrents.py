@@ -162,12 +162,12 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     # sort by uploadRatio, highest first
     torrents_sorted = sorted(
         torrents,
-        key=lambda t: t.get("uploadRatio") or 0,
+        key=lambda t: float(t["uploadRatio"] or 0.0),
         reverse=True,
     )
 
     for t in torrents_sorted:
-        logging.info("[ratio] %s  →  %.3f", t["name"], t["uploadRatio"])
+        logging.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
