@@ -12,6 +12,6 @@ jobs:
     runs-on: ubuntu-act
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - run: docker build -t git.ratte.dev/Laborratte5/linux-iso-seeder:{tag}
+      - run: docker build -t git.ratte.dev/Laborratte5/linux-iso-seeder:{tag} .
       - run: docker push git.ratte.dev/Laborratte5/linux-iso-seeder:{tag}
 
