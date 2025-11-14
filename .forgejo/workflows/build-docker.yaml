@@ -9,7 +9,7 @@ enable-email-notification: true
 
 jobs:
   publish-docker:
-    runs-on: docker
+    runs-on: ubuntu-act
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - run: docker build -t git.ratte.dev/Laborratte5/linux-iso-seeder:{tag}
