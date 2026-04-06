@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python -m py_compile fetch_torrents\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

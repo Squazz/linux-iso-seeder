@@ -84,6 +84,8 @@ def parse_version_type(name, distro):
     return version, type_
 
 def should_fetch_torrent(name, ratios):
+    if os.getenv('SKIP_RATIO_CHECK', 'false').lower() == 'true':
+        return True
     distro = get_distro(name)
     if not distro:
         return True

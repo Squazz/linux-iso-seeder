@@ -19,7 +19,7 @@
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
 ✅ Automatically cleans up old torrents and their data  
-✅ **Smart fetching**: Only downloads new versions if previous versions have achieved a seed ratio of at least 1.0, ensuring contribution to torrent health  
+✅ **Smart fetching**: Only downloads new versions of specific ISO types if the previous version of that same ISO type has achieved a seed ratio of at least 1.0, ensuring contribution to torrent health. Can be disabled via environment variable.  
 ✅ Designed as a **single-container, deploy-and-forget solution**
 
 ---
@@ -35,12 +35,29 @@
 
 ---
 
-## 📝 **Usage Example**
+## 🌍 **Environment Variables**
+
+| Variable | Default | Description |
+|---|---|---|
+| `SKIP_RATIO_CHECK` | `false` | Set to `true` to disable the smart ratio checking and download all available torrents regardless of previous seeding performance. |
+
+---
 
 ```bash
 docker build -t linux-iso-seeder .
 
+# With ratio checking enabled (default)
 docker run -d \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -v /path/to/watch:/watch \
+  -v /path/to/logs:/logs \
+  -p 9091:9091 \
+  linux-iso-seeder
+
+# To disable ratio checking and download all torrents
+docker run -d \
+  -e SKIP_RATIO_CHECK=true \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
@@ -58,6 +75,7 @@ When making changes to the fetch logic or features:
 - Test the script in a controlled environment before deployment
 - Ensure log parsing works correctly for ratio checks
 - Verify regex patterns match all intended torrent names (e.g., Ubuntu variants)
+- Ratio checking is now per ISO type (e.g., installer-amd64) rather than per distro
 
 ---
 
