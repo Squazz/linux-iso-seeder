@@ -22,6 +22,39 @@ logging.basicConfig(
 
 watch_dir = "/watch"
 
+def get_previous_ratios(log_file):
+    if not os.path.exists(log_file):
+        return {}
+    with open(log_file, 'r') as f:
+        lines = f.readlines()
+    ratios = {}
+    in_ratios = False
+    for line in reversed(lines):
+        if '[ratio]' in line:
+            in_ratios = True
+            match = re.search(r'\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)', line)
+            if match:
+                name = match.group(1).strip()
+                ratio = float(match.group(2))
+                ratios[name] = ratio
+        elif in_ratios and 'INFO:' in line and '→' not in line:
+            break
+    return ratios
+
+distro_patterns = {
+    'ubuntu': re.compile(r'^ubuntu-|^lbuntu-|^xbuntu-'),
+    'debian': re.compile(r'^debian-'),
+    'kali': re.compile(r'^kali-linux-'),
+    'arch': re.compile(r'^archlinux-'),
+}
+
+def should_fetch_distro(distro, ratios):
+    pattern = distro_patterns[distro]
+    existing = [ratio for name, ratio in ratios.items() if pattern.match(name)]
+    if not existing:
+        return True  # no previous, fetch
+    return any(r >= 1.0 for r in existing)
+
 def download_torrent(name, url):
     dest   = os.path.join(watch_dir, f"{name}.torrent")
     added  = os.path.join(watch_dir, f"{name}.torrent.added")
@@ -223,14 +256,26 @@ if __name__ == "__main__":
     start_time = time.time()
     logging.info("Starting torrent fetch run.")
 
+    ratios = get_previous_ratios(log_file)
+
     success_count = 0
     failure_count = 0
 
-    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest, fetch_arch_latest]:
-        if func():
-            success_count += 1
+    distro_funcs = [
+        ('ubuntu', fetch_ubuntu_lts),
+        ('debian', fetch_debian_stable),
+        ('kali', fetch_kali_latest),
+        ('arch', fetch_arch_latest),
+    ]
+
+    for distro, func in distro_funcs:
+        if not ratios or should_fetch_distro(distro, ratios):
+            if func():
+                success_count += 1
+            else:
+                failure_count += 1
         else:
-            failure_count += 1
+            logging.info(f"Skipping {distro} fetch due to low ratios on previous versions.")
 
     try:
         log_seed_ratios_via_http()

@@ -10,7 +10,7 @@
 
 ✅ Automatically fetches the latest torrent files for:
 
-- Ubuntu (All LTS & ESM)
+- Ubuntu (All LTS & ESM, including Lubuntu & Xubuntu)
 - Debian (latest stable DVD-1)
 - Kali Linux (latest installer, netInstaller & everything ISO)
 - Arch Linux (All available ISOs)
@@ -19,6 +19,7 @@
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
 ✅ Automatically cleans up old torrents and their data  
+✅ **Smart fetching**: Only downloads new versions if previous versions have achieved a seed ratio of at least 1.0, ensuring contribution to torrent health  
 ✅ Designed as a **single-container, deploy-and-forget solution**
 
 ---
@@ -47,6 +48,16 @@ docker run -d \
   -p 9091:9091 \
   linux-iso-seeder
 ```
+
+---
+
+## 🛠️ **Maintenance Notes**
+
+When making changes to the fetch logic or features:
+- Update this README.md to reflect new functionality
+- Test the script in a controlled environment before deployment
+- Ensure log parsing works correctly for ratio checks
+- Verify regex patterns match all intended torrent names (e.g., Ubuntu variants)
 
 ---
 
