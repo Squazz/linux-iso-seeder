@@ -147,6 +147,32 @@ def fetch_kali_latest():
         logging.error("Kali fetch error: %s", exc)
         return False
 
+def fetch_arch_latest():
+    base_url = "https://archlinux.org"
+    url = f"{base_url}/releng/releases/"
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        results = {}
+        release_rows = soup.find("table", id="release-table").find_all("tr")
+        for row in release_rows:
+            if not row.find("td", class_="available-yes"):
+                continue
+
+            torrent_url_pattern = "/releng/releases/(.+)/torrent/"
+            href = row.find("a", href=re.compile(torrent_url_pattern))['href']
+            version = re.sub(torrent_url_pattern, "\\1", href)
+
+            logging.debug(f"Arch Linux {version}: {base_url}{href}")
+            results[f"archlinux-{version}"] = download_torrent(f"archlinux-{version}", base_url + href)
+
+        return results
+    except Exception as exc:
+        logging.error("Arch Linux fetch error: %s", exc)
+        return False
+
 def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):    
     r = requests.post(rpc_url)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
@@ -200,7 +226,7 @@ if __name__ == "__main__":
     success_count = 0
     failure_count = 0
 
-    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest]:
+    for func in [fetch_ubuntu_lts, fetch_debian_stable, fetch_kali_latest, fetch_arch_latest]:
         if func():
             success_count += 1
         else:

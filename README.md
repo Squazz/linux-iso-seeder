@@ -13,6 +13,7 @@
 - Ubuntu (All LTS & ESM)
 - Debian (latest stable DVD-1)
 - Kali Linux (latest installer, netInstaller & everything ISO)
+- Arch Linux (All available ISOs)
 
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
