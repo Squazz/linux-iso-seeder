@@ -48,12 +48,63 @@ distro_patterns = {
     'arch': re.compile(r'^archlinux-'),
 }
 
-def should_fetch_distro(distro, ratios):
-    pattern = distro_patterns[distro]
-    existing = [ratio for name, ratio in ratios.items() if pattern.match(name)]
-    if not existing:
+def get_distro(name):
+    for distro, pattern in distro_patterns.items():
+        if pattern.match(name):
+            return distro
+    return None
+
+def version_to_tuple(v):
+    return tuple(map(int, v.split('.')))
+
+def parse_version_type(name, distro):
+    if distro == 'ubuntu':
+        parts = name.split('-')
+        prefix = parts[0]
+        version = parts[1]
+        suffix = '-'.join(parts[2:])
+        type_ = f"{prefix}-{suffix}"
+    elif distro == 'debian':
+        parts = name.split('-')
+        version = parts[1]
+        arch = parts[2]
+        type_suffix = '-'.join(parts[3:])
+        type_ = f"{arch}-{type_suffix}"
+    elif distro == 'kali':
+        parts = name.split('-')
+        version = f"{parts[2]}.{parts[3]}"
+        type_ = '-'.join(parts[4:])
+    elif distro == 'arch':
+        parts = name.split('-')
+        version = parts[1]
+        type_ = ''
+    else:
+        version = ''
+        type_ = ''
+    return version, type_
+
+def should_fetch_torrent(name, ratios):
+    distro = get_distro(name)
+    if not distro:
+        return True
+    version_str, type_ = parse_version_type(name, distro)
+    version = version_to_tuple(version_str)
+    # get all ratios for this type
+    type_ratios = {}
+    for n, r in ratios.items():
+        d = get_distro(n)
+        if d == distro:
+            v_str, t = parse_version_type(n, d)
+            if t == type_:
+                type_ratios[version_to_tuple(v_str)] = r
+    if not type_ratios:
         return True  # no previous, fetch
-    return any(r >= 1.0 for r in existing)
+    # find max version < current
+    prev_versions = [v for v in type_ratios if v < version]
+    if not prev_versions:
+        return True  # no previous version, fetch
+    prev_max = max(prev_versions)
+    return type_ratios[prev_max] >= 1.0
 
 def download_torrent(name, url):
     dest   = os.path.join(watch_dir, f"{name}.torrent")
@@ -91,10 +142,10 @@ def fetch_ubuntu_lts():
             version  = re.search(r"Version:\s*([\d.]+)", block).group(1)
             codename = re.search(r"Dist:\s*(\w+)",   block).group(1)
 
-            results[f"ubuntu-{version}-desktop"] = download_torrent(f"ubuntu-{version}-desktop", f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent")
-            results[f"ubuntu-{version}-live-server"] = download_torrent(f"ubuntu-{version}-live-server", f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent")
-            results[f"lbuntu-{version}-desktop"] = download_torrent(f"lbuntu-{version}-desktop", f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent")
-            results[f"xbuntu-{version}-desktop"] = download_torrent(f"xbuntu-{version}-desktop", f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent")
+            results[f"ubuntu-{version}-desktop"] = f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent"
+            results[f"ubuntu-{version}-live-server"] = f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent"
+            results[f"lbuntu-{version}-desktop"] = f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent"
+            results[f"xbuntu-{version}-desktop"] = f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent"
             
         return results
     except Exception as e:
@@ -116,20 +167,18 @@ def fetch_debian_stable():
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "html.parser")
             
-            results[url] = False
             for link in soup.find_all('a', href=True):
                 href = link['href']
                 if ".iso.torrent" in href:
                     torrent_url = url + href
                     name = href.replace(".iso.torrent", "")
-                    results[name] = download_torrent(name, torrent_url)
+                    results[name] = torrent_url
                     break
             else:
                 logging.warning("No Debian DVD-1 torrent found.")  
             
         except Exception as e:
             logging.error(f"Debian fetch error: {e}")
-            results[url] = False
 
     return results
 
@@ -167,10 +216,10 @@ def fetch_kali_latest():
         results = {}
         for turl in torrents:
             name = os.path.basename(turl).replace(".torrent", "")
-            results[name] = download_torrent(name, turl)
+            results[name] = turl
 
-        if not any(results.values()):
-            logging.warning("No Kali torrents could be downloaded.")
+        if not results:
+            logging.warning("No Kali torrents found.")
             return False
 
         return results
@@ -198,7 +247,7 @@ def fetch_arch_latest():
             version = re.sub(torrent_url_pattern, "\\1", href)
 
             logging.debug(f"Arch Linux {version}: {base_url}{href}")
-            results[f"archlinux-{version}"] = download_torrent(f"archlinux-{version}", base_url + href)
+            results[f"archlinux-{version}"] = base_url + href
 
         return results
     except Exception as exc:
@@ -268,13 +317,18 @@ if __name__ == "__main__":
     ]
 
     for distro, func in distro_funcs:
-        if not ratios or should_fetch_distro(distro, ratios):
-            if func():
-                success_count += 1
-            else:
-                failure_count += 1
+        torrents = func()
+        if torrents:
+            for name, url in torrents.items():
+                if should_fetch_torrent(name, ratios):
+                    if download_torrent(name, url):
+                        success_count += 1
+                    else:
+                        failure_count += 1
+                else:
+                    logging.info(f"Skipping {name} due to low ratio on previous version.")
         else:
-            logging.info(f"Skipping {distro} fetch due to low ratios on previous versions.")
+            failure_count += 1
 
     try:
         log_seed_ratios_via_http()
