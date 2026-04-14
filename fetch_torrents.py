@@ -187,7 +187,8 @@ def fetch_ubuntu_lts():
             results[f"ubuntu-{version}-live-server"] = f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent"
             results[f"lbuntu-{version}-desktop"] = f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent"
             results[f"xbuntu-{version}-desktop"] = f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent"
-            
+            results[f"xbuntu-{version}-minimal"] = f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/minimal/xubuntu-{version}-minimal-amd64.iso.torrent"
+
         return results
     except Exception as e:
         logger.error(f"Ubuntu fetch error: {e}")
