@@ -6,6 +6,7 @@ import requests
 import logging
 import time
 import shutil
+import socket
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
 
@@ -21,6 +22,18 @@ logging.basicConfig(
 )
 
 watch_dir = "/watch"
+
+
+def wait_for_transmission_rpc(host='localhost', port=9091, timeout=30):
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return True
+        except OSError:
+            time.sleep(1)
+    return False
+
 
 def get_previous_ratios(log_file):
     if not os.path.exists(log_file):
@@ -256,27 +269,21 @@ def fetch_arch_latest():
         logging.error("Arch Linux fetch error: %s", exc)
         return False
 
-def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):    
-    r = requests.post(rpc_url)
-    headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
-    payload = {
-        "method": "torrent-get",
-        "arguments": {"fields": ["name", "uploadRatio"]}
-    }
-    r = requests.post(rpc_url, json=payload, headers=headers, auth=auth, timeout=15)
-    r.raise_for_status()
-
-    torrents = r.json()["arguments"]["torrents"]
+def log_seed_ratios_via_http(host='localhost', port=9091, auth: tuple | None = None):
+    logging.info("Querying Transmission RPC for seed ratios...")
+    username, password = (auth if auth else (None, None))
+    tc = Client(host=host, port=port, username=username, password=password)
+    torrents = tc.get_torrents(fields=['name', 'uploadRatio'])
 
     # sort by uploadRatio, highest first
     torrents_sorted = sorted(
         torrents,
-        key=lambda t: float(t["uploadRatio"] or 0.0),
+        key=lambda t: float(t.uploadRatio or 0.0),
         reverse=True,
     )
 
     for t in torrents_sorted:
-        logging.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
+        logging.info("[ratio] %-50s → %.3f", t.name, float(t.uploadRatio or 0.0))
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
@@ -332,10 +339,13 @@ if __name__ == "__main__":
         else:
             failure_count += 1
 
-    try:
-        log_seed_ratios_via_http()
-    except Exception as exc:
-        logging.error("Could not query Transmission: %s", exc)
+    if wait_for_transmission_rpc():
+        try:
+            log_seed_ratios_via_http()
+        except Exception as exc:
+            logging.error("Could not query Transmission: %s", exc)
+    else:
+        logging.error("Transmission RPC not available on localhost:9091; skipping ratio logs.")
         
     try:
         cleanup_old_versions()
