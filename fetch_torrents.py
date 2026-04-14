@@ -32,8 +32,19 @@ stream_handler = logging.StreamHandler()
 stream_handler.setLevel(log_level)
 stream_handler.setFormatter(formatter)
 
+class RatioFilter(logging.Filter):
+    def __init__(self, level: int):
+        super().__init__()
+        self.level = level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage().startswith("[ratio]"):
+            return True
+        return record.levelno >= self.level
+
 file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.INFO)
+file_handler.setLevel(logging.DEBUG)
+file_handler.addFilter(RatioFilter(log_level))
 file_handler.setFormatter(formatter)
 
 logger = logging.getLogger('fetch_torrents')
