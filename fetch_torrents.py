@@ -41,6 +41,12 @@ class RatioOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return record.getMessage().startswith("[ratio]")
 
+class NonRatioFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("[ratio]")
+
+file_handler.addFilter(NonRatioFilter())
+
 ratio_handler = logging.FileHandler(ratio_log_file)
 ratio_handler.setLevel(logging.INFO)
 ratio_handler.addFilter(RatioOnlyFilter())
