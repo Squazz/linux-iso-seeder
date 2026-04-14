@@ -12,6 +12,7 @@ from transmission_rpc import Client
 
 # Configure logging
 log_file = "/logs/fetch_torrents.log"
+ratio_log_file = "/logs/fetch_torrents_ratios.log"
 
 def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     value = os.getenv(env_var, '').strip()
@@ -36,10 +37,20 @@ file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(log_level)
 file_handler.setFormatter(formatter)
 
+class RatioOnlyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage().startswith("[ratio]")
+
+ratio_handler = logging.FileHandler(ratio_log_file)
+ratio_handler.setLevel(logging.INFO)
+ratio_handler.addFilter(RatioOnlyFilter())
+ratio_handler.setFormatter(formatter)
+
 logger = logging.getLogger('fetch_torrents')
 logger.setLevel(logging.DEBUG)
 logger.addHandler(stream_handler)
 logger.addHandler(file_handler)
+logger.addHandler(ratio_handler)
 logger.propagate = False
 
 watch_dir = "/watch"
@@ -349,7 +360,7 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     )
 
     for t in torrents_sorted:
-        logging.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
+        logger.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
@@ -379,7 +390,7 @@ if __name__ == "__main__":
     start_time = time.time()
     logger.info("Starting torrent fetch run.")
 
-    ratios = get_previous_ratios(log_file)
+    ratios = get_previous_ratios(ratio_log_file)
 
     success_count = 0
     existing_count = 0
