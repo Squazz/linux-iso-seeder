@@ -26,26 +26,64 @@ def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     level = value.upper()
     return logging._nameToLevel.get(level, default)
 
+
+def parse_bool(env_var: str, default: bool = False) -> bool:
+    value = os.getenv(env_var, '').strip().lower()
+    if not value:
+        return default
+    return value in ('1', 'true', 'yes', 'on')
+
 log_level = parse_log_level('FETCH_TORRENTS_LOG_LEVEL', parse_log_level('LOG_LEVEL', logging.INFO))
 formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
 
 stream_handler = logging.StreamHandler()
-stream_handler.setLevel(log_level)
 stream_handler.setFormatter(formatter)
 
 file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(log_level)
 file_handler.setFormatter(formatter)
 
 class RatioOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return record.getMessage().startswith("[ratio]")
 
-class NonRatioFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return not record.getMessage().startswith("[ratio]")
+class ImportantMessageFilter(logging.Filter):
+    def __init__(self, level: int, important_prefixes=None):
+        super().__init__()
+        self.level = level
+        self.important_prefixes = important_prefixes or []
 
-file_handler.addFilter(NonRatioFilter())
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        if record.levelno >= self.level:
+            return True
+        return any(message.startswith(prefix) for prefix in self.important_prefixes)
+
+
+def get_always_log_prefixes():
+    return [
+        "Starting torrent fetch run.",
+        "Run complete in",
+        "Downloads folder usage:",
+        "Fetching latest",
+        "Querying Transmission RPC",
+        "Selected distros for this run:",
+        "Skipping distro",
+    ]
+
+always_log_enabled = parse_bool('FETCH_TORRENTS_ALWAYS_LOG', True)
+important_prefixes = get_always_log_prefixes() if always_log_enabled else []
+
+stream_handler.setLevel(logging.DEBUG)
+if always_log_enabled:
+    stream_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
+else:
+    stream_handler.setLevel(log_level)
+
+file_handler.setLevel(logging.DEBUG)
+if always_log_enabled:
+    file_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
+else:
+    file_handler.setLevel(log_level)
 
 ratio_handler = logging.FileHandler(ratio_log_file)
 ratio_handler.setLevel(logging.INFO)
