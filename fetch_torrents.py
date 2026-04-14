@@ -339,25 +339,27 @@ def fetch_arch_latest():
         logger.error("Arch Linux fetch error: %s", exc)
         return False
 
-def log_seed_ratios_via_http(host='localhost', port=9091, auth: tuple | None = None):
-    logger.info("Querying Transmission RPC for seed ratios...")
-    username, password = (auth if auth else (None, None))
-    tc = Client(host=host, port=port, username=username, password=password)
-    try:
-        torrents = tc.get_torrents(fields=['name', 'uploadRatio'])
-    except TypeError:
-        logger.warning("Transmission RPC client does not support fields=; falling back to default get_torrents().")
-        torrents = tc.get_torrents()
+def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):    
+    r = requests.post(rpc_url)
+    headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
+    payload = {
+        "method": "torrent-get",
+        "arguments": {"fields": ["name", "uploadRatio"]}
+    }
+    r = requests.post(rpc_url, json=payload, headers=headers, auth=auth, timeout=15)
+    r.raise_for_status()
+
+    torrents = r.json()["arguments"]["torrents"]
 
     # sort by uploadRatio, highest first
     torrents_sorted = sorted(
         torrents,
-        key=lambda t: float(t.uploadRatio or 0.0),
+        key=lambda t: float(t["uploadRatio"] or 0.0),
         reverse=True,
     )
 
     for t in torrents_sorted:
-        logger.info("[ratio] %-50s → %.3f", t.name, float(t.uploadRatio or 0.0))
+        logging.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
