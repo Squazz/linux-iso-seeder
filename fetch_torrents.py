@@ -72,12 +72,33 @@ def get_previous_ratios(log_file):
         return {}
     ratios = {}
     with open(log_file, 'r') as f:
-        for line in f:
-            match = re.search(r'\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)', line)
-            if match:
-                name = match.group(1).strip()
-                ratio = float(match.group(2))
-                ratios[name] = ratio
+        lines = f.readlines()
+
+    # Only parse the latest ratio segment between the last start and end markers.
+    start_marker = '[ratio] RATIOS START'
+    end_marker = '[ratio] RATIOS END'
+    start_index = None
+    end_index = None
+
+    for idx, line in enumerate(lines):
+        if start_marker in line:
+            start_index = idx
+            end_index = None
+        elif start_index is not None and end_marker in line:
+            end_index = idx
+
+    if start_index is not None:
+        if end_index is not None and end_index > start_index:
+            lines = lines[start_index + 1:end_index]
+        else:
+            lines = lines[start_index + 1:]
+
+    for line in lines:
+        match = re.search(r'\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)', line)
+        if match:
+            name = match.group(1).strip()
+            ratio = float(match.group(2))
+            ratios[name] = ratio
     return ratios
 
 distro_patterns = {
@@ -359,8 +380,11 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
         reverse=True,
     )
 
+    logger.info("[ratio] RATIOS START")
     for t in torrents_sorted:
         logger.info("[ratio] %-50s → %.3f", t["name"], float(t["uploadRatio"] or 0.0))
+    logger.info("[ratio] RATIOS END")
+    logger.info("")
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
