@@ -12,6 +12,7 @@ from transmission_rpc import Client
 
 # Configure logging
 log_file = "/logs/fetch_torrents.log"
+ratio_log_file = "/logs/fetch_torrents_ratios.log"
 
 def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     value = os.getenv(env_var, '').strip()
@@ -32,25 +33,24 @@ stream_handler = logging.StreamHandler()
 stream_handler.setLevel(log_level)
 stream_handler.setFormatter(formatter)
 
-class RatioFilter(logging.Filter):
-    def __init__(self, level: int):
-        super().__init__()
-        self.level = level
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        if record.getMessage().startswith("[ratio]"):
-            return True
-        return record.levelno >= self.level
-
 file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.DEBUG)
-file_handler.addFilter(RatioFilter(log_level))
+file_handler.setLevel(log_level)
 file_handler.setFormatter(formatter)
+
+class RatioOnlyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.getMessage().startswith("[ratio]")
+
+ratio_handler = logging.FileHandler(ratio_log_file)
+ratio_handler.setLevel(logging.INFO)
+ratio_handler.addFilter(RatioOnlyFilter())
+ratio_handler.setFormatter(formatter)
 
 logger = logging.getLogger('fetch_torrents')
 logger.setLevel(logging.DEBUG)
 logger.addHandler(stream_handler)
 logger.addHandler(file_handler)
+logger.addHandler(ratio_handler)
 logger.propagate = False
 
 watch_dir = "/watch"
@@ -70,20 +70,14 @@ def wait_for_transmission_rpc(host='localhost', port=9091, timeout=30):
 def get_previous_ratios(log_file):
     if not os.path.exists(log_file):
         return {}
-    with open(log_file, 'r') as f:
-        lines = f.readlines()
     ratios = {}
-    in_ratios = False
-    for line in reversed(lines):
-        if '[ratio]' in line:
-            in_ratios = True
+    with open(log_file, 'r') as f:
+        for line in f:
             match = re.search(r'\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)', line)
             if match:
                 name = match.group(1).strip()
                 ratio = float(match.group(2))
                 ratios[name] = ratio
-        elif in_ratios and 'INFO:' in line and '→' not in line:
-            break
     return ratios
 
 distro_patterns = {
@@ -345,7 +339,7 @@ if __name__ == "__main__":
     start_time = time.time()
     logger.info("Starting torrent fetch run.")
 
-    ratios = get_previous_ratios(log_file)
+    ratios = get_previous_ratios(ratio_log_file)
 
     success_count = 0
     failure_count = 0
