@@ -26,15 +26,21 @@ def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     return logging._nameToLevel.get(level, default)
 
 log_level = parse_log_level('FETCH_TORRENTS_LOG_LEVEL', parse_log_level('LOG_LEVEL', logging.INFO))
-logging.basicConfig(
-    level=log_level,
-    format="%(asctime)s %(levelname)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(log_file)
-    ]
-)
+formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(log_level)
+stream_handler.setFormatter(formatter)
+
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+
 logger = logging.getLogger('fetch_torrents')
+logger.setLevel(logging.DEBUG)
+logger.addHandler(stream_handler)
+logger.addHandler(file_handler)
+logger.propagate = False
 
 watch_dir = "/watch"
 
