@@ -12,14 +12,29 @@ from transmission_rpc import Client
 
 # Configure logging
 log_file = "/logs/fetch_torrents.log"
+
+def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
+    value = os.getenv(env_var, '').strip()
+    if not value:
+        return default
+    if value.isdigit():
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    level = value.upper()
+    return logging._nameToLevel.get(level, default)
+
+log_level = parse_log_level('FETCH_TORRENTS_LOG_LEVEL', parse_log_level('LOG_LEVEL', logging.INFO))
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,
     format="%(asctime)s %(levelname)s: %(message)s",
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(log_file)
     ]
 )
+logger = logging.getLogger('fetch_torrents')
 
 watch_dir = "/watch"
 
@@ -127,22 +142,22 @@ def download_torrent(name, url):
 
     # Skip if already processed or queued 
     if os.path.exists(dest):
-        logging.info("Skip %s – torrent already present.", os.path.basename(dest))
+        logger.info("Skip %s – torrent already present.", os.path.basename(dest))
         return False
     if os.path.exists(added):
-        logging.info("Skip %s – torrent already present.", os.path.basename(added))
+        logger.info("Skip %s – torrent already present.", os.path.basename(added))
         return False
 
     try:
-        logging.info(f"Fetching {url} ...")
+        logger.info(f"Fetching {url} ...")
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         with open(dest, "wb") as f:
             f.write(r.content)
-        logging.info(f"Saved {dest}")
+        logger.info(f"Saved {dest}")
         return True
     except Exception as e:
-        logging.error(f"Failed to download {url}: {e}")
+        logger.error(f"Failed to download {url}: {e}")
         return False
 
 def fetch_ubuntu_lts():
@@ -164,7 +179,7 @@ def fetch_ubuntu_lts():
             
         return results
     except Exception as e:
-        logging.error(f"Ubuntu fetch error: {e}")
+        logger.error(f"Ubuntu fetch error: {e}")
         return False
 
 def fetch_debian_stable():
@@ -190,10 +205,10 @@ def fetch_debian_stable():
                     results[name] = torrent_url
                     break
             else:
-                logging.warning("No Debian DVD-1 torrent found.")  
+                logger.warning("No Debian DVD-1 torrent found.")  
             
         except Exception as e:
-            logging.error(f"Debian fetch error: {e}")
+            logger.error(f"Debian fetch error: {e}")
 
     return results
 
@@ -204,7 +219,7 @@ def fetch_kali_latest():
 
         matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
         if not matches:
-            logging.warning("Could not detect a Kali release number on %s", url)
+            logger.warning("Could not detect a Kali release number on %s", url)
             return False
 
         ver = max(matches, key=lambda v: tuple(map(int, v.split("."))))  # nyeste
@@ -234,13 +249,13 @@ def fetch_kali_latest():
             results[name] = turl
 
         if not results:
-            logging.warning("No Kali torrents found.")
+            logger.warning("No Kali torrents found.")
             return False
 
         return results
 
     except Exception as exc:
-        logging.error("Kali fetch error: %s", exc)
+        logger.error("Kali fetch error: %s", exc)
         return False
 
 def fetch_arch_latest():
@@ -261,16 +276,16 @@ def fetch_arch_latest():
             href = row.find("a", href=re.compile(torrent_url_pattern))['href']
             version = re.sub(torrent_url_pattern, "\\1", href)
 
-            logging.debug(f"Arch Linux {version}: {base_url}{href}")
+            logger.debug(f"Arch Linux {version}: {base_url}{href}")
             results[f"archlinux-{version}"] = base_url + href
 
         return results
     except Exception as exc:
-        logging.error("Arch Linux fetch error: %s", exc)
+        logger.error("Arch Linux fetch error: %s", exc)
         return False
 
 def log_seed_ratios_via_http(host='localhost', port=9091, auth: tuple | None = None):
-    logging.info("Querying Transmission RPC for seed ratios...")
+    logger.info("Querying Transmission RPC for seed ratios...")
     username, password = (auth if auth else (None, None))
     tc = Client(host=host, port=port, username=username, password=password)
     torrents = tc.get_torrents(fields=['name', 'uploadRatio'])
@@ -283,7 +298,7 @@ def log_seed_ratios_via_http(host='localhost', port=9091, auth: tuple | None = N
     )
 
     for t in torrents_sorted:
-        logging.info("[ratio] %-50s → %.3f", t.name, float(t.uploadRatio or 0.0))
+        logger.info("[ratio] %-50s → %.3f", t.name, float(t.uploadRatio or 0.0))
 
 # Example: find all torrents for a distro, keep only the latest
 def cleanup_old_versions():
@@ -306,12 +321,12 @@ def cleanup_old_versions():
     matched.sort(key=version_key, reverse=True)
     # Keep the first (latest), remove the rest
     for torrent, version in matched[1:]:
-        logging.info(f"Removing old version: {torrent.name}")
+        logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
 
 if __name__ == "__main__":
     start_time = time.time()
-    logging.info("Starting torrent fetch run.")
+    logger.info("Starting torrent fetch run.")
 
     ratios = get_previous_ratios(log_file)
 
@@ -335,7 +350,7 @@ if __name__ == "__main__":
                     else:
                         failure_count += 1
                 else:
-                    logging.info(f"Skipping {name} due to low ratio on previous version.")
+                    logger.info(f"Skipping {name} due to low ratio on previous version.")
         else:
             failure_count += 1
 
@@ -343,17 +358,17 @@ if __name__ == "__main__":
         try:
             log_seed_ratios_via_http()
         except Exception as exc:
-            logging.error("Could not query Transmission: %s", exc)
+            logger.error("Could not query Transmission: %s", exc)
     else:
-        logging.error("Transmission RPC not available on localhost:9091; skipping ratio logs.")
+        logger.error("Transmission RPC not available on localhost:9091; skipping ratio logs.")
         
     try:
         cleanup_old_versions()
     except Exception as exc:
-        logging.error("Could not clean up old versions: %s", exc)
+        logger.error("Could not clean up old versions: %s", exc)
 
     total, used, free = shutil.disk_usage("/downloads")
-    logging.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
+    logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
 
     elapsed = time.time() - start_time
-    logging.info(f"Run complete in {elapsed:.2f} seconds. {success_count} successful, {failure_count} failed.")
+    logger.info(f"Run complete in {elapsed:.2f} seconds. {success_count} successful, {failure_count} failed.")
