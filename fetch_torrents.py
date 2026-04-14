@@ -343,7 +343,11 @@ def log_seed_ratios_via_http(host='localhost', port=9091, auth: tuple | None = N
     logger.info("Querying Transmission RPC for seed ratios...")
     username, password = (auth if auth else (None, None))
     tc = Client(host=host, port=port, username=username, password=password)
-    torrents = tc.get_torrents(fields=['name', 'uploadRatio'])
+    try:
+        torrents = tc.get_torrents(fields=['name', 'uploadRatio'])
+    except TypeError:
+        logger.warning("Transmission RPC client does not support fields=; falling back to default get_torrents().")
+        torrents = tc.get_torrents()
 
     # sort by uploadRatio, highest first
     torrents_sorted = sorted(
