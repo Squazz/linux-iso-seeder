@@ -339,7 +339,8 @@ def fetch_arch_latest():
         logger.error("Arch Linux fetch error: %s", exc)
         return False
 
-def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):    
+def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):
+    logging.info("Querying Transmission RPC for seed ratios...")  
     r = requests.post(rpc_url)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
     payload = {
