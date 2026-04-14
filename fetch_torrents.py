@@ -94,7 +94,10 @@ def get_distro(name):
     return None
 
 def version_to_tuple(v):
-    return tuple(map(int, v.split('.')))
+    try:
+        return tuple(map(int, v.split('.')))
+    except ValueError as exc:
+        raise ValueError(f"Invalid version string '{v}'") from exc
 
 def parse_version_type(name, distro):
     if distro == 'ubuntu':
@@ -111,8 +114,8 @@ def parse_version_type(name, distro):
         type_ = f"{arch}-{type_suffix}"
     elif distro == 'kali':
         parts = name.split('-')
-        version = f"{parts[2]}.{parts[3]}"
-        type_ = '-'.join(parts[4:])
+        version = parts[2]
+        type_ = '-'.join(parts[3:])
     elif distro == 'arch':
         parts = name.split('-')
         version = parts[1]
@@ -128,16 +131,26 @@ def should_fetch_torrent(name, ratios):
     distro = get_distro(name)
     if not distro:
         return True
-    version_str, type_ = parse_version_type(name, distro)
-    version = version_to_tuple(version_str)
+
+    try:
+        version_str, type_ = parse_version_type(name, distro)
+        version = version_to_tuple(version_str)
+    except Exception as exc:
+        logger.error("Could not determine ratio decision for %s: %s", name, exc)
+        return True
+
     # get all ratios for this type
     type_ratios = {}
     for n, r in ratios.items():
         d = get_distro(n)
         if d == distro:
-            v_str, t = parse_version_type(n, d)
-            if t == type_:
-                type_ratios[version_to_tuple(v_str)] = r
+            try:
+                v_str, t = parse_version_type(n, d)
+                if t == type_:
+                    type_ratios[version_to_tuple(v_str)] = r
+            except Exception as exc:
+                logger.warning("Skipping stored ratio entry %s due to parse error: %s", n, exc)
+
     if not type_ratios:
         return True  # no previous, fetch
     # find max version < current
@@ -353,6 +366,7 @@ if __name__ == "__main__":
     ]
 
     for distro, func in distro_funcs:
+        logger.info(f"Fetching latest {distro} torrents...")
         torrents = func()
         if torrents:
             for name, url in torrents.items():
