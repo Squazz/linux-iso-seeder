@@ -197,10 +197,10 @@ def download_torrent(name, url):
     # Skip if already processed or queued 
     if os.path.exists(dest):
         logger.info("Skip %s – torrent already present.", os.path.basename(dest))
-        return False
+        return "existing"
     if os.path.exists(added):
         logger.info("Skip %s – torrent already present.", os.path.basename(added))
-        return False
+        return "existing"
 
     try:
         logger.info(f"Fetching {url} ...")
@@ -209,10 +209,10 @@ def download_torrent(name, url):
         with open(dest, "wb") as f:
             f.write(r.content)
         logger.info(f"Saved {dest}")
-        return True
+        return "added"
     except Exception as e:
         logger.error(f"Failed to download {url}: {e}")
-        return False
+        return "failed"
 
 def fetch_ubuntu_lts():
     url = "https://releases.ubuntu.com/"
@@ -386,6 +386,7 @@ if __name__ == "__main__":
     ratios = get_previous_ratios(ratio_log_file)
 
     success_count = 0
+    existing_count = 0
     failure_count = 0
 
     distro_funcs = [
@@ -408,8 +409,11 @@ if __name__ == "__main__":
         if torrents:
             for name, url in torrents.items():
                 if should_fetch_torrent(name, ratios):
-                    if download_torrent(name, url):
+                    status = download_torrent(name, url)
+                    if status == "added":
                         success_count += 1
+                    elif status == "existing":
+                        existing_count += 1
                     else:
                         failure_count += 1
                 else:
@@ -434,4 +438,4 @@ if __name__ == "__main__":
     logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
 
     elapsed = time.time() - start_time
-    logger.info(f"Run complete in {elapsed:.2f} seconds. {success_count} successful, {failure_count} failed.")
+    logger.info(f"Run complete in {elapsed:.2f} seconds. {success_count} added, {existing_count} existing, {failure_count} failed.")
