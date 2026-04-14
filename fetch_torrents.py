@@ -87,6 +87,36 @@ distro_patterns = {
     'arch': re.compile(r'^archlinux-'),
 }
 
+DEFAULT_DISTROS = tuple(distro_patterns.keys())
+
+def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
+    value = os.getenv(env_var, '').strip()
+    if not value:
+        return list(DEFAULT_DISTROS)
+
+    requested = [entry.strip().lower() for entry in value.split(',') if entry.strip()]
+    valid = [d for d in DEFAULT_DISTROS if d in requested]
+
+    invalid = [entry for entry in requested if entry not in DEFAULT_DISTROS]
+    if invalid:
+        logger.warning(
+            "%s contains unknown distributions: %s. Valid values: %s",
+            env_var,
+            ", ".join(invalid),
+            ", ".join(DEFAULT_DISTROS),
+        )
+
+    if not valid:
+        logger.warning(
+            "%s did not specify any valid distros. Falling back to all: %s",
+            env_var,
+            ", ".join(DEFAULT_DISTROS),
+        )
+        return list(DEFAULT_DISTROS)
+
+    return valid
+
+
 def get_distro(name):
     for distro, pattern in distro_patterns.items():
         if pattern.match(name):
@@ -365,7 +395,14 @@ if __name__ == "__main__":
         ('arch', fetch_arch_latest),
     ]
 
+    selected_distros = parse_supported_distros()
+    logger.info("Selected distros for this run: %s", ", ".join(selected_distros))
+
     for distro, func in distro_funcs:
+        if distro not in selected_distros:
+            logger.info("Skipping distro %s because it is not enabled by FETCH_TORRENTS_DISTROS.", distro)
+            continue
+
         logger.info(f"Fetching latest {distro} torrents...")
         torrents = func()
         if torrents:

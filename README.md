@@ -42,6 +42,7 @@
 | `SKIP_RATIO_CHECK` | `false` | Set to `true` to disable the smart ratio checking and download all available torrents regardless of previous seeding performance. |
 | `LOG_LEVEL` | `INFO` | Set the minimum log level for the fetch script. Supported values: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `FETCH_TORRENTS_LOG_LEVEL` | `INFO` | Overrides `LOG_LEVEL` when both are set. |
+| `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`. |
 
 ---
 
