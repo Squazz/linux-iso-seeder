@@ -46,6 +46,10 @@ class RatioOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return record.getMessage().startswith("[ratio]")
 
+class NonRatioFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("[ratio]")
+
 class ImportantMessageFilter(logging.Filter):
     def __init__(self, level: int, important_prefixes=None):
         super().__init__()
@@ -74,12 +78,14 @@ always_log_enabled = parse_bool('FETCH_TORRENTS_ALWAYS_LOG', True)
 important_prefixes = get_always_log_prefixes() if always_log_enabled else []
 
 stream_handler.setLevel(logging.DEBUG)
+stream_handler.addFilter(NonRatioFilter())
 if always_log_enabled:
     stream_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
 else:
     stream_handler.setLevel(log_level)
 
 file_handler.setLevel(logging.DEBUG)
+file_handler.addFilter(NonRatioFilter())
 if always_log_enabled:
     file_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
 else:
