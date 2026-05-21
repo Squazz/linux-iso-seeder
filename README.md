@@ -118,12 +118,12 @@ When making changes to the fetch logic or features:
 
 This repository now supports automatic release and container publishing from Git tags.
 
-- Use semantic version tags: `git tag -a v1.2.0 -m "Release 1.2.0"`
-- Push the tag: `git push origin v1.2.0`
+- Use semantic version tags: `git tag -a 1.2.0 -m "Release 1.2.0"`
+- Push the tag: `git push origin 1.2.0`
 - GitHub Actions will automatically:
   - publish `ghcr.io/squazz/linux-iso-seeder:1.2.0`
   - update `ghcr.io/squazz/linux-iso-seeder:latest`
-  - create a GitHub Release for `v1.2.0`
+  - create a GitHub Release for `1.2.0`
 
 On normal `main` branch changes, CI will still build and publish `ghcr.io/squazz/linux-iso-seeder:latest`.
 
