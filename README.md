@@ -114,7 +114,7 @@ When making changes to the fetch logic or features:
 
 ---
 
-## � Versioned releases and container tags
+## Versioned releases and container tags
 
 This repository now supports automatic release and container publishing from Git tags.
 
@@ -131,7 +131,7 @@ Container image metadata now includes the release version via Docker labels.
 
 ---
 
-## �🔒 **Security considerations**
+## 🔒 **Security considerations**
 
 - Always review container scripts before deployment.  
 - This project installs the latest packages on container start for updated clients and security patches.
