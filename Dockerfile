@@ -1,5 +1,7 @@
 FROM alpine:latest
+ARG VERSION=latest
 LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
+LABEL org.opencontainers.image.version=$VERSION
 # Install prerequisites
 RUN apk update && \
     apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission-rpc

@@ -114,7 +114,24 @@ When making changes to the fetch logic or features:
 
 ---
 
-## 🔒 **Security considerations**
+## � Versioned releases and container tags
+
+This repository now supports automatic release and container publishing from Git tags.
+
+- Use semantic version tags: `git tag -a v1.2.0 -m "Release 1.2.0"`
+- Push the tag: `git push origin v1.2.0`
+- GitHub Actions will automatically:
+  - publish `ghcr.io/squazz/linux-iso-seeder:1.2.0`
+  - update `ghcr.io/squazz/linux-iso-seeder:latest`
+  - create a GitHub Release for `v1.2.0`
+
+On normal `main` branch changes, CI will still build and publish `ghcr.io/squazz/linux-iso-seeder:latest`.
+
+Container image metadata now includes the release version via Docker labels.
+
+---
+
+## �🔒 **Security considerations**
 
 - Always review container scripts before deployment.  
 - This project installs the latest packages on container start for updated clients and security patches.
