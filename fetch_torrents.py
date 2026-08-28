@@ -91,7 +91,7 @@ if always_log_enabled:
 else:
     file_handler.setLevel(log_level)
 
-ratio_handler = logging.FileHandler(ratio_log_file)
+ratio_handler = logging.FileHandler(ratio_log_file, mode='w')
 ratio_handler.setLevel(logging.INFO)
 ratio_handler.addFilter(RatioOnlyFilter())
 ratio_handler.setFormatter(formatter)
