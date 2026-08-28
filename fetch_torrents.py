@@ -11,8 +11,9 @@ from bs4 import BeautifulSoup
 from transmission_rpc import Client
 
 # Configure logging
-log_file = "/logs/fetch_torrents.log"
-ratio_log_file = "/logs/fetch_torrents_ratios.log"
+log_dir = os.getenv('FETCH_TORRENTS_LOG_DIR', '/logs')
+log_file = os.path.join(log_dir, "fetch_torrents.log")
+ratio_log_file = os.path.join(log_dir, "fetch_torrents_ratios.log")
 
 def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     value = os.getenv(env_var, '').strip()
@@ -436,27 +437,56 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     logger.info("[ratio] RATIOS END")
     logger.info("")
 
-# Example: find all torrents for a distro, keep only the latest
+# Group torrents by (distro, type_) using the same parsing logic used for
+# ratio lookups, so grouping matches how real Transmission torrent names are
+# actually structured for each distro. Kept separate from cleanup_old_versions()
+# so the selection logic can be unit tested without a live Transmission RPC
+# connection (see tests/test_fetch_torrents.py).
+def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
+    groups = {}
+    for torrent in torrents:
+        distro = get_distro(torrent.name)
+        if not distro:
+            continue
+        try:
+            version_str, type_ = parse_version_type(torrent.name, distro)
+            version = version_to_tuple(version_str)
+        except Exception as exc:
+            logger.warning("Skipping %s during cleanup due to parse error: %s", torrent.name, exc)
+            continue
+        groups.setdefault((distro, type_), []).append((version, torrent))
+
+    to_remove = []
+    to_keep_low_ratio = []
+    for (distro, type_), entries in groups.items():
+        if len(entries) < 2:
+            continue
+        # Keep the highest version, consider the rest for removal.
+        entries.sort(key=lambda entry: entry[0], reverse=True)
+        for version, torrent in entries[1:]:
+            ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+            if not skip_ratio_check and ratio < min_ratio:
+                to_keep_low_ratio.append((torrent, ratio))
+            else:
+                to_remove.append(torrent)
+
+    return to_remove, to_keep_low_ratio
+
 def cleanup_old_versions():
     tc = Client(host='localhost', port=9091)
     torrents = tc.get_torrents()
-    # Collect all torrents matching the distro prefix
-    matched = []
-    version_re = re.compile(rf"(\d+\.\d+)\.iso", re.IGNORECASE)
-    for torrent in torrents:
-        m = version_re.search(torrent.name)
-        if m:
-            matched.append((torrent, m.group(1)))
-    if not matched:
-        return
 
-    # Sort by version number, keep the latest
-    def version_key(t):
-        # Convert version like '1.10' to tuple (1, 10)
-        return tuple(map(int, t[1].split('.')))
-    matched.sort(key=version_key, reverse=True)
-    # Keep the first (latest), remove the rest
-    for torrent, version in matched[1:]:
+    skip_ratio_check = parse_bool('CLEANUP_SKIP_RATIO_CHECK', False)
+    min_ratio = float(os.getenv('CLEANUP_MIN_RATIO', '1.0'))
+
+    to_remove, to_keep_low_ratio = plan_cleanup(torrents, skip_ratio_check, min_ratio)
+
+    for torrent, ratio in to_keep_low_ratio:
+        logger.info(
+            "Keeping old version %s – ratio %.3f is below cleanup threshold %.3f.",
+            torrent.name, ratio, min_ratio,
+        )
+    for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
 

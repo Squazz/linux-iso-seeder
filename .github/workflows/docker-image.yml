@@ -12,7 +12,25 @@ permissions:
   packages: write
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.x"
+
+    - name: Install test dependencies
+      run: pip install -r requirements-test.txt
+
+    - name: Run tests
+      run: python -m unittest discover -s tests -v
+
   build:
+    needs: test
     runs-on: ubuntu-latest
 
     steps:
