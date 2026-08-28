@@ -44,9 +44,6 @@ def names_of(torrents):
 
 
 class PlanCleanupTests(unittest.TestCase):
-    """Covers the real-world names from tasks/01-cleanup-old-versions-regex-bug.md
-    that the old `(\\d+\\.\\d+)\\.iso` regex could never match."""
-
     def test_selects_older_version_per_distro_and_type(self):
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
@@ -159,6 +156,80 @@ class PlanCleanupTests(unittest.TestCase):
 
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep_low_ratio, [])
+
+
+class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
+    """Candidate names must key into the same ratio-lookup bucket as the names Transmission
+    actually reports (which include the arch suffix and .iso extension),
+    for all supported distros."""
+
+    def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}
+        self.assertFalse(ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios))
+
+    def test_finds_previous_version_and_honors_low_ratio_debian(self):
+        ratios = {"debian-12.4.0-amd64-DVD-1.iso": 0.5}
+        self.assertFalse(ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios))
+
+    def test_finds_previous_version_and_honors_low_ratio_kali(self):
+        ratios = {"kali-linux-2023.4-installer-amd64.iso": 0.3}
+        self.assertFalse(ft.should_fetch_torrent("kali-linux-2024.1-installer-amd64.iso", ratios))
+
+    def test_finds_previous_version_and_honors_low_ratio_arch(self):
+        ratios = {"archlinux-2024.04.01-x86_64.iso": 0.2}
+        self.assertFalse(ft.should_fetch_torrent("archlinux-2024.05.01-x86_64.iso", ratios))
+
+    def test_finds_previous_version_and_allows_high_ratio_ubuntu(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.5}
+        self.assertTrue(ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios))
+
+    def test_finds_previous_version_and_allows_high_ratio_debian(self):
+        ratios = {"debian-12.4.0-amd64-DVD-1.iso": 1.5}
+        self.assertTrue(ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios))
+
+
+class FetchUbuntuLtsNamingTests(unittest.TestCase):
+    """The names fetch_ubuntu_lts() uses as dict keys are also what gets
+    passed to should_fetch_torrent() before download, so they must match the
+    shape of the names Transmission later reports for those same torrents
+    (real arch suffix + .iso extension) — see
+    tasks/02-ratio-key-mismatch-ubuntu-debian.md."""
+
+    def test_candidate_names_include_arch_and_iso_suffix(self):
+        meta_release = (
+            "Dist: noble\n"
+            "Version: 24.04\n"
+            "Supported: 1\n"
+        )
+
+        class FakeResponse:
+            text = meta_release
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_ubuntu_lts()
+
+        self.assertTrue(results)
+        self.assertIn("ubuntu-24.04-desktop-amd64.iso", results)
+        self.assertIn("ubuntu-24.04-live-server-amd64.iso", results)
+
+
+class FetchDebianStableNamingTests(unittest.TestCase):
+    """Mirrors FetchUbuntuLtsNamingTests for Debian: the dict key must keep
+    the .iso extension so it matches Transmission's reported torrent name."""
+
+    def test_candidate_name_keeps_iso_suffix(self):
+        html = '<html><body><a href="debian-12.5.0-amd64-DVD-1.iso.torrent">link</a></body></html>'
+
+        class FakeResponse:
+            text = html
+
+            def raise_for_status(self):
+                pass
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_debian_stable()
+
+        self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
 
 
 if __name__ == "__main__":

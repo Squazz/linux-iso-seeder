@@ -298,11 +298,19 @@ def fetch_ubuntu_lts():
             version  = re.search(r"Version:\s*([\d.]+)", block).group(1)
             codename = re.search(r"Dist:\s*(\w+)",   block).group(1)
 
-            results[f"ubuntu-{version}-desktop"] = f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent"
-            results[f"ubuntu-{version}-live-server"] = f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent"
-            results[f"lbuntu-{version}-desktop"] = f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent"
-            results[f"xbuntu-{version}-desktop"] = f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent"
-            results[f"xbuntu-{version}-minimal"] = f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/minimal/xubuntu-{version}-minimal-amd64.iso.torrent"
+            torrent_urls = [
+                f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent",
+                f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-live-server-amd64.iso.torrent",
+                f"https://cdimage.ubuntu.com/lubuntu/releases/{codename}/release/lubuntu-{version}-desktop-amd64.iso.torrent",
+                f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/desktop/xubuntu-{version}-desktop-amd64.iso.torrent",
+                f"https://torrent.ubuntu.com/xubuntu/releases/{codename}/release/minimal/xubuntu-{version}-minimal-amd64.iso.torrent",
+            ]
+            # Use the real ISO filename (arch + .iso) as the dict key, same as
+            # fetch_kali_latest() does, so it matches what Transmission later
+            # reports as torrent.name and the ratio-check lookup can find it.
+            for torrent_url in torrent_urls:
+                name = os.path.basename(torrent_url).replace(".torrent", "")
+                results[name] = torrent_url
 
         return results
     except Exception as e:
@@ -328,7 +336,9 @@ def fetch_debian_stable():
                 href = link['href']
                 if ".iso.torrent" in href:
                     torrent_url = url + href
-                    name = href.replace(".iso.torrent", "")
+                    # Keep the .iso extension so this matches what Transmission
+                    # later reports as torrent.name for the ratio-check lookup.
+                    name = os.path.basename(href).replace(".torrent", "")
                     results[name] = torrent_url
                     break
             else:
