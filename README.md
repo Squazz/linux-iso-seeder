@@ -24,6 +24,21 @@
 
 ---
 
+## 🔍 **How it works**
+
+1. **On container startup:**
+   - Updates packages and Transmission to the latest version.
+   - Starts `fetch_torrents.py` in the background.
+
+2. **Daily:**
+   - Fetches torrent files for configured distros.
+   - Downloads them to `/watch` for Transmission to seed.
+   - Logs results and disk usage to `/logs/fetch_torrents.log`.
+
+3. **Transmission-daemon runs continuously**, seeding all loaded torrents.
+
+---
+
 ## 📦 **Volumes**
 
 | Container Path | Purpose |
@@ -72,45 +87,6 @@ docker run -d \
 
 ---
 
-## 🔍 **How it works**
-
-1. **On container startup:**
-   - Updates packages and Transmission to the latest version.
-   - Starts `fetch_torrents.py` in the background.
-
-2. **Daily:**
-   - Fetches torrent files for configured distros.
-   - Downloads them to `/watch` for Transmission to seed.
-   - Logs results and disk usage to `/logs/fetch_torrents.log`.
-
-3. **Transmission-daemon runs continuously**, seeding all loaded torrents.
-
----
-
-## 💡 **Contributing**
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow, ideas
-for contribution, and guidance on modifying the fetch logic.
-
----
-
-## Versioned releases and container tags
-
-This repository now supports automatic release and container publishing from Git tags.
-
-- Use semantic version tags: `git tag -a 1.2.0 -m "Release 1.2.0"`
-- Push the tag: `git push origin 1.2.0`
-- GitHub Actions will automatically:
-  - publish `ghcr.io/squazz/linux-iso-seeder:1.2.0`
-  - update `ghcr.io/squazz/linux-iso-seeder:latest`
-  - create a GitHub Release for `1.2.0`, unless one already exists for that tag
-
-On normal `main` branch changes, CI will still build and publish `ghcr.io/squazz/linux-iso-seeder:latest`.
-
-Container image metadata now includes the release version via Docker labels.
-
----
-
 ## 🔒 **Security considerations**
 
 - Always review container scripts before deployment.  
@@ -122,3 +98,9 @@ Container image metadata now includes the release version via Docker labels.
 
 Seeding Linux ISOs improves global availability, helps users download faster, and strengthens the open-source ecosystem. This project makes it **easy to contribute without daily maintenance**.
 
+---
+
+## 💡 **Contributing**
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow, ideas
+for contribution, and guidance on modifying the fetch logic.
