@@ -13,6 +13,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from unittest.mock import MagicMock
 
 if 'transmission_rpc' not in sys.modules:
@@ -230,6 +231,65 @@ class FetchDebianStableNamingTests(unittest.TestCase):
             results = ft.fetch_debian_stable()
 
         self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
+
+
+class DownloadTorrent404Tests(unittest.TestCase):
+    """Torrent URLs for releases no longer hosted upstream (e.g. old Ubuntu
+    LTS releases that changelogs.ubuntu.com still marks 'Supported: 1' for
+    ESM purposes, long after their installer media was pulled) 404. That's
+    an expected, non-actionable outcome and shouldn't be logged/counted the
+    same way as a genuine download failure."""
+
+    def setUp(self):
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
+        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_404_response_is_not_found_not_failed(self):
+        class FakeResponse:
+            status_code = 404
+
+        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+            status = ft.download_torrent(
+                'ubuntu-14.04.6-live-server-amd64.iso', 'https://example.invalid/x.torrent'
+            )
+
+        self.assertEqual(status, 'not_found')
+        dest = os.path.join(self.tmp_watch_dir, 'ubuntu-14.04.6-live-server-amd64.iso.torrent')
+        self.assertFalse(os.path.exists(dest))
+
+    def test_other_http_error_is_still_failed(self):
+        class FakeResponse:
+            status_code = 500
+
+            def raise_for_status(self):
+                raise Exception("500 Server Error")
+
+        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+            status = ft.download_torrent(
+                'ubuntu-24.04-desktop-amd64.iso', 'https://example.invalid/x.torrent'
+            )
+
+        self.assertEqual(status, 'failed')
+
+    def test_successful_download_is_still_added(self):
+        class FakeResponse:
+            status_code = 200
+            content = b'fake torrent bytes'
+
+            def raise_for_status(self):
+                pass
+
+        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+            status = ft.download_torrent(
+                'ubuntu-24.04-desktop-amd64.iso', 'https://example.invalid/x.torrent'
+            )
+
+        self.assertEqual(status, 'added')
+        dest = os.path.join(self.tmp_watch_dir, 'ubuntu-24.04-desktop-amd64.iso.torrent')
+        with open(dest, 'rb') as f:
+            self.assertEqual(f.read(), b'fake torrent bytes')
 
 
 if __name__ == "__main__":

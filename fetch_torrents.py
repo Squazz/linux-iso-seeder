@@ -277,6 +277,12 @@ def download_torrent(name, url):
     try:
         logger.info(f"Fetching {url} ...")
         r = requests.get(url, timeout=30)
+        if r.status_code == 404:
+            # Expected for releases upstream still flags as "supported" (e.g.
+            # for ESM) long after their installer media has been pulled —
+            # not a real failure, so don't log it as an error.
+            logger.info("%s not found upstream (404) – likely no longer hosted.", url)
+            return "not_found"
         r.raise_for_status()
         with open(dest, "wb") as f:
             f.write(r.content)
@@ -509,6 +515,7 @@ if __name__ == "__main__":
     success_count = 0
     existing_count = 0
     failure_count = 0
+    not_found_count = 0
 
     distro_funcs = [
         ('ubuntu', fetch_ubuntu_lts),
@@ -535,6 +542,8 @@ if __name__ == "__main__":
                         success_count += 1
                     elif status == "existing":
                         existing_count += 1
+                    elif status == "not_found":
+                        not_found_count += 1
                     else:
                         failure_count += 1
                 else:
@@ -559,4 +568,7 @@ if __name__ == "__main__":
     logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
 
     elapsed = time.time() - start_time
-    logger.info(f"Run complete in {elapsed:.2f} seconds. {success_count} added, {existing_count} existing, {failure_count} failed.")
+    logger.info(
+        f"Run complete in {elapsed:.2f} seconds. {success_count} added, "
+        f"{existing_count} existing, {not_found_count} not found upstream, {failure_count} failed."
+    )
