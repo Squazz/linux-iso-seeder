@@ -11,7 +11,7 @@
 ✅ Automatically fetches the latest torrent files for:
 
 - Ubuntu (All LTS & ESM, including Lubuntu & Xubuntu)
-- Debian (latest stable DVD-1)
+- Debian (latest stable, DVD and netinst/CD images, amd64 + arm64)
 - Kali Linux (latest installer, netInstaller & everything ISO)
 - Arch Linux (All available ISOs)
 
@@ -123,7 +123,7 @@ This repository now supports automatic release and container publishing from Git
 - GitHub Actions will automatically:
   - publish `ghcr.io/squazz/linux-iso-seeder:1.2.0`
   - update `ghcr.io/squazz/linux-iso-seeder:latest`
-  - create a GitHub Release for `1.2.0`
+  - create a GitHub Release for `1.2.0`, unless one already exists for that tag
 
 On normal `main` branch changes, CI will still build and publish `ghcr.io/squazz/linux-iso-seeder:latest`.
 
