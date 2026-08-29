@@ -92,7 +92,7 @@ if always_log_enabled:
 else:
     file_handler.setLevel(log_level)
 
-ratio_handler = logging.FileHandler(ratio_log_file, mode='w')
+ratio_handler = logging.FileHandler(ratio_log_file, mode='w', delay=True, encoding='utf-8')
 ratio_handler.setLevel(logging.INFO)
 ratio_handler.addFilter(RatioOnlyFilter())
 ratio_handler.setFormatter(formatter)
@@ -122,7 +122,7 @@ def get_previous_ratios(log_file):
     if not os.path.exists(log_file):
         return {}
     ratios = {}
-    with open(log_file, 'r') as f:
+    with open(log_file, 'r', encoding='utf-8') as f:
         lines = f.readlines()
 
     # Only parse the latest ratio segment between the last start and end markers.

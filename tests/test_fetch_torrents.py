@@ -9,6 +9,7 @@ FETCH_TORRENTS_LOG_DIR at a temp directory before importing it.
 Run with: python -m unittest discover -s tests
 """
 import os
+import subprocess
 import sys
 import tempfile
 import types
@@ -211,6 +212,50 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     def test_finds_previous_version_and_allows_high_ratio_fedora(self):
         ratios = {"Fedora-Workstation-Live-x86_64-43": 1.5}
         self.assertTrue(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
+
+
+class RatioLogSurvivesRestartTests(unittest.TestCase):
+    """Each container run is a fresh `python fetch_torrents.py` process: the
+    ratio log from the *previous* run is what should_fetch_torrent() needs in
+    order to gate a new version's download. Simulate a real restart (fresh
+    interpreter, pre-existing ratio log on disk) rather than reusing the
+    already-imported module, since the bug this guards against is specifically
+    about what happens between import and the first get_previous_ratios() call."""
+
+    def test_previous_ratios_are_readable_after_a_fresh_start(self):
+        log_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_restart_')
+        ratio_log_path = os.path.join(log_dir, 'fetch_torrents_ratios.log')
+        with open(ratio_log_path, 'w', encoding='utf-8') as f:
+            f.write(
+                "2026-08-01 00:00:00,000 INFO: [ratio] RATIOS START\n"
+                "2026-08-01 00:00:00,000 INFO: [ratio] archlinux-2026.04.01-x86_64.iso            → 0.664\n"
+                "2026-08-01 00:00:00,000 INFO: [ratio] RATIOS END\n"
+            )
+
+        script = (
+            "import os, sys, types\n"
+            "from unittest.mock import MagicMock\n"
+            "stub = types.ModuleType('transmission_rpc')\n"
+            "stub.Client = MagicMock()\n"
+            "sys.modules['transmission_rpc'] = stub\n"
+            f"sys.path.insert(0, {REPO_ROOT!r})\n"
+            "import fetch_torrents as ft\n"
+            "print(ft.get_previous_ratios(ft.ratio_log_file))\n"
+        )
+        env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir)
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            "archlinux-2026.04.01-x86_64.iso", result.stdout,
+            "get_previous_ratios() found nothing from the prior run's ratio "
+            "log - it was likely wiped by the ratio FileHandler's mode='w' "
+            "open at import time, before ever being read. That silently "
+            "defeats the low-ratio fetch gate for every distro.",
+        )
 
 
 class FetchUbuntuLtsNamingTests(unittest.TestCase):
