@@ -57,6 +57,10 @@ class PlanCleanupTests(unittest.TestCase):
             FakeTorrent("kali-linux-2023.4-installer-amd64.iso", 8, ratio=2.0),
             FakeTorrent("archlinux-2024.05.01-x86_64.iso", 9, ratio=2.0),
             FakeTorrent("archlinux-2024.04.01-x86_64.iso", 10, ratio=2.0),
+            FakeTorrent("linuxmint-22.3-cinnamon-64bit.iso", 11, ratio=2.0),
+            FakeTorrent("linuxmint-22.2-cinnamon-64bit.iso", 12, ratio=2.0),
+            FakeTorrent("Fedora-Workstation-Live-x86_64-44", 13, ratio=2.0),
+            FakeTorrent("Fedora-Workstation-Live-x86_64-43", 14, ratio=2.0),
         ]
 
         to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
@@ -64,9 +68,11 @@ class PlanCleanupTests(unittest.TestCase):
         self.assertEqual(
             names_of(to_remove),
             [
+                "Fedora-Workstation-Live-x86_64-43",
                 "archlinux-2024.04.01-x86_64.iso",
                 "debian-12.4.0-amd64-DVD-1.iso",
                 "kali-linux-2023.4-installer-amd64.iso",
+                "linuxmint-22.2-cinnamon-64bit.iso",
                 "ubuntu-22.04.1-live-server-amd64.iso",
                 "ubuntu-23.10-desktop-amd64.iso",
             ],
@@ -82,6 +88,8 @@ class PlanCleanupTests(unittest.TestCase):
             "debian-12.5.0-amd64-DVD-1.iso",
             "kali-linux-2024.1-installer-amd64.iso",
             "archlinux-2024.05.01-x86_64.iso",
+            "linuxmint-22.3-cinnamon-64bit.iso",
+            "Fedora-Workstation-Live-x86_64-44",
         ):
             self.assertNotIn(newest, removed_names)
 
@@ -188,6 +196,22 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
         ratios = {"debian-12.4.0-amd64-DVD-1.iso": 1.5}
         self.assertTrue(ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios))
 
+    def test_finds_previous_version_and_honors_low_ratio_mint(self):
+        ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 0.4}
+        self.assertFalse(ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios))
+
+    def test_finds_previous_version_and_allows_high_ratio_mint(self):
+        ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 1.5}
+        self.assertTrue(ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios))
+
+    def test_finds_previous_version_and_honors_low_ratio_fedora(self):
+        ratios = {"Fedora-Workstation-Live-x86_64-43": 0.4}
+        self.assertFalse(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
+
+    def test_finds_previous_version_and_allows_high_ratio_fedora(self):
+        ratios = {"Fedora-Workstation-Live-x86_64-43": 1.5}
+        self.assertTrue(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
+
 
 class FetchUbuntuLtsNamingTests(unittest.TestCase):
     """The names fetch_ubuntu_lts() uses as dict keys are also what gets
@@ -231,6 +255,65 @@ class FetchDebianStableNamingTests(unittest.TestCase):
             results = ft.fetch_debian_stable()
 
         self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
+
+
+class FetchLinuxMintCinnamonNamingTests(unittest.TestCase):
+    """The dict key fetch_linuxmint_cinnamon() uses must match the 'name'
+    field embedded in the actual .torrent file (verified against a real
+    download from linuxmint.com: linuxmint-22.3-cinnamon-64bit.iso), so it
+    lines up with what Transmission later reports as torrent.name."""
+
+    def test_candidate_name_matches_torrent_internal_name(self):
+        html = "<title>Download Linux Mint 22.3 - Linux Mint</title>"
+
+        class FakeResponse:
+            text = html
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_linuxmint_cinnamon()
+
+        self.assertIn("linuxmint-22.3-cinnamon-64bit.iso", results)
+        self.assertEqual(
+            results["linuxmint-22.3-cinnamon-64bit.iso"],
+            "https://www.linuxmint.com/torrents/linuxmint-22.3-cinnamon-64bit.iso.torrent",
+        )
+
+
+class FetchFedoraWorkstationNamingTests(unittest.TestCase):
+    """The dict key fetch_fedora_workstation() uses must match the 'name'
+    field embedded in the actual .torrent file (verified against a real
+    download from torrent.fedoraproject.org: Fedora-Workstation-Live-x86_64-44,
+    which has no .iso extension), so it lines up with what Transmission later
+    reports as torrent.name."""
+
+    def test_picks_highest_version_per_arch(self):
+        html = (
+            "<html><body>"
+            '<a href="Fedora-Workstation-Live-x86_64-43.torrent">a</a>'
+            '<a href="Fedora-Workstation-Live-x86_64-44.torrent">b</a>'
+            '<a href="Fedora-Workstation-Live-aarch64-43.torrent">c</a>'
+            '<a href="Fedora-Workstation-Live-aarch64-44.torrent">d</a>'
+            "</body></html>"
+        )
+
+        class FakeResponse:
+            text = html
+
+            def raise_for_status(self):
+                pass
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_fedora_workstation()
+
+        self.assertEqual(
+            results,
+            {
+                "Fedora-Workstation-Live-x86_64-44":
+                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-44.torrent",
+                "Fedora-Workstation-Live-aarch64-44":
+                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-44.torrent",
+            },
+        )
 
 
 class DownloadTorrent404Tests(unittest.TestCase):

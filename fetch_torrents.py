@@ -157,6 +157,8 @@ distro_patterns = {
     'debian': re.compile(r'^debian-'),
     'kali': re.compile(r'^kali-linux-'),
     'arch': re.compile(r'^archlinux-'),
+    'mint': re.compile(r'^linuxmint-'),
+    'fedora': re.compile(r'^Fedora-Workstation-Live-'),
 }
 
 DEFAULT_DISTROS = tuple(distro_patterns.keys())
@@ -222,6 +224,14 @@ def parse_version_type(name, distro):
         parts = name.split('-')
         version = parts[1]
         type_ = ''
+    elif distro == 'mint':
+        parts = name.split('-')
+        version = parts[1]
+        type_ = '-'.join(parts[2:])
+    elif distro == 'fedora':
+        parts = name.split('-')
+        version = parts[-1]
+        type_ = parts[-2]
     else:
         version = ''
         type_ = ''
@@ -427,6 +437,61 @@ def fetch_arch_latest():
         logger.error("Arch Linux fetch error: %s", exc)
         return False
 
+def fetch_linuxmint_cinnamon():
+    url = "https://www.linuxmint.com/download.php"
+    try:
+        text = requests.get(url, timeout=30).text
+        match = re.search(r"<title>Download Linux Mint ([\d.]+)", text)
+        if not match:
+            logger.warning("Could not detect a Linux Mint version on %s", url)
+            return False
+
+        version = match.group(1)
+        torrent_url = f"https://www.linuxmint.com/torrents/linuxmint-{version}-cinnamon-64bit.iso.torrent"
+        # Use the real ISO filename (as embedded in the torrent's own "name"
+        # field) as the dict key, same as fetch_ubuntu_lts() does, so it
+        # matches what Transmission later reports as torrent.name.
+        name = os.path.basename(torrent_url).replace(".torrent", "")
+        return {name: torrent_url}
+    except Exception as e:
+        logger.error(f"Linux Mint fetch error: {e}")
+        return False
+
+def fetch_fedora_workstation():
+    url = "https://torrent.fedoraproject.org/torrents/"
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        pattern = re.compile(r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$")
+        latest = {}
+        for link in soup.find_all('a', href=True):
+            match = pattern.match(link['href'])
+            if not match:
+                continue
+            arch, version = match.group(1), int(match.group(2))
+            if arch not in latest or version > latest[arch][0]:
+                latest[arch] = (version, link['href'])
+
+        if not latest:
+            logger.warning("No Fedora Workstation torrents found on %s", url)
+            return False
+
+        results = {}
+        for arch, (version, href) in latest.items():
+            torrent_url = url + href
+            # The torrent's own "name" field (and Transmission's later
+            # torrent.name) has no .iso extension for Fedora, unlike Ubuntu/
+            # Debian, so the dict key is just the basename minus .torrent.
+            name = href.replace(".torrent", "")
+            results[name] = torrent_url
+
+        return results
+    except Exception as exc:
+        logger.error("Fedora fetch error: %s", exc)
+        return False
+
 def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url)
@@ -522,6 +587,8 @@ if __name__ == "__main__":
         ('debian', fetch_debian_stable),
         ('kali', fetch_kali_latest),
         ('arch', fetch_arch_latest),
+        ('mint', fetch_linuxmint_cinnamon),
+        ('fedora', fetch_fedora_workstation),
     ]
 
     selected_distros = parse_supported_distros()

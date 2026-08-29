@@ -14,6 +14,8 @@
 - Debian (latest stable, DVD and netinst/CD images, amd64 + arm64)
 - Kali Linux (latest installer, netInstaller & everything ISO)
 - Arch Linux (All available ISOs)
+- Linux Mint (latest Cinnamon edition, 64-bit)
+- Fedora Workstation (latest Live ISO, x86_64 + aarch64)
 
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
@@ -58,7 +60,7 @@
 | `LOG_LEVEL` | `INFO` | Set the minimum log level for the fetch script. Supported values: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `FETCH_TORRENTS_LOG_LEVEL` | `INFO` | Overrides `LOG_LEVEL` when both are set. |
 | `FETCH_TORRENTS_ALWAYS_LOG` | `true` | If `true`, always logs a small set of important run-status messages even when the effective level is `ERROR`. Set to `false` to only log messages at or above the configured level. |
-| `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`. |
+| `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch,mint,fedora` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`, `mint`, `fedora`. |
 
 ---
 
