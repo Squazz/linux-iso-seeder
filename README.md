@@ -6,6 +6,12 @@
 
 ---
 
+## ❤️ **Why?**
+
+Seeding Linux ISOs improves global availability, helps users download faster, and strengthens the open-source ecosystem. This project makes it **easy to contribute without daily maintenance**.
+
+---
+
 ## 🚀 **Features**
 
 ✅ Automatically fetches the latest torrent files for:
@@ -190,12 +196,6 @@ docker run -d \
   state. Always set `TRANSMISSION_RPC_USERNAME`/`TRANSMISSION_RPC_PASSWORD`
   alongside it unless the whitelist is already tightly scoped to hosts you
   trust - the container logs a warning on startup if you don't.
-
----
-
-## ❤️ **Why?**
-
-Seeding Linux ISOs improves global availability, helps users download faster, and strengthens the open-source ecosystem. This project makes it **easy to contribute without daily maintenance**.
 
 ---
 
