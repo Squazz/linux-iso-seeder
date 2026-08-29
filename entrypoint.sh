@@ -39,6 +39,11 @@ if [ "$RUN_AS_NON_ROOT" = "true" ]; then
     RUN_AS="su-exec seeder"
 fi
 
+# Apply any TRANSMISSION_RPC_* overrides to settings.json before the daemon
+# reads it - must run after the chown above (as whichever user will own the
+# file) and before transmission-daemon starts.
+$RUN_AS python3 /usr/local/bin/configure_transmission.py
+
 # Start torrent fetcher script in background, running daily
 while true; do
     $RUN_AS python3 /usr/local/bin/fetch_torrents.py

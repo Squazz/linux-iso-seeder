@@ -70,6 +70,8 @@
 | `CLEANUP_SKIP_RATIO_CHECK` | `false` | Only used when `CLEANUP_KEEP_ONLY_LATEST_VERSION=true`. Set to `true` to remove superseded versions immediately, ignoring `CLEANUP_MIN_RATIO`. |
 | `CLEANUP_STAGNATION_WINDOW_DAYS` | `30` | Default cleanup path (`CLEANUP_KEEP_ONLY_LATEST_VERSION=false`). A superseded version is only eligible for removal once we've tracked its ratio for at least this many days - it needs enough history before we judge it as dead. |
 | `CLEANUP_STAGNATION_MIN_RATIO_DELTA` | `0.02` | Default cleanup path. A superseded version is removed once its ratio has grown by less than this over `CLEANUP_STAGNATION_WINDOW_DAYS` - i.e. nobody's downloading it anymore. Versions still gaining ratio are left seeding no matter how old they are. The current/latest version of each ISO type is never removed this way, regardless of its ratio - see `fetch_torrents_ratio_history.json` below. |
+| `TRANSMISSION_RPC_WHITELIST` | *(unset)* | Comma-separated IPs/wildcards (e.g. `10.0.0.*`, or `*` for any) to allow into Transmission's RPC/web UI, beyond its own `127.0.0.1`-only default. Needed if you're getting a `403: Forbidden` accessing the web UI from another host - see [Security considerations](#-security-considerations) before opening this up. |
+| `TRANSMISSION_RPC_USERNAME` / `TRANSMISSION_RPC_PASSWORD` | *(unset)* | Set **both** to require a login for the RPC/web UI. Opt-in and off by default, matching Transmission's own default - required if you set `TRANSMISSION_RPC_WHITELIST` to anything beyond localhost, since Transmission has no read-only RPC mode. |
 
 ---
 
@@ -115,6 +117,18 @@ docker run -d \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
   linux-iso-seeder
+
+# Open the web UI to your LAN, with a login required (see Security considerations)
+docker run -d \
+  -e TRANSMISSION_RPC_WHITELIST=10.0.0.* \
+  -e TRANSMISSION_RPC_USERNAME=admin \
+  -e TRANSMISSION_RPC_PASSWORD=changeme \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -v /path/to/watch:/watch \
+  -v /path/to/logs:/logs \
+  -p 9091:9091 \
+  linux-iso-seeder
 ```
 
 ---
@@ -134,6 +148,14 @@ docker run -d \
   Enabling it recursively `chown`s the working directories to that user on
   every start, so only turn it on for volumes you're sure aren't relied on
   by anything else expecting a different owner.
+- By default, Transmission's RPC/web UI only accepts connections from
+  `127.0.0.1` (its own built-in default) - a fresh deploy stays private even
+  though port 9091 is exposed. Setting `TRANSMISSION_RPC_WHITELIST` opens it
+  up to whatever you allow, but Transmission has no read-only RPC mode:
+  anyone who can reach it can add, remove, and delete data, not just view
+  state. Always set `TRANSMISSION_RPC_USERNAME`/`TRANSMISSION_RPC_PASSWORD`
+  alongside it unless the whitelist is already tightly scoped to hosts you
+  trust - the container logs a warning on startup if you don't.
 
 ---
 

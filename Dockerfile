@@ -17,6 +17,10 @@ RUN addgroup -g 1000 seeder && \
 COPY fetch_torrents.py /usr/local/bin/fetch_torrents.py
 RUN chmod +x /usr/local/bin/fetch_torrents.py
 
+# Add Transmission RPC/web UI settings.json configurator
+COPY configure_transmission.py /usr/local/bin/configure_transmission.py
+RUN chmod +x /usr/local/bin/configure_transmission.py
+
 # Add entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
