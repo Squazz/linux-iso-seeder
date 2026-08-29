@@ -15,6 +15,7 @@ import tempfile
 import types
 import unittest
 import unittest.mock
+from datetime import date, timedelta
 from unittest.mock import MagicMock
 
 if 'transmission_rpc' not in sys.modules:
@@ -497,6 +498,207 @@ class DownloadTorrent404Tests(unittest.TestCase):
         dest = os.path.join(self.tmp_watch_dir, 'ubuntu-24.04-desktop-amd64.iso.torrent')
         with open(dest, 'rb') as f:
             self.assertEqual(f.read(), b'fake torrent bytes')
+
+
+class UpdateRatioHistoryTests(unittest.TestCase):
+    """update_ratio_history() must keep the on-disk history bounded: drop
+    torrents that are no longer seeding, only add a new sample once per
+    sample_interval_days, and prune samples once they're older than
+    window_days + sample_interval_days - so it stays a fixed handful of
+    samples per torrent forever, not one entry per run."""
+
+    def test_new_torrent_gets_a_first_sample(self):
+        today = date(2026, 8, 29)
+        history = ft.update_ratio_history({}, {"archlinux-2026.08.01-x86_64.iso": 1.2}, today)
+
+        self.assertEqual(
+            history,
+            {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]},
+        )
+
+    def test_recent_sample_is_not_duplicated(self):
+        today = date(2026, 8, 29)
+        history = {
+            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-25", "ratio": 1.0}],
+        }
+
+        updated = ft.update_ratio_history(history, {"archlinux-2026.08.01-x86_64.iso": 1.1}, today)
+
+        # Only 4 days since the last sample (< the 7-day interval) - no new
+        # sample yet, and the ratio value on the existing sample is untouched.
+        self.assertEqual(
+            updated,
+            {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-25", "ratio": 1.0}]},
+        )
+
+    def test_new_sample_added_once_interval_elapses(self):
+        today = date(2026, 8, 29)
+        history = {
+            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-20", "ratio": 1.0}],
+        }
+
+        updated = ft.update_ratio_history(history, {"archlinux-2026.08.01-x86_64.iso": 1.3}, today)
+
+        self.assertEqual(
+            updated,
+            {
+                "archlinux-2026.08.01-x86_64.iso": [
+                    {"date": "2026-08-20", "ratio": 1.0},
+                    {"date": "2026-08-29", "ratio": 1.3},
+                ]
+            },
+        )
+
+    def test_samples_older_than_window_plus_interval_are_pruned(self):
+        today = date(2026, 8, 29)
+        history = {
+            "archlinux-2026.08.01-x86_64.iso": [
+                {"date": "2026-06-01", "ratio": 0.5},  # ~89 days old - long stale
+                {"date": "2026-08-10", "ratio": 1.0},  # ~19 days old - kept
+            ],
+        }
+
+        updated = ft.update_ratio_history(
+            history, {"archlinux-2026.08.01-x86_64.iso": 1.0}, today, window_days=30
+        )
+
+        dates = [s["date"] for s in updated["archlinux-2026.08.01-x86_64.iso"]]
+        self.assertNotIn("2026-06-01", dates)
+        self.assertIn("2026-08-10", dates)
+
+    def test_torrent_no_longer_seeding_is_dropped(self):
+        today = date(2026, 8, 29)
+        history = {
+            "archlinux-2026.07.01-x86_64.iso": [{"date": "2026-08-20", "ratio": 1.0}],
+        }
+
+        updated = ft.update_ratio_history(history, {}, today)
+
+        self.assertEqual(updated, {})
+
+
+class PlanStagnationCleanupTests(unittest.TestCase):
+    """plan_stagnation_cleanup() removes only superseded (non-latest)
+    versions within a (distro, type) group once their ratio has stopped
+    growing - the newest/only version of a group is never a candidate,
+    since removing it would just get it re-fetched and re-downloaded the
+    next run (should_fetch_torrent() only skips a fetch when a *previous*
+    version's ratio is on record)."""
+
+    def test_latest_or_only_version_is_never_removed_even_if_flat(self):
+        today = date(2026, 8, 29)
+        torrents = [FakeTorrent("archlinux-2026.08.01-x86_64.iso", 1, ratio=1.0)]
+        # 60 days of a perfectly flat ratio - as stagnant as it gets.
+        history = {
+            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-06-30", "ratio": 1.0}],
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(to_keep, [])
+
+    def test_old_version_with_no_ratio_growth_is_removed(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.500),
+        ]
+        history = {
+            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.495}],
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(names_of(to_remove), ["ubuntu-23.10-desktop-amd64.iso"])
+        self.assertEqual(to_keep, [])
+
+    def test_old_version_still_growing_is_kept(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.8),
+        ]
+        history = {
+            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.2}],
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(len(to_keep), 1)
+        kept_torrent, delta = to_keep[0]
+        self.assertEqual(kept_torrent.name, "ubuntu-23.10-desktop-amd64.iso")
+        self.assertAlmostEqual(delta, 0.6)
+
+    def test_old_version_without_enough_history_is_kept(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
+        ]
+        # Only 5 days of history - too young to judge either way.
+        history = {
+            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-08-24", "ratio": 0.1}],
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(len(to_keep), 1)
+        kept_torrent, delta = to_keep[0]
+        self.assertEqual(kept_torrent.name, "ubuntu-23.10-desktop-amd64.iso")
+        self.assertIsNone(delta)
+
+    def test_old_version_with_no_history_at_all_is_kept(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
+        ]
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, {}, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(len(to_keep), 1)
+
+    def test_unrelated_single_torrent_groups_are_ignored(self):
+        today = date(2026, 8, 29)
+        torrents = [FakeTorrent("some-random-linux-distro-1.0.iso", 1, ratio=5.0)]
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, {}, today, window_days=30, min_ratio_delta=0.02)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(to_keep, [])
+
+
+class RatioHistoryPersistenceTests(unittest.TestCase):
+    """load_ratio_history()/save_ratio_history() must round-trip cleanly and
+    tolerate a missing or corrupt file rather than crashing a run."""
+
+    def test_round_trips_through_disk(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
+        path = os.path.join(tmp_dir, 'fetch_torrents_ratio_history.json')
+        history = {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]}
+
+        ft.save_ratio_history(path, history)
+        loaded = ft.load_ratio_history(path)
+
+        self.assertEqual(loaded, history)
+
+    def test_missing_file_returns_empty_history(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
+        path = os.path.join(tmp_dir, 'does-not-exist.json')
+
+        self.assertEqual(ft.load_ratio_history(path), {})
+
+    def test_corrupt_file_returns_empty_history_instead_of_raising(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
+        path = os.path.join(tmp_dir, 'fetch_torrents_ratio_history.json')
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('{not valid json')
+
+        self.assertEqual(ft.load_ratio_history(path), {})
 
 
 if __name__ == "__main__":

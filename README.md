@@ -20,7 +20,7 @@
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
-✅ Automatically cleans up old torrents and their data  
+✅ Automatically cleans up superseded torrents once they go stagnant (no ratio growth in 30 days by default) - still-active old versions keep seeding, only truly dead ones are removed. Space-constrained? `CLEANUP_KEEP_ONLY_LATEST_VERSION=true` keeps just one version per ISO type at all times instead.  
 ✅ **Smart fetching**: Only downloads new versions of specific ISO types if the previous version of that same ISO type has achieved a seed ratio of at least 1.0, ensuring contribution to torrent health. Can be disabled via environment variable.  
 ✅ Designed as a **single-container, deploy-and-forget solution**
 
@@ -48,7 +48,7 @@
 | `/config` | Transmission configuration files |
 | `/downloads` | Downloaded ISO files (seeding storage) |
 | `/watch` | Torrent watch folder |
-| `/logs` | Persistent logs for fetch script runs |
+| `/logs` | Persistent logs for fetch script runs, plus `fetch_torrents_ratio_history.json` - a small, bounded per-torrent ratio history used to detect stagnant (no-traction) torrents. Deleting it just resets stagnation tracking; it's not required for anything else. |
 
 ---
 
@@ -65,6 +65,11 @@
 | `RUN_AS_NON_ROOT` | `false` | Set to `true` to run Transmission and the fetch script as a dedicated non-root `seeder` user instead of root. See [Security considerations](#-security-considerations). |
 | `PUID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Uid the `seeder` user runs as - set this to match the uid that owns your bind-mounted `/config`, `/downloads`, `/watch`, `/logs` directories on the host. |
 | `PGID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Gid the `seeder` user runs as - set this to match the gid that owns your bind-mounted directories on the host. |
+| `CLEANUP_KEEP_ONLY_LATEST_VERSION` | `false` | Set to `true` if you're space-constrained and only want one version of each ISO type kept at a time: superseded versions are removed as soon as they clear `CLEANUP_MIN_RATIO`, regardless of whether anyone's still downloading them. When `false` (default), superseded versions are instead kept until they go stagnant - see `CLEANUP_STAGNATION_*` below. |
+| `CLEANUP_MIN_RATIO` | `1.0` | Only used when `CLEANUP_KEEP_ONLY_LATEST_VERSION=true`. Minimum seed ratio a superseded version must reach before it's removed. |
+| `CLEANUP_SKIP_RATIO_CHECK` | `false` | Only used when `CLEANUP_KEEP_ONLY_LATEST_VERSION=true`. Set to `true` to remove superseded versions immediately, ignoring `CLEANUP_MIN_RATIO`. |
+| `CLEANUP_STAGNATION_WINDOW_DAYS` | `30` | Default cleanup path (`CLEANUP_KEEP_ONLY_LATEST_VERSION=false`). A superseded version is only eligible for removal once we've tracked its ratio for at least this many days - it needs enough history before we judge it as dead. |
+| `CLEANUP_STAGNATION_MIN_RATIO_DELTA` | `0.02` | Default cleanup path. A superseded version is removed once its ratio has grown by less than this over `CLEANUP_STAGNATION_WINDOW_DAYS` - i.e. nobody's downloading it anymore. Versions still gaining ratio are left seeding no matter how old they are. The current/latest version of each ISO type is never removed this way, regardless of its ratio - see `fetch_torrents_ratio_history.json` below. |
 
 ---
 

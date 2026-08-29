@@ -7,6 +7,7 @@ import logging
 import time
 import shutil
 import socket
+from datetime import date
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
 
@@ -14,6 +15,7 @@ from transmission_rpc import Client
 log_dir = os.getenv('FETCH_TORRENTS_LOG_DIR', '/logs')
 log_file = os.path.join(log_dir, "fetch_torrents.log")
 ratio_log_file = os.path.join(log_dir, "fetch_torrents_ratios.log")
+ratio_history_file = os.path.join(log_dir, "fetch_torrents_ratio_history.json")
 
 def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     value = os.getenv(env_var, '').strip()
@@ -561,10 +563,14 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
 
 # Group torrents by (distro, type_) using the same parsing logic used for
 # ratio lookups, so grouping matches how real Transmission torrent names are
-# actually structured for each distro. Kept separate from cleanup_old_versions()
-# so the selection logic can be unit tested without a live Transmission RPC
-# connection (see tests/test_fetch_torrents.py).
-def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
+# actually structured for each distro. The newest entry per group is never
+# returned - it's the version fetch_*() functions currently consider "latest"
+# upstream, so removing it would just get it silently re-fetched and
+# re-downloaded on the very next run (should_fetch_torrent() only knows to
+# skip a fetch once a *previous* version's ratio is on record). Kept separate
+# from the cleanup_*() functions so the selection logic can be unit tested
+# without a live Transmission RPC connection (see tests/test_fetch_torrents.py).
+def _old_version_candidates(torrents):
     groups = {}
     for torrent in torrents:
         distro = get_distro(torrent.name)
@@ -578,23 +584,31 @@ def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
             continue
         groups.setdefault((distro, type_), []).append((version, torrent))
 
-    to_remove = []
-    to_keep_low_ratio = []
-    for (distro, type_), entries in groups.items():
+    candidates = []
+    for entries in groups.values():
         if len(entries) < 2:
             continue
         # Keep the highest version, consider the rest for removal.
         entries.sort(key=lambda entry: entry[0], reverse=True)
-        for version, torrent in entries[1:]:
-            ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
-            if not skip_ratio_check and ratio < min_ratio:
-                to_keep_low_ratio.append((torrent, ratio))
-            else:
-                to_remove.append(torrent)
+        candidates.extend(torrent for _version, torrent in entries[1:])
+    return candidates
+
+def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
+    to_remove = []
+    to_keep_low_ratio = []
+    for torrent in _old_version_candidates(torrents):
+        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+        if not skip_ratio_check and ratio < min_ratio:
+            to_keep_low_ratio.append((torrent, ratio))
+        else:
+            to_remove.append(torrent)
 
     return to_remove, to_keep_low_ratio
 
 def cleanup_old_versions():
+    """Space-constrained option (CLEANUP_KEEP_ONLY_LATEST_VERSION=true):
+    remove superseded versions as soon as they clear the ratio floor,
+    regardless of whether anyone's still downloading them."""
     tc = Client(host='localhost', port=9091)
     torrents = tc.get_torrents()
 
@@ -611,6 +625,115 @@ def cleanup_old_versions():
     for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
+
+
+RATIO_HISTORY_SAMPLE_INTERVAL_DAYS = 7
+
+
+def load_ratio_history(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read ratio history at %s (%s) – starting fresh.", path, exc)
+        return {}
+
+
+def save_ratio_history(path, history):
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, path)
+
+
+# Keeps the on-disk history bounded regardless of how long the seeder has
+# been running: torrents no longer seeding are dropped entirely, and each
+# remaining torrent keeps at most ~(window_days / interval) samples - one
+# taken every RATIO_HISTORY_SAMPLE_INTERVAL_DAYS, pruned once older than
+# window_days + the interval. That's a fixed handful of small numbers per
+# torrent forever, not one entry per run.
+def update_ratio_history(history, current_ratios, today, sample_interval_days=RATIO_HISTORY_SAMPLE_INTERVAL_DAYS, window_days=30):
+    max_age_days = window_days + sample_interval_days
+    updated = {}
+    for name, ratio in current_ratios.items():
+        samples = list(history.get(name, []))
+        if not samples or (today - date.fromisoformat(samples[-1]['date'])).days >= sample_interval_days:
+            samples.append({'date': today.isoformat(), 'ratio': ratio})
+        updated[name] = [
+            s for s in samples
+            if (today - date.fromisoformat(s['date'])).days <= max_age_days
+        ]
+    return updated
+
+
+def _stagnation_anchor(samples, today, window_days):
+    """Ratio of the oldest recorded sample that's at least window_days old,
+    or None if we don't have one yet - i.e. this torrent is too new to judge
+    either way."""
+    old_enough = [s for s in samples if (today - date.fromisoformat(s['date'])).days >= window_days]
+    if not old_enough:
+        return None
+    return min(old_enough, key=lambda s: s['date'])['ratio']
+
+
+def plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02):
+    """Default cleanup path: among superseded (non-latest) versions per
+    (distro, type) group, remove ones whose ratio has grown less than
+    min_ratio_delta over the last window_days - nobody's downloading them
+    anymore. Still-growing or not-yet-old-enough-to-judge candidates are
+    kept. The latest/only version of a group is never a candidate (see
+    _old_version_candidates)."""
+    to_remove = []
+    to_keep = []
+    for torrent in _old_version_candidates(torrents):
+        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+        anchor = _stagnation_anchor(history.get(torrent.name, []), today, window_days)
+        if anchor is None:
+            to_keep.append((torrent, None))
+            continue
+        delta = ratio - anchor
+        if delta < min_ratio_delta:
+            to_remove.append(torrent)
+        else:
+            to_keep.append((torrent, delta))
+    return to_remove, to_keep
+
+
+def cleanup_stagnant_torrents():
+    tc = Client(host='localhost', port=9091)
+    torrents = tc.get_torrents()
+
+    window_days = int(os.getenv('CLEANUP_STAGNATION_WINDOW_DAYS', '30'))
+    min_ratio_delta = float(os.getenv('CLEANUP_STAGNATION_MIN_RATIO_DELTA', '0.02'))
+    today = date.today()
+
+    history = load_ratio_history(ratio_history_file)
+    current_ratios = {t.name: float(getattr(t, 'ratio', 0.0) or 0.0) for t in torrents}
+    history = update_ratio_history(history, current_ratios, today, window_days=window_days)
+
+    to_remove, to_keep = plan_stagnation_cleanup(torrents, history, today, window_days, min_ratio_delta)
+
+    for torrent, delta in to_keep:
+        if delta is None:
+            logger.info(
+                "Keeping old version %s – not enough ratio history yet (need %d days).",
+                torrent.name, window_days,
+            )
+        else:
+            logger.info(
+                "Keeping old version %s – ratio grew by %.3f over the last %d days.",
+                torrent.name, delta, window_days,
+            )
+    for torrent in to_remove:
+        logger.info(
+            "Removing stagnant torrent: %s (no meaningful ratio growth in %d days)",
+            torrent.name, window_days,
+        )
+        tc.remove_torrent(torrent.id, delete_data=True)
+
+    save_ratio_history(ratio_history_file, history)
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -672,7 +795,10 @@ if __name__ == "__main__":
         logger.error("Transmission RPC not available on localhost:9091; skipping ratio logs.")
         
     try:
-        cleanup_old_versions()
+        if parse_bool('CLEANUP_KEEP_ONLY_LATEST_VERSION', False):
+            cleanup_old_versions()
+        else:
+            cleanup_stagnant_torrents()
     except Exception as exc:
         logger.error("Could not clean up old versions: %s", exc)
 
