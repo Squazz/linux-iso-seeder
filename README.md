@@ -75,6 +75,39 @@
 
 ---
 
+## 🌐 **Peer port forwarding (optional)**
+
+Transmission accepts incoming connections from other peers on `51413`
+(`tcp` and `udp`), separate from the `9091` web UI port used in the examples
+below. The image exposes it, but none of the example commands publish it
+with `-p` - add that yourself if you want it (see the first example below).
+
+- **What it does:** lets peers that don't already have an open port of their
+  own connect *to you*. Without it, Transmission still works - it downloads
+  and seeds fine to peers who do have an open port, and finds them via
+  trackers/DHT/PEX - but a large share of BitTorrent peers are behind NAT
+  with a closed port too, and two closed-port peers generally can't connect
+  to each other. So forwarding this port measurably increases how much of
+  the swarm you can seed to.
+- **It's optional.** If you don't want to touch your router, leave it as-is
+  - the container still seeds, just somewhat less effectively.
+- **The tradeoff:** forwarding it exposes this port from your router
+  straight to the container, reachable from the internet. The BitTorrent
+  peer-wire protocol isn't a management/admin interface (no auth, no shell),
+  and the container already updates Transmission on every start, but it's
+  still more surface than a fully closed port. If that matters to you,
+  combine it with `RUN_AS_NON_ROOT=true` (see
+  [Security considerations](#-security-considerations)) for defense in
+  depth.
+- **How:** forward `51413` `tcp`+`udp` on your router to the host running
+  this container, and publish the same port when starting the container
+  (`-p 51413:51413 -p 51413:51413/udp`, as in the first example below).
+  Leave Transmission's "randomize port on launch" option off (its default)
+  so the forwarded port keeps matching what Transmission actually listens
+  on.
+
+---
+
 ```bash
 docker build -t linux-iso-seeder .
 
@@ -85,6 +118,7 @@ docker run -d \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
+  -p 51413:51413 -p 51413:51413/udp \
   linux-iso-seeder
 
 # To disable ratio checking and download all torrents
