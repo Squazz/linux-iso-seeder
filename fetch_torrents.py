@@ -191,6 +191,47 @@ def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
     return valid
 
 
+# cloud-genericcloud images are chronically low-ratio regardless of
+# architecture or how recent the release is (see fetch_torrents_ratios.log) —
+# cloud images are typically pulled directly from a cloud provider rather
+# than via BitTorrent, so hosting them by default tends to leave this seeder
+# as a leecher.
+#
+# Kali's netinst installer is likewise consistently low-ratio across amd64,
+# arm64 and many releases, because Kali also ships a plain "installer" and an
+# "installer-everything" image that cover the same need. This is Kali-
+# specific: Debian's netinst image is the opposite — the single highest-ratio
+# image in the whole log — so it's deliberately excluded from this pattern.
+#
+# arm64/aarch64/armhf/armel builds were deliberately *not* included here —
+# the ratio log's low numbers for those are almost all older, superseded
+# versions (normal version churn already handled by
+# should_fetch_torrent()/plan_cleanup()); current-version arm64/armhf builds
+# (e.g. kali-linux-2026.2-raspberry-pi-armhf-img-xz, debian-13.6.0-arm64-netinst.iso)
+# actually have solid ratios, so architecture alone isn't a reliable signal.
+#
+# FETCH_TORRENTS_INCLUDE_LOW_DEMAND opts back into all of the above.
+LOW_DEMAND_PATTERN = re.compile(
+    r'(cloud-genericcloud|^kali-linux-\d+\.\d+-installer-netinst-)', re.IGNORECASE
+)
+
+def is_low_demand_variant(name):
+    return bool(LOW_DEMAND_PATTERN.search(name))
+
+def filter_low_demand(torrents, include_low_demand):
+    if include_low_demand:
+        return dict(torrents)
+    kept = {}
+    for name, url in torrents.items():
+        if is_low_demand_variant(name):
+            logger.info(
+                "Skipping %s – low-demand image family (set "
+                "FETCH_TORRENTS_INCLUDE_LOW_DEMAND=true to include).", name,
+            )
+        else:
+            kept[name] = url
+    return kept
+
 def get_distro(name):
     for distro, pattern in distro_patterns.items():
         if pattern.match(name):
@@ -594,6 +635,9 @@ if __name__ == "__main__":
     selected_distros = parse_supported_distros()
     logger.info("Selected distros for this run: %s", ", ".join(selected_distros))
 
+    include_low_demand = parse_bool('FETCH_TORRENTS_INCLUDE_LOW_DEMAND', False)
+    logger.info("Including low-demand image families (arm64/cloud/etc.): %s", include_low_demand)
+
     for distro, func in distro_funcs:
         if distro not in selected_distros:
             logger.info("Skipping distro %s because it is not enabled by FETCH_TORRENTS_DISTROS.", distro)
@@ -602,6 +646,7 @@ if __name__ == "__main__":
         logger.info(f"Fetching latest {distro} torrents...")
         torrents = func()
         if torrents:
+            torrents = filter_low_demand(torrents, include_low_demand)
             for name, url in torrents.items():
                 if should_fetch_torrent(name, ratios):
                     status = download_torrent(name, url)

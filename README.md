@@ -61,6 +61,7 @@
 | `FETCH_TORRENTS_LOG_LEVEL` | `INFO` | Overrides `LOG_LEVEL` when both are set. |
 | `FETCH_TORRENTS_ALWAYS_LOG` | `true` | If `true`, always logs a small set of important run-status messages even when the effective level is `ERROR`. Set to `false` to only log messages at or above the configured level. |
 | `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch,mint,fedora` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`, `mint`, `fedora`. |
+| `FETCH_TORRENTS_INCLUDE_LOW_DEMAND` | `false` | By default, `cloud-genericcloud` images and Kali's `netinst` installer are skipped — these image families see very few peers over BitTorrent and chronically end up with a seed ratio well below 1.0 regardless of architecture or how recent the release is (see `fetch_torrents_ratios.log`), leaving this seeder as a leecher. Set to `true` to fetch and seed these low-demand variants too. |
 | `RUN_AS_NON_ROOT` | `false` | Set to `true` to run Transmission and the fetch script as a dedicated non-root `seeder` user instead of root. See [Security considerations](#-security-considerations). |
 | `PUID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Uid the `seeder` user runs as - set this to match the uid that owns your bind-mounted `/config`, `/downloads`, `/watch`, `/logs` directories on the host. |
 | `PGID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Gid the `seeder` user runs as - set this to match the gid that owns your bind-mounted directories on the host. |
@@ -82,6 +83,16 @@ docker run -d \
 # To disable ratio checking and download all torrents
 docker run -d \
   -e SKIP_RATIO_CHECK=true \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -v /path/to/watch:/watch \
+  -v /path/to/logs:/logs \
+  -p 9091:9091 \
+  linux-iso-seeder
+
+# Opt in to also seeding low-demand image families (cloud images, Kali netinst)
+docker run -d \
+  -e FETCH_TORRENTS_INCLUDE_LOW_DEMAND=true \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \

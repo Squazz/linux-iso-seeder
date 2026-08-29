@@ -316,6 +316,85 @@ class FetchFedoraWorkstationNamingTests(unittest.TestCase):
         )
 
 
+class LowDemandVariantTests(unittest.TestCase):
+    """cloud-genericcloud images and Kali's netinst installer are
+    chronically low-ratio in fetch_torrents_ratios.log regardless of
+    architecture or how recent the release is — these are the 'image
+    families' FETCH_TORRENTS_INCLUDE_LOW_DEMAND gates.
+
+    arm64/aarch64/armhf/armel builds are deliberately NOT low-demand: current-
+    version arm64/armhf builds (e.g. kali-linux-2026.2-raspberry-pi-armhf-img-xz
+    at 2.351, debian-13.6.0-arm64-netinst.iso at 1.571) have solid ratios in
+    the log — the low arm64/armhf numbers there are almost all older,
+    superseded versions, already handled by should_fetch_torrent()."""
+
+    def test_cloud_images_are_low_demand_regardless_of_arch(self):
+        for name in (
+            "kali-linux-2026.2-cloud-genericcloud-amd64-tar-xz",
+            "kali-linux-2026.1-cloud-genericcloud-arm64-tar-xz",
+        ):
+            self.assertTrue(ft.is_low_demand_variant(name), name)
+
+    def test_kali_netinst_is_low_demand_regardless_of_arch(self):
+        for name in (
+            "kali-linux-2026.1-installer-netinst-amd64.iso",
+            "kali-linux-2025.2-installer-netinst-arm64.iso",
+        ):
+            self.assertTrue(ft.is_low_demand_variant(name), name)
+
+    def test_debian_netinst_is_not_low_demand(self):
+        # Debian's netinst is the highest-ratio image in the whole log —
+        # only Kali's netinst installer is excluded, not the substring.
+        for name in (
+            "debian-13.6.0-amd64-netinst.iso",
+            "debian-13.6.0-arm64-netinst.iso",
+        ):
+            self.assertFalse(ft.is_low_demand_variant(name), name)
+
+    def test_current_arm64_and_armhf_builds_are_not_low_demand(self):
+        for name in (
+            "debian-13.6.0-arm64-DVD-1.iso",
+            "kali-linux-2026.2-installer-arm64.iso",
+            "Fedora-Workstation-Live-aarch64-44",
+            "kali-linux-2026.2-raspberry-pi-armhf-img-xz",
+            "kali-linux-2025.2-raspberry-pi-zero-w-armel-img-xz",
+        ):
+            self.assertFalse(ft.is_low_demand_variant(name), name)
+
+    def test_mainstream_amd64_variants_are_not_low_demand(self):
+        for name in (
+            "ubuntu-24.04.4-desktop-amd64.iso",
+            "kali-linux-2026.2-installer-everything-amd64.iso",
+            "kali-linux-2026.2-installer-purple-amd64.iso",
+            "kali-linux-2026.2-installer-amd64.iso",
+            "archlinux-2026.04.01-x86_64.iso",
+            "Fedora-Workstation-Live-x86_64-44",
+        ):
+            self.assertFalse(ft.is_low_demand_variant(name), name)
+
+    def test_filter_low_demand_excludes_by_default(self):
+        torrents = {
+            "kali-linux-2026.2-installer-amd64.iso": "http://x/a",
+            "kali-linux-2026.2-installer-netinst-amd64.iso": "http://x/b",
+        }
+
+        filtered = ft.filter_low_demand(torrents, include_low_demand=False)
+
+        self.assertEqual(
+            filtered, {"kali-linux-2026.2-installer-amd64.iso": "http://x/a"}
+        )
+
+    def test_filter_low_demand_includes_when_enabled(self):
+        torrents = {
+            "kali-linux-2026.2-installer-amd64.iso": "http://x/a",
+            "kali-linux-2026.2-installer-netinst-amd64.iso": "http://x/b",
+        }
+
+        filtered = ft.filter_low_demand(torrents, include_low_demand=True)
+
+        self.assertEqual(filtered, torrents)
+
+
 class DownloadTorrent404Tests(unittest.TestCase):
     """Torrent URLs for releases no longer hosted upstream (e.g. old Ubuntu
     LTS releases that changelogs.ubuntu.com still marks 'Supported: 1' for
