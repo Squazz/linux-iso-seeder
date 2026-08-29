@@ -61,6 +61,9 @@
 | `FETCH_TORRENTS_LOG_LEVEL` | `INFO` | Overrides `LOG_LEVEL` when both are set. |
 | `FETCH_TORRENTS_ALWAYS_LOG` | `true` | If `true`, always logs a small set of important run-status messages even when the effective level is `ERROR`. Set to `false` to only log messages at or above the configured level. |
 | `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch,mint,fedora` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`, `mint`, `fedora`. |
+| `RUN_AS_NON_ROOT` | `false` | Set to `true` to run Transmission and the fetch script as a dedicated non-root `seeder` user instead of root. See [Security considerations](#-security-considerations). |
+| `PUID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Uid the `seeder` user runs as - set this to match the uid that owns your bind-mounted `/config`, `/downloads`, `/watch`, `/logs` directories on the host. |
+| `PGID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Gid the `seeder` user runs as - set this to match the gid that owns your bind-mounted directories on the host. |
 
 ---
 
@@ -85,6 +88,17 @@ docker run -d \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
   linux-iso-seeder
+
+# Opt in to running as a non-root user (see Security considerations)
+docker run -d \
+  -e RUN_AS_NON_ROOT=true \
+  -e PUID=1000 -e PGID=1000 \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -v /path/to/watch:/watch \
+  -v /path/to/logs:/logs \
+  -p 9091:9091 \
+  linux-iso-seeder
 ```
 
 ---
@@ -93,6 +107,17 @@ docker run -d \
 
 - Always review container scripts before deployment.  
 - This project installs the latest packages on container start for updated clients and security patches.
+- By default, transmission-daemon and the fetch script run as root, as in
+  every previous release, so nothing changes for existing deployments -
+  including ones sharing `/config`, `/downloads`, `/watch`, `/logs` with
+  other containers or host processes that expect root/a specific uid.
+  Set `RUN_AS_NON_ROOT=true` (with `PUID`/`PGID` if needed) to instead run
+  those processes as a dedicated non-root `seeder` user, for defense in
+  depth against bugs in code that handles untrusted input (scraped HTML,
+  downloaded `.torrent` files, Transmission's RPC/peer-wire parsing).
+  Enabling it recursively `chown`s the working directories to that user on
+  every start, so only turn it on for volumes you're sure aren't relied on
+  by anything else expecting a different owner.
 
 ---
 

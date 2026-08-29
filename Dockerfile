@@ -4,7 +4,14 @@ LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
 LABEL org.opencontainers.image.version=$VERSION
 # Install prerequisites
 RUN apk update && \
-    apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission-rpc
+    apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission-rpc su-exec
+
+# Create a non-root user/group the daemon and fetch script can optionally
+# run as (see RUN_AS_NON_ROOT in entrypoint.sh). Unused, and no behavior
+# change, unless that's explicitly enabled - the container still runs as
+# root by default.
+RUN addgroup -g 1000 seeder && \
+    adduser -D -H -u 1000 -G seeder seeder
 
 # Add fetch script
 COPY fetch_torrents.py /usr/local/bin/fetch_torrents.py
