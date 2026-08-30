@@ -84,6 +84,16 @@ container does not by itself pull a new image - `docker pull` the image,
 then `docker stop`/`docker rm` and re-run your `docker run` command (or
 recreate it, if you're managing it some other way) to actually update it.
 
+**If an update ever breaks a working deployment:** `apk upgrade` runs on
+every start/restart of an *existing* container too, not just when you
+recreate one from a new image - Docker's container filesystem persists
+across restarts, so packages can keep drifting forward on their own even if
+you never touch the image tag. To get back to a known-good state: recreate
+the container from a pinned, previously-working image tag (see above), then
+set `SKIP_PACKAGE_UPDATES=true` so it stays frozen there instead of
+upgrading itself into the same broken state again on the next restart. Unset
+it once you're ready to resume auto-patching.
+
 ---
 
 ## 🛑 **Stopping / uninstalling**
@@ -114,6 +124,7 @@ below), remember to remove that forwarding rule too.
 | `FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS` | `false` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. A scrape showing zero seeders means there's no verified-complete copy anywhere in the swarm — the leechers present may not collectively hold every piece, so the download could stall short of 100% forever, leaving us leeching something we can never actually seed back. Excluded by default for that reason, regardless of leecher count. Set to `true` to gamble on reviving such swarms anyway (the absolute leecher floor above still applies) — for the official, well-seeded Linux ISO trackers this project currently targets this is mostly theoretical, but may matter more if this project expands to less centrally-seeded content in the future. |
 | `FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS` | `7` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. A candidate that scraped to no demand is remembered (`fetch_torrents_old_release_check_state.json`) and skipped without any network call until this many days have passed, instead of being re-downloaded and re-scraped on every daily run. |
 | `FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED` | `true` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. Once cleanup removes a torrent for going stagnant (see `CLEANUP_STAGNATION_*`), it's remembered (`fetch_torrents_removed_history.json`) and never automatically re-added by the old-release check — a torrent that took weeks of flat ratio to justify removing shouldn't come back from one day's momentary leecher blip, since the ratio might not be recouped before it goes stagnant again. Set to `false` to allow re-adding previously-removed old releases. |
+| `SKIP_PACKAGE_UPDATES` | `false` | Set to `true` to skip the `apk update && apk upgrade` that otherwise runs on every container start/restart - see [Updates](#-updates). Useful as an "out" if an upstream package update ever breaks a working deployment: recreate the container from a known-good pinned image tag, then set this so it stays frozen there instead of drifting forward again on the next restart. |
 | `RUN_AS_NON_ROOT` | `false` | Set to `true` to run Transmission and the fetch script as a dedicated non-root `seeder` user instead of root. See [Security considerations](#-security-considerations). |
 | `PUID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Uid the `seeder` user runs as - set this to match the uid that owns your bind-mounted `/config`, `/downloads`, `/watch`, `/logs` directories on the host. |
 | `PGID` | `1000` | Only used when `RUN_AS_NON_ROOT=true`. Gid the `seeder` user runs as - set this to match the gid that owns your bind-mounted directories on the host. |
@@ -245,7 +256,7 @@ restarts some other way (e.g. an external orchestrator).
 ## 🔒 **Security considerations**
 
 - Always review container scripts before deployment.  
-- This project installs the latest packages on container start for updated clients and security patches. This is a deliberate tradeoff: it keeps every deployment auto-patched against CVEs without anyone needing to re-pull the image, but it also means a breaking change in an upstream Alpine/Transmission package could affect every running deployment simultaneously on its next restart, with no version pin to roll back to. If you'd rather have fully reproducible, unchanging package versions, build your own image from a pinned `FROM alpine:<version>` and remove the `apk upgrade` step in `entrypoint.sh`.
+- This project installs the latest packages on container start for updated clients and security patches. This is a deliberate tradeoff: it keeps every deployment auto-patched against CVEs without anyone needing to re-pull the image, but it also means a breaking change in an upstream Alpine/Transmission package could affect every running deployment simultaneously on its next restart, with no version pin to roll back to. Set `SKIP_PACKAGE_UPDATES=true` if you'd rather have fully unchanging package versions (see [Updates](#-updates) for how to combine this with a pinned image tag), or build your own image from a pinned `FROM alpine:<version>` for a fully reproducible build.
 - By default, transmission-daemon and the fetch script run as root, as in
   every previous release, so nothing changes for existing deployments -
   including ones sharing `/config`, `/downloads`, `/watch`, `/logs` with

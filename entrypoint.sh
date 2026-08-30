@@ -2,12 +2,24 @@
 
 echo "Starting linux-iso-seeder container"
 
-# Update all packages to latest
-apk update
-apk upgrade
+# Update all packages to latest on every start/restart, unless disabled -
+# see SKIP_PACKAGE_UPDATES below. Docker's container writable layer persists
+# across restarts (not just recreation), so without this a long-running
+# container keeps ratcheting package versions forward on its own even if
+# you never re-pull the image - this is what actually applies security
+# patches automatically, but it also means a breaking upstream change can
+# land on an already-working deployment with no warning.
+SKIP_PACKAGE_UPDATES=$(echo "${SKIP_PACKAGE_UPDATES:-false}" | tr '[:upper:]' '[:lower:]')
 
-# Clean up apk cache
-rm -rf /var/cache/apk/*
+if [ "$SKIP_PACKAGE_UPDATES" = "true" ]; then
+    echo "SKIP_PACKAGE_UPDATES=true: skipping apk update/upgrade"
+else
+    apk update
+    apk upgrade
+
+    # Clean up apk cache
+    rm -rf /var/cache/apk/*
+fi
 
 # Root is the default, matching every previous release - so existing
 # deployments (including ones sharing /config, /downloads, /watch, /logs
