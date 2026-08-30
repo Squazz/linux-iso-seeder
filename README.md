@@ -1,5 +1,10 @@
 # linux-iso-seeder
 
+[![Docker Image CI](https://github.com/Squazz/linux-iso-seeder/actions/workflows/docker-image.yml/badge.svg)](https://github.com/Squazz/linux-iso-seeder/actions/workflows/docker-image.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Squazz/linux-iso-seeder)](https://github.com/Squazz/linux-iso-seeder/releases)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
+[![Container Image](https://img.shields.io/badge/ghcr.io-linux--iso--seeder-blue?logo=docker)](https://github.com/Squazz/linux-iso-seeder/pkgs/container/linux-iso-seeder)
+
 > **Automated Linux ISO torrent seeder in a single container.**
 >
 > Helps the open-source community by seeding official ISOs for multiple Linux distributions, with **no manual intervention after deployment**.
