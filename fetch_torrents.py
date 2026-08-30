@@ -4,6 +4,7 @@ import re
 import json
 import requests
 import logging
+import logging.handlers
 import tempfile
 import time
 import shutil
@@ -41,13 +42,31 @@ def parse_bool(env_var: str, default: bool = False) -> bool:
         return default
     return value in ('1', 'true', 'yes', 'on')
 
+
+def parse_int(env_var: str, default: int) -> int:
+    value = os.getenv(env_var, '').strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
 log_level = parse_log_level('FETCH_TORRENTS_LOG_LEVEL', parse_log_level('LOG_LEVEL', logging.INFO))
 formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
 
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 
-file_handler = logging.FileHandler(log_file)
+# Rotating rather than a plain FileHandler: fetch_torrents.log otherwise
+# grows without bound for the lifetime of a "deploy and forget" container -
+# see FETCH_TORRENTS_LOG_MAX_BYTES/FETCH_TORRENTS_LOG_BACKUP_COUNT in the
+# README. 5MB x 3 backups keeps a generous amount of history bounded to ~20MB.
+log_max_bytes = parse_int('FETCH_TORRENTS_LOG_MAX_BYTES', 5 * 1024 * 1024)
+log_backup_count = parse_int('FETCH_TORRENTS_LOG_BACKUP_COUNT', 3)
+file_handler = logging.handlers.RotatingFileHandler(
+    log_file, maxBytes=log_max_bytes, backupCount=log_backup_count,
+)
 file_handler.setFormatter(formatter)
 
 class RatioOnlyFilter(logging.Filter):
@@ -352,15 +371,10 @@ def format_run_summary(elapsed, success_count, existing_count, not_found_count, 
 
 
 def download_torrent(name, url):
-    dest   = os.path.join(watch_dir, f"{name}.torrent")
-    added  = os.path.join(watch_dir, f"{name}.torrent.added")
+    dest = os.path.join(watch_dir, f"{name}.torrent")
 
-    # Skip if already processed or queued 
     if os.path.exists(dest):
         logger.info("Skip %s – torrent already present.", os.path.basename(dest))
-        return "existing"
-    if os.path.exists(added):
-        logger.info("Skip %s – torrent already present.", os.path.basename(added))
         return "existing"
 
     try:
@@ -819,8 +833,7 @@ def check_old_releases_for_demand(selected_distros, include_low_demand, min_leec
 
         for name, url in candidates.items():
             dest = os.path.join(watch_dir, f"{name}.torrent")
-            added_marker = f"{dest}.added"
-            if os.path.exists(dest) or os.path.exists(added_marker):
+            if os.path.exists(dest):
                 continue
 
             if name in removed_history:
@@ -937,6 +950,20 @@ def _old_version_candidates(torrents):
         candidates.extend(torrent for _version, torrent in entries[1:])
     return candidates
 
+def _remove_watch_file(name):
+    """Best-effort: once cleanup deletes a torrent's downloaded data, also
+    remove its leftover .torrent file from /watch - otherwise these
+    accumulate forever, since nothing else (including Transmission itself,
+    by default) ever cleans them up."""
+    path = os.path.join(watch_dir, f"{name}.torrent")
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Could not remove watch-folder file for %s: %s", name, exc)
+
+
 def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
     to_remove = []
     to_keep_low_ratio = []
@@ -973,7 +1000,66 @@ def cleanup_old_versions():
     for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
+        _remove_watch_file(torrent.name)
         removed_history = record_removal(removed_history, torrent.name, today, 'keep_only_latest')
+    save_removed_history(removed_history_file, removed_history)
+
+
+def plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent):
+    """CLEANUP_DISK_USAGE_THRESHOLD_PERCENT safety valve, on top of the
+    normal ratio/stagnation-based cleanup above: if disk usage is still at
+    or beyond threshold_percent afterward, selects superseded (non-latest)
+    versions for removal regardless of ratio floor or stagnation status,
+    lowest ratio (least useful) first - so a forgotten, never-updated
+    deployment doesn't silently fill its disk. threshold_percent <= 0
+    disables this entirely. The caller decides how many of the returned
+    candidates are actually needed by rechecking real disk usage between
+    removals - ratio data alone can't say how many bytes each one holds."""
+    if threshold_percent <= 0 or used_percent < threshold_percent:
+        return []
+    candidates = _old_version_candidates(torrents)
+    candidates.sort(key=lambda t: float(getattr(t, 'ratio', 0.0) or 0.0))
+    return candidates
+
+
+def enforce_disk_usage_limit(threshold_percent, download_path="/downloads"):
+    """Runs after the normal cleanup pass. Only connects to Transmission and
+    touches disk usage at all once threshold_percent is actually exceeded,
+    so a deployment that never gets close to full pays no extra cost."""
+    if threshold_percent <= 0:
+        return
+
+    total, used, _free = shutil.disk_usage(download_path)
+    used_percent = (used / total * 100) if total else 0.0
+    if used_percent < threshold_percent:
+        return
+
+    username, password = get_rpc_credentials()
+    tc = Client(host='localhost', port=9091, username=username, password=password)
+    torrents = tc.get_torrents()
+    candidates = plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent)
+
+    if not candidates:
+        logger.warning(
+            "Downloads folder usage is %.1f%% (>= %.1f%% threshold) but no superseded "
+            "versions are available to free space.", used_percent, threshold_percent,
+        )
+        return
+
+    removed_history = load_removed_history(removed_history_file)
+    today = date.today()
+    for torrent in candidates:
+        total, used, _free = shutil.disk_usage(download_path)
+        used_percent = (used / total * 100) if total else 0.0
+        if used_percent < threshold_percent:
+            break
+        logger.warning(
+            "Downloads folder usage %.1f%% >= %.1f%% threshold - removing %s (ratio %.3f) to free space.",
+            used_percent, threshold_percent, torrent.name, float(getattr(torrent, 'ratio', 0.0) or 0.0),
+        )
+        tc.remove_torrent(torrent.id, delete_data=True)
+        _remove_watch_file(torrent.name)
+        removed_history = record_removal(removed_history, torrent.name, today, 'disk_pressure')
     save_removed_history(removed_history_file, removed_history)
 
 
@@ -1084,6 +1170,7 @@ def cleanup_stagnant_torrents():
             torrent.name, window_days,
         )
         tc.remove_torrent(torrent.id, delete_data=True)
+        _remove_watch_file(torrent.name)
         removed_history = record_removal(removed_history, torrent.name, today, 'stagnant')
     save_removed_history(removed_history_file, removed_history)
 
@@ -1180,6 +1267,12 @@ if __name__ == "__main__":
             cleanup_stagnant_torrents()
     except Exception as exc:
         logger.error("Could not clean up old versions: %s", exc)
+
+    try:
+        disk_usage_threshold = float(os.getenv('CLEANUP_DISK_USAGE_THRESHOLD_PERCENT', '95'))
+        enforce_disk_usage_limit(disk_usage_threshold)
+    except Exception as exc:
+        logger.error("Could not enforce disk usage limit: %s", exc)
 
     total, used, free = shutil.disk_usage("/downloads")
     logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")

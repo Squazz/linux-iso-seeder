@@ -8,6 +8,7 @@ FETCH_TORRENTS_LOG_DIR at a temp directory before importing it.
 
 Run with: python -m unittest discover -s tests
 """
+import json
 import os
 import subprocess
 import sys
@@ -257,6 +258,58 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
             "open at import time, before ever being read. That silently "
             "defeats the low-ratio fetch gate for every distro.",
         )
+
+
+class LogFileRotationTests(unittest.TestCase):
+    """fetch_torrents.log must be bounded (RotatingFileHandler), not a plain
+    FileHandler appending forever for the life of a 'deploy and forget'
+    container. Import-time behavior driven by env vars, so this uses a fresh
+    subprocess like RatioLogSurvivesRestartTests, rather than the
+    already-imported module (whose handler was built once, at whatever env
+    was in effect during test collection)."""
+
+    def _run(self, extra_env=None):
+        log_dir = tempfile.mkdtemp(prefix='fetch_torrents_log_rotation_')
+        script = (
+            "import os, sys, types\n"
+            "from unittest.mock import MagicMock\n"
+            "stub = types.ModuleType('transmission_rpc')\n"
+            "stub.Client = MagicMock()\n"
+            "sys.modules['transmission_rpc'] = stub\n"
+            f"sys.path.insert(0, {REPO_ROOT!r})\n"
+            "import fetch_torrents as ft\n"
+            "print(type(ft.file_handler).__name__)\n"
+            "print(ft.file_handler.maxBytes)\n"
+            "print(ft.file_handler.backupCount)\n"
+        )
+        env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir, **(extra_env or {}))
+        result = subprocess.run(
+            [sys.executable, '-c', script],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        return lines[0], int(lines[1]), int(lines[2])
+
+    def test_defaults_to_a_bounded_rotating_handler(self):
+        handler_type, max_bytes, backup_count = self._run()
+        self.assertEqual(handler_type, 'RotatingFileHandler')
+        self.assertEqual(max_bytes, 5 * 1024 * 1024)
+        self.assertEqual(backup_count, 3)
+
+    def test_env_vars_override_rotation_settings(self):
+        _handler_type, max_bytes, backup_count = self._run({
+            'FETCH_TORRENTS_LOG_MAX_BYTES': '1000', 'FETCH_TORRENTS_LOG_BACKUP_COUNT': '1',
+        })
+        self.assertEqual(max_bytes, 1000)
+        self.assertEqual(backup_count, 1)
+
+    def test_invalid_env_vars_fall_back_to_defaults(self):
+        _handler_type, max_bytes, backup_count = self._run({
+            'FETCH_TORRENTS_LOG_MAX_BYTES': 'not-a-number', 'FETCH_TORRENTS_LOG_BACKUP_COUNT': 'also-bad',
+        })
+        self.assertEqual(max_bytes, 5 * 1024 * 1024)
+        self.assertEqual(backup_count, 3)
 
 
 class FetchUbuntuLtsNamingTests(unittest.TestCase):
@@ -1363,6 +1416,239 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
 
         second_call_kwargs = mock_post.call_args_list[1].kwargs
         self.assertEqual(second_call_kwargs.get('auth'), ('bob', 'other'))
+
+
+class CleanupRemovesWatchFileTests(unittest.TestCase):
+    """When cleanup removes a torrent's downloaded data, it must also remove
+    the small .torrent file it left behind in /watch - otherwise these
+    accumulate forever, since nothing else (including Transmission itself,
+    by default) ever cleans them up."""
+
+    def setUp(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_cleanup_watchfile_')
+        for attr, filename in (
+            ('removed_history_file', 'removed_history.json'),
+            ('ratio_history_file', 'ratio_history.json'),
+        ):
+            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
+        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _touch_watch_file(self, name):
+        path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('fake torrent bytes')
+        return path
+
+    def test_cleanup_old_versions_removes_the_watch_file(self):
+        old_path = self._touch_watch_file('ubuntu-23.10-desktop-amd64.iso')
+        self._touch_watch_file('ubuntu-24.04-desktop-amd64.iso')
+        torrents = [
+            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
+            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        with unittest.mock.patch.dict(os.environ, {'CLEANUP_SKIP_RATIO_CHECK': 'true'}), \
+                unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.cleanup_old_versions()
+
+        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+        self.assertFalse(os.path.exists(old_path))
+
+    def test_missing_watch_file_does_not_raise(self):
+        # No .torrent file created for the superseded version - cleanup must
+        # still succeed and remove the torrent from Transmission.
+        torrents = [
+            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
+            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        with unittest.mock.patch.dict(os.environ, {'CLEANUP_SKIP_RATIO_CHECK': 'true'}), \
+                unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.cleanup_old_versions()  # must not raise
+
+        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+
+    def test_cleanup_stagnant_torrents_removes_the_watch_file(self):
+        old_path = self._touch_watch_file('ubuntu-23.10-desktop-amd64.iso')
+        self._touch_watch_file('ubuntu-24.04-desktop-amd64.iso')
+        torrents = [
+            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
+            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        # 32 days old: past the default 30-day stagnation window, but still
+        # within update_ratio_history()'s own 37-day (window + sample
+        # interval) prune horizon, since that prune runs - on this same
+        # history - before plan_stagnation_cleanup() ever sees it. Ratio
+        # unchanged since then, so plan_stagnation_cleanup() must select this
+        # torrent for removal.
+        anchor_date = (date.today() - timedelta(days=32)).isoformat()
+        history = {'ubuntu-23.10-desktop-amd64.iso': [{'date': anchor_date, 'ratio': 2.0}]}
+        with open(ft.ratio_history_file, 'w', encoding='utf-8') as f:
+            json.dump(history, f)
+
+        with unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.cleanup_stagnant_torrents()
+
+        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+        self.assertFalse(os.path.exists(old_path))
+
+
+class PlanDiskPressureCleanupTests(unittest.TestCase):
+    """plan_disk_pressure_cleanup() is the pure selection logic behind
+    CLEANUP_DISK_USAGE_THRESHOLD_PERCENT - the safety valve that kicks in
+    when normal ratio/stagnation-based cleanup isn't freeing space fast
+    enough for a forgotten, never-updated deployment."""
+
+    def test_below_threshold_returns_nothing(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
+        ]
+        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=80.0, threshold_percent=95.0), [])
+
+    def test_disabled_when_threshold_is_zero_or_negative(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
+        ]
+        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=0), [])
+        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=-1), [])
+
+    def test_at_or_above_threshold_returns_candidates_lowest_ratio_first(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),   # latest - never a candidate
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+            FakeTorrent("ubuntu-22.04.1-live-server-amd64.iso", 3, ratio=0.2),
+            FakeTorrent("ubuntu-24.04.1-live-server-amd64.iso", 4, ratio=5.0),  # latest of this group
+        ]
+        result = ft.plan_disk_pressure_cleanup(torrents, used_percent=95.0, threshold_percent=95.0)
+        self.assertEqual(
+            names_of(result),
+            ["ubuntu-22.04.1-live-server-amd64.iso", "ubuntu-23.10-desktop-amd64.iso"],
+        )
+        # lowest ratio (least useful) first
+        self.assertEqual(result[0].name, "ubuntu-22.04.1-live-server-amd64.iso")
+
+    def test_no_superseded_candidates_returns_empty(self):
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=0.0)]
+        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=95.0), [])
+
+
+class EnforceDiskUsageLimitTests(unittest.TestCase):
+    """enforce_disk_usage_limit() wires plan_disk_pressure_cleanup() to a
+    live Transmission connection and real disk usage, re-checking usage
+    between removals since ratio data alone can't say how many bytes each
+    torrent holds."""
+
+    def setUp(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_disk_pressure_')
+        for attr, filename in (
+            ('removed_history_file', 'removed_history.json'),
+            ('ratio_history_file', 'ratio_history.json'),
+        ):
+            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
+        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_disabled_threshold_never_touches_disk_or_rpc(self):
+        with unittest.mock.patch.object(ft.shutil, 'disk_usage') as mock_disk_usage, \
+                unittest.mock.patch.object(ft, 'Client') as mock_client_cls:
+            ft.enforce_disk_usage_limit(0)
+
+        mock_disk_usage.assert_not_called()
+        mock_client_cls.assert_not_called()
+
+    def test_below_threshold_does_not_connect_to_transmission(self):
+        with unittest.mock.patch.object(ft.shutil, 'disk_usage', return_value=(100, 50, 50)), \
+                unittest.mock.patch.object(ft, 'Client') as mock_client_cls:
+            ft.enforce_disk_usage_limit(95)
+
+        mock_client_cls.assert_not_called()
+
+    def test_removes_lowest_ratio_candidates_until_under_threshold(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),  # latest, never removed
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        # 96% initially (over threshold); drops to 90% (under threshold)
+        # after the first removal - the second, higher-ratio candidate must
+        # be left alone.
+        with unittest.mock.patch.object(
+            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.enforce_disk_usage_limit(95)
+
+        client.remove_torrent.assert_called_once_with(3, delete_data=True)
+
+    def test_removes_the_watch_file_for_each_removal(self):
+        watch_path = os.path.join(self.tmp_watch_dir, "ubuntu-22.04-desktop-amd64.iso.torrent")
+        with open(watch_path, 'w', encoding='utf-8') as f:
+            f.write('fake torrent bytes')
+
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        with unittest.mock.patch.object(
+            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.enforce_disk_usage_limit(95)
+
+        self.assertFalse(os.path.exists(watch_path))
+
+    def test_no_candidates_logs_warning_and_does_not_raise(self):
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0)]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        with unittest.mock.patch.object(ft.shutil, 'disk_usage', return_value=(100, 96, 4)), \
+                unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.enforce_disk_usage_limit(95)  # must not raise
+
+        client.remove_torrent.assert_not_called()
+
+    def test_records_removal_reason_as_disk_pressure(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
+        ]
+        client = MagicMock()
+        client.get_torrents.return_value = torrents
+
+        with unittest.mock.patch.object(
+            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+            ft.enforce_disk_usage_limit(95)
+
+        history = ft.load_removed_history(ft.removed_history_file)
+        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]['reason'], 'disk_pressure')
 
 
 if __name__ == "__main__":

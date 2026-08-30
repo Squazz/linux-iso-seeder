@@ -26,9 +26,10 @@ Seeding Linux ISOs improves global availability, helps users download faster, an
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
 ✅ **Logs and metrics** for transparency and future monitoring  
-✅ Automatically cleans up superseded torrents once they go stagnant (no ratio growth in 30 days by default) - still-active old versions keep seeding, only truly dead ones are removed. Space-constrained? `CLEANUP_KEEP_ONLY_LATEST_VERSION=true` keeps just one version per ISO type at all times instead.  
+✅ Automatically cleans up superseded torrents once they go stagnant (no ratio growth in 30 days by default) - still-active old versions keep seeding, only truly dead ones are removed. Space-constrained? `CLEANUP_KEEP_ONLY_LATEST_VERSION=true` keeps just one version per ISO type at all times instead. A disk-usage safety valve (`CLEANUP_DISK_USAGE_THRESHOLD_PERCENT`, default `95`) removes lowest-ratio superseded versions anyway if `/downloads` is nearly full, regardless of ratio or stagnation status.  
 ✅ **Smart fetching**: Only downloads new versions of specific ISO types if the previous version of that same ISO type has achieved a seed ratio of at least 1.0, ensuring contribution to torrent health. Can be disabled via environment variable.  
-✅ Designed as a **single-container, deploy-and-forget solution**
+✅ Designed as a **single-container, deploy-and-forget solution**  
+✅ **No telemetry or phone-home of any kind** - the container only ever talks to the official distro download/tracker sites it fetches from and the BitTorrent peers/trackers it seeds to
 
 ---
 
@@ -54,7 +55,46 @@ Seeding Linux ISOs improves global availability, helps users download faster, an
 | `/config` | Transmission configuration files |
 | `/downloads` | Downloaded ISO files (seeding storage) |
 | `/watch` | Torrent watch folder |
-| `/logs` | Persistent logs for fetch script runs, plus `fetch_torrents_ratio_history.json` - a small, bounded per-torrent ratio history used to detect stagnant (no-traction) torrents. Deleting it just resets stagnation tracking; it's not required for anything else. |
+| `/logs` | Persistent logs for fetch script runs, plus `fetch_torrents_ratio_history.json` - a small, bounded per-torrent ratio history used to detect stagnant (no-traction) torrents. Deleting it just resets stagnation tracking; it's not required for anything else. `fetch_torrents.log` itself is size-bounded (rotated, see `FETCH_TORRENTS_LOG_MAX_BYTES`/`FETCH_TORRENTS_LOG_BACKUP_COUNT`), so this volume won't grow without limit even if left running indefinitely. |
+
+---
+
+## 💾 **Resource expectations**
+
+- **CPU/RAM:** minimal - the fetch script runs once a day for a few seconds; Transmission itself is lightweight and idles between transfers.
+- **Disk:** the main variable cost. `/downloads` holds every seeded ISO and grows as new distro releases come out; budget at least a few tens of GB and expect steady, open-ended growth over months of uptime unless you set `CLEANUP_KEEP_ONLY_LATEST_VERSION=true`. The `CLEANUP_DISK_USAGE_THRESHOLD_PERCENT` safety valve (default `95`) exists specifically so a deployment nobody comes back to doesn't fill its disk outright, but it's a last resort, not a substitute for provisioning enough space up front.
+- **Network:** no way to bound this - it's a seedbox, and by design it uploads to other peers as well as downloading new releases. Set `TRANSMISSION_RPC_WHITELIST`/the web UI's own speed limits if you need to cap bandwidth.
+
+---
+
+## 🔄 **Updates**
+
+This image auto-updates its OS packages (Alpine, Transmission, Python, etc.)
+on every container start/restart via `apk upgrade` - see
+[Security considerations](#-security-considerations). That does **not**
+cover this project's own logic (`fetch_torrents.py`,
+`configure_transmission.py`, the scraping/cleanup behavior) - that code is
+baked into the image at build time and only changes when you pull a newer
+image tag and recreate the container. All examples below use
+`ghcr.io/squazz/linux-iso-seeder:latest`; pin to a specific released version
+instead (see the repo's tags/releases) if you want reproducible behavior
+between deployments, and re-pull `:latest` periodically if you want fetch
+logic fixes and improvements as they're released. Restarting an existing
+container does not by itself pull a new image - `docker pull` the image,
+then `docker stop`/`docker rm` and re-run your `docker run` command (or
+recreate it, if you're managing it some other way) to actually update it.
+
+---
+
+## 🛑 **Stopping / uninstalling**
+
+`docker stop <container>` stops seeding; `docker rm <container>` removes the
+container itself. Both are safe at any time - Transmission checkpoints its
+state to `/config` as it runs, so nothing is lost by stopping abruptly.
+Neither touches your bind-mounted `/config`, `/downloads`, `/watch`, `/logs`
+directories; delete those yourself (they hold the ISOs and configuration) if
+you want a clean removal. If you forwarded port `51413` on your router (see
+below), remember to remove that forwarding rule too.
 
 ---
 
@@ -82,8 +122,11 @@ Seeding Linux ISOs improves global availability, helps users download faster, an
 | `CLEANUP_SKIP_RATIO_CHECK` | `false` | Only used when `CLEANUP_KEEP_ONLY_LATEST_VERSION=true`. Set to `true` to remove superseded versions immediately, ignoring `CLEANUP_MIN_RATIO`. |
 | `CLEANUP_STAGNATION_WINDOW_DAYS` | `30` | Default cleanup path (`CLEANUP_KEEP_ONLY_LATEST_VERSION=false`). A superseded version is only eligible for removal once we've tracked its ratio for at least this many days - it needs enough history before we judge it as dead. |
 | `CLEANUP_STAGNATION_MIN_RATIO_DELTA` | `0.02` | Default cleanup path. A superseded version is removed once its ratio has grown by less than this over `CLEANUP_STAGNATION_WINDOW_DAYS` - i.e. nobody's downloading it anymore. Versions still gaining ratio are left seeding no matter how old they are. The current/latest version of each ISO type is never removed this way, regardless of its ratio - see `fetch_torrents_ratio_history.json` below. |
+| `CLEANUP_DISK_USAGE_THRESHOLD_PERCENT` | `95` | Safety valve on top of the two cleanup paths above: if `/downloads` usage is still at or above this percentage after normal cleanup runs, superseded versions are removed anyway - lowest seed ratio first - regardless of ratio floor or stagnation status, until usage drops back below the threshold or none are left. This is what protects a deployment nobody comes back to from silently filling its disk. Set to `0` to disable entirely. |
 | `TRANSMISSION_RPC_WHITELIST` | *(unset)* | Comma-separated IPs/wildcards (e.g. `10.0.0.*`, or `*` for any) to allow into Transmission's RPC/web UI, beyond its own `127.0.0.1`-only default. Needed if you're getting a `403: Forbidden` accessing the web UI from another host - see [Security considerations](#-security-considerations) before opening this up. |
-| `TRANSMISSION_RPC_USERNAME` / `TRANSMISSION_RPC_PASSWORD` | *(unset)* | Set **both** to require a login for the RPC/web UI. Opt-in and off by default, matching Transmission's own default - required if you set `TRANSMISSION_RPC_WHITELIST` to anything beyond localhost, since Transmission has no read-only RPC mode. |
+| `TRANSMISSION_RPC_USERNAME` / `TRANSMISSION_RPC_PASSWORD` | *(unset)* | Set **both** to require a login for the RPC/web UI. Opt-in and off by default, matching Transmission's own default - required if you set `TRANSMISSION_RPC_WHITELIST` to anything beyond localhost, since Transmission has no read-only RPC mode. Also used to authenticate the fetch script's own RPC connection (cleanup, ratio logging), so it keeps working once this is set. |
+| `FETCH_TORRENTS_LOG_MAX_BYTES` | `5242880` (5 MB) | Maximum size of `fetch_torrents.log` before it's rotated. |
+| `FETCH_TORRENTS_LOG_BACKUP_COUNT` | `3` | Number of rotated `fetch_torrents.log.N` backups kept before the oldest is deleted. |
 
 ---
 
@@ -121,40 +164,53 @@ with `-p` - add that yourself if you want it (see the first example below).
 ---
 
 ```bash
-docker build -t linux-iso-seeder .
+# Pull the published, auto-built image (recommended) ...
+docker pull ghcr.io/squazz/linux-iso-seeder:latest
+# ... or build from source instead:
+#   docker build -t linux-iso-seeder .
+# (substitute your own tag for ghcr.io/squazz/linux-iso-seeder below if you do)
+#
+# :latest tracks the main branch. For reproducible behavior between
+# deployments, pin to a specific released version instead, e.g.
+# ghcr.io/squazz/linux-iso-seeder:1.9.1 - see
+# https://github.com/squazz/linux-iso-seeder/tags for available versions.
 
 # With ratio checking enabled (default)
 docker run -d \
+  --restart=unless-stopped \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
   -p 51413:51413 -p 51413:51413/udp \
-  linux-iso-seeder
+  ghcr.io/squazz/linux-iso-seeder:latest
 
 # To disable ratio checking and download all torrents
 docker run -d \
+  --restart=unless-stopped \
   -e SKIP_RATIO_CHECK=true \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
-  linux-iso-seeder
+  ghcr.io/squazz/linux-iso-seeder:latest
 
 # Opt in to also seeding low-demand image families (cloud images, Kali netinst)
 docker run -d \
+  --restart=unless-stopped \
   -e FETCH_TORRENTS_INCLUDE_LOW_DEMAND=true \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
-  linux-iso-seeder
+  ghcr.io/squazz/linux-iso-seeder:latest
 
 # Opt in to running as a non-root user (see Security considerations)
 docker run -d \
+  --restart=unless-stopped \
   -e RUN_AS_NON_ROOT=true \
   -e PUID=1000 -e PGID=1000 \
   -v /path/to/config:/config \
@@ -162,10 +218,11 @@ docker run -d \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
-  linux-iso-seeder
+  ghcr.io/squazz/linux-iso-seeder:latest
 
 # Open the web UI to your LAN, with a login required (see Security considerations)
 docker run -d \
+  --restart=unless-stopped \
   -e TRANSMISSION_RPC_WHITELIST=10.0.0.* \
   -e TRANSMISSION_RPC_USERNAME=admin \
   -e TRANSMISSION_RPC_PASSWORD=changeme \
@@ -174,15 +231,21 @@ docker run -d \
   -v /path/to/watch:/watch \
   -v /path/to/logs:/logs \
   -p 9091:9091 \
-  linux-iso-seeder
+  ghcr.io/squazz/linux-iso-seeder:latest
 ```
+
+`--restart=unless-stopped` is included in every example above so the
+container (and seeding) comes back automatically after a host reboot or an
+unexpected crash - this is a "deploy and forget" tool, so nothing restarts
+it for you otherwise. Omit it, or use a different policy, if you're managing
+restarts some other way (e.g. an external orchestrator).
 
 ---
 
 ## 🔒 **Security considerations**
 
 - Always review container scripts before deployment.  
-- This project installs the latest packages on container start for updated clients and security patches.
+- This project installs the latest packages on container start for updated clients and security patches. This is a deliberate tradeoff: it keeps every deployment auto-patched against CVEs without anyone needing to re-pull the image, but it also means a breaking change in an upstream Alpine/Transmission package could affect every running deployment simultaneously on its next restart, with no version pin to roll back to. If you'd rather have fully reproducible, unchanging package versions, build your own image from a pinned `FROM alpine:<version>` and remove the `apk upgrade` step in `entrypoint.sh`.
 - By default, transmission-daemon and the fetch script run as root, as in
   every previous release, so nothing changes for existing deployments -
   including ones sharing `/config`, `/downloads`, `/watch`, `/logs` with
