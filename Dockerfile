@@ -17,6 +17,9 @@ RUN addgroup -g 1000 seeder && \
 COPY fetch_torrents.py /usr/local/bin/fetch_torrents.py
 RUN chmod +x /usr/local/bin/fetch_torrents.py
 
+# Add tracker scrape helper (bencode parsing + tracker "scrape" queries)
+COPY torrent_scrape.py /usr/local/bin/torrent_scrape.py
+
 # Add Transmission RPC/web UI settings.json configurator
 COPY configure_transmission.py /usr/local/bin/configure_transmission.py
 RUN chmod +x /usr/local/bin/configure_transmission.py

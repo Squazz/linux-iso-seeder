@@ -4,6 +4,7 @@ import re
 import json
 import requests
 import logging
+import tempfile
 import time
 import shutil
 import socket
@@ -11,11 +12,15 @@ from datetime import date
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
 
+import torrent_scrape
+
 # Configure logging
 log_dir = os.getenv('FETCH_TORRENTS_LOG_DIR', '/logs')
 log_file = os.path.join(log_dir, "fetch_torrents.log")
 ratio_log_file = os.path.join(log_dir, "fetch_torrents_ratios.log")
 ratio_history_file = os.path.join(log_dir, "fetch_torrents_ratio_history.json")
+old_release_check_state_file = os.path.join(log_dir, "fetch_torrents_old_release_check_state.json")
+removed_history_file = os.path.join(log_dir, "fetch_torrents_removed_history.json")
 
 def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     value = os.getenv(env_var, '').strip()
@@ -75,6 +80,9 @@ def get_always_log_prefixes():
         "Querying Transmission RPC",
         "Selected distros for this run:",
         "Skipping distro",
+        "Checking old releases",
+        "Found unmet demand",
+        "Old-release check complete",
     ]
 
 always_log_enabled = parse_bool('FETCH_TORRENTS_ALWAYS_LOG', True)
@@ -315,6 +323,21 @@ def should_fetch_torrent(name, ratios):
     prev_max = max(prev_versions)
     return type_ratios[prev_max] >= 1.0
 
+def format_run_summary(elapsed, success_count, existing_count, not_found_count, failure_count,
+                        old_added=None, old_skipped=None):
+    """The single end-of-run log line. old_added/old_skipped are only
+    non-None when FETCH_TORRENTS_CHECK_OLD_RELEASES ran, so the count of
+    torrents that flag introduced is visible at a glance rather than only
+    in the earlier "Old-release check complete" line."""
+    summary = (
+        f"Run complete in {elapsed:.2f} seconds. {success_count} added, "
+        f"{existing_count} existing, {not_found_count} not found upstream, {failure_count} failed."
+    )
+    if old_added is not None:
+        summary += f" Old releases (FETCH_TORRENTS_CHECK_OLD_RELEASES): {old_added} added, {old_skipped} skipped."
+    return summary
+
+
 def download_torrent(name, url):
     dest   = os.path.join(watch_dir, f"{name}.torrent")
     added  = os.path.join(watch_dir, f"{name}.torrent.added")
@@ -408,6 +431,27 @@ def fetch_debian_stable():
 
     return results
 
+def _kali_torrent_urls(ver):
+    base_cd  = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
+    base_arm = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
+    base_cloud = f"https://kali.download/cloud-images/kali-{ver}/kali-linux-{ver}-cloud-genericcloud"
+    return [
+        f"{base_cd}-amd64.iso.torrent",
+        f"{base_cd}-netinst-amd64.iso.torrent",
+        f"{base_cd}-everything-amd64.iso.torrent",
+        f"{base_cd}-arm64.iso.torrent",
+        f"{base_cd}-netinst-arm64.iso.torrent",
+        f"{base_cd}-purple-amd64.iso.torrent",
+
+        f"{base_arm}-raspberry-pi-armhf.img.xz.torrent",
+        f"{base_arm}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
+        f"{base_arm}-raspberry-pi-zero-w-armel.img.xz.torrent",
+
+        f"{base_cloud}-amd64.tar.xz.torrent",
+        f"{base_cloud}-arm64.tar.xz.torrent",
+    ]
+
+
 def fetch_kali_latest():
     url = "https://www.kali.org/get-kali/#kali-installer-images"
     try:
@@ -420,27 +464,8 @@ def fetch_kali_latest():
 
         ver = max(matches, key=lambda v: tuple(map(int, v.split("."))))  # nyeste
 
-        base_cd  = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
-        base_arm = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
-        base_cloud = f"https://kali.download/cloud-images/kali-{ver}/kali-linux-{ver}-cloud-genericcloud"
-        torrents = [
-            f"{base_cd}-amd64.iso.torrent",
-            f"{base_cd}-netinst-amd64.iso.torrent",
-            f"{base_cd}-everything-amd64.iso.torrent",
-            f"{base_cd}-arm64.iso.torrent",
-            f"{base_cd}-netinst-arm64.iso.torrent",
-            f"{base_cd}-purple-amd64.iso.torrent",
-
-            f"{base_arm}-raspberry-pi-armhf.img.xz.torrent",
-            f"{base_arm}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
-            f"{base_arm}-raspberry-pi-zero-w-armel.img.xz.torrent",
-            
-            f"{base_cloud}-amd64.tar.xz.torrent",
-            f"{base_cloud}-arm64.tar.xz.torrent",
-        ]
-
         results = {}
-        for turl in torrents:
+        for turl in _kali_torrent_urls(ver):
             name = os.path.basename(turl).replace(".torrent", "")
             results[name] = turl
 
@@ -453,6 +478,42 @@ def fetch_kali_latest():
     except Exception as exc:
         logger.error("Kali fetch error: %s", exc)
         return False
+
+
+def fetch_kali_old_versions():
+    """Non-latest Kali release(s) still available on cdimage.kali.org, for
+    the old-release demand check (FETCH_TORRENTS_CHECK_OLD_RELEASES).
+    cdimage only keeps a 'current/' symlink plus a small number of prior
+    'kali-X.Y/' folders - once a version's folder disappears there's no way
+    to discover it here, unlike fetch_kali_latest() which always has a
+    current release to find."""
+    url = "https://cdimage.kali.org/"
+    try:
+        html = requests.get(url, timeout=30).text
+        soup = BeautifulSoup(html, "html.parser")
+
+        versions = []
+        for link in soup.find_all('a', href=True):
+            match = re.match(r'^kali-(\d+\.\d+)/$', link['href'])
+            if match:
+                versions.append(match.group(1))
+
+        if len(versions) < 2:
+            return {}
+
+        versions.sort(key=lambda v: tuple(map(int, v.split("."))))
+        old_versions = versions[:-1]  # newest is fetch_kali_latest()'s job
+
+        results = {}
+        for ver in old_versions:
+            for turl in _kali_torrent_urls(ver):
+                name = os.path.basename(turl).replace(".torrent", "")
+                results[name] = turl
+        return results
+
+    except Exception as exc:
+        logger.error("Kali old-release fetch error: %s", exc)
+        return {}
 
 def fetch_arch_latest():
     base_url = "https://archlinux.org"
@@ -534,6 +595,272 @@ def fetch_fedora_workstation():
     except Exception as exc:
         logger.error("Fedora fetch error: %s", exc)
         return False
+
+
+def fetch_fedora_workstation_old_versions():
+    """Non-latest Fedora Workstation Live torrents per arch, from the same
+    listing fetch_fedora_workstation() already scrapes - for the
+    old-release demand check (FETCH_TORRENTS_CHECK_OLD_RELEASES)."""
+    url = "https://torrent.fedoraproject.org/torrents/"
+    try:
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        pattern = re.compile(r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$")
+        by_arch = {}
+        for link in soup.find_all('a', href=True):
+            match = pattern.match(link['href'])
+            if not match:
+                continue
+            arch, version = match.group(1), int(match.group(2))
+            by_arch.setdefault(arch, []).append((version, link['href']))
+
+        results = {}
+        for versions in by_arch.values():
+            versions.sort(key=lambda entry: entry[0], reverse=True)
+            for _version, href in versions[1:]:  # newest is fetch_fedora_workstation()'s job
+                name = href.replace(".torrent", "")
+                results[name] = url + href
+        return results
+
+    except Exception as exc:
+        logger.error("Fedora old-release fetch error: %s", exc)
+        return {}
+
+
+def has_unmet_demand(scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders):
+    """True if a live tracker scrape shows real, currently-unserved demand:
+    at least min_leechers leechers in absolute terms (so a single leecher
+    never justifies a download on its own), AND at least min_leecher_ratio
+    times as many leechers as seeders - a deliberately low bar (default 0.1,
+    i.e. leechers only need to reach 10% of the seeder count) since scrape
+    data can't tell us whether existing seeders have spare upload capacity
+    or are bandwidth-constrained, so leechers don't need to approach or
+    outnumber seeders to represent real demand; this just guards against the
+    extreme case of a handful of leechers on an enormous, clearly-already-
+    served swarm.
+
+    A swarm with zero seeders is excluded by default regardless of leecher
+    count: a scrape can't confirm the leechers collectively hold every
+    piece, so a zero-seeder swarm might never actually reach 100% complete -
+    we could end up leeching it forever without ever being able to seed it
+    back, which defeats the point. Pass allow_zero_seeders=True (via
+    FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS) to gamble on reviving
+    such swarms anyway - the absolute floor still applies.
+
+    scrape_result is a torrent_scrape.scrape_torrent() result, or None if
+    scraping failed."""
+    if not scrape_result:
+        return False
+    leechers = scrape_result.get('leechers', 0)
+    if leechers < min_leechers:
+        return False
+    seeders = scrape_result.get('seeders', 0)
+    if seeders == 0:
+        return allow_zero_seeders
+    return leechers >= min_leecher_ratio * seeders
+
+
+def evaluate_old_release_demand(name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15):
+    """Downloads name's .torrent metadata and scrapes its trackers for live
+    demand, without adding it to Transmission. Returns (keep, torrent_bytes,
+    scrape_result): keep is True once has_unmet_demand() passes;
+    torrent_bytes/scrape_result are None if the download or every tracker
+    scrape failed."""
+    try:
+        r = requests.get(url, timeout=30)
+        if r.status_code == 404:
+            logger.info("%s not found upstream (404) during old-release check.", url)
+            return False, None, None
+        r.raise_for_status()
+    except Exception as exc:
+        logger.error("Failed to download %s for old-release check: %s", url, exc)
+        return False, None, None
+
+    torrent_bytes = r.content
+    tmp = tempfile.NamedTemporaryFile(suffix=".torrent", delete=False)
+    try:
+        tmp.write(torrent_bytes)
+        tmp.close()
+        scrape_result = torrent_scrape.scrape_torrent(tmp.name, timeout=timeout)
+    except Exception as exc:
+        logger.warning("Could not scrape %s: %s", name, exc)
+        scrape_result = None
+    finally:
+        os.remove(tmp.name)
+
+    keep = has_unmet_demand(scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders)
+    return keep, torrent_bytes, scrape_result
+
+
+def load_old_release_check_state(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read old-release check state at %s (%s) - starting fresh.", path, exc)
+        return {}
+
+
+def save_old_release_check_state(path, state):
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(state, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, path)
+
+
+def should_recheck_old_release(name, check_state, today, recheck_interval_days):
+    """True if name has never been checked, or its last check was at least
+    recheck_interval_days ago. Without this, check_old_releases_for_demand()
+    would re-download and re-scrape every not-yet-wanted candidate on every
+    daily run forever."""
+    record = check_state.get(name)
+    if record is None:
+        return True
+    last_checked = date.fromisoformat(record['last_checked'])
+    return (today - last_checked).days >= recheck_interval_days
+
+
+def load_removed_history(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not read removed-torrent history at %s (%s) - starting fresh.", path, exc)
+        return {}
+
+
+def save_removed_history(path, history):
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, path)
+
+
+def record_removal(history, name, today, reason):
+    """Pure: returns a copy of history noting name was removed today, for
+    whatever reason cleanup removed it (a superseded low-ratio version, or
+    stagnation). Once here, check_old_releases_for_demand() treats it as
+    permanently excluded by default - a momentary leecher blip on a torrent
+    that already took 30 stagnant days to justify removing shouldn't trigger
+    re-downloading it, since the ratio may never be recouped before it goes
+    stagnant again. See FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED."""
+    updated = dict(history)
+    updated[name] = {'removed_date': today.isoformat(), 'reason': reason}
+    return updated
+
+
+# Only distros with a discoverable back-catalog of old release torrents.
+# Ubuntu (meta-release-lts lists every currently-"Supported: 1" LTS, which
+# in practice includes very old ones under ESM) and Arch (releng lists every
+# still-available release) already surface old versions through their
+# normal fetch_*() functions and should_fetch_torrent()'s per-version ratio
+# check - no separate discovery needed. Debian and Mint don't expose a
+# similarly easy back-catalog with the current fetch approach.
+OLD_RELEASE_DISCOVERY = {
+    'kali': fetch_kali_old_versions,
+    'fedora': fetch_fedora_workstation_old_versions,
+}
+
+
+def check_old_releases_for_demand(selected_distros, include_low_demand, min_leechers, min_leecher_ratio,
+                                   allow_zero_seeders, check_state=None, removed_history=None, today=None,
+                                   recheck_interval_days=7):
+    """FETCH_TORRENTS_CHECK_OLD_RELEASES: for distros with old-release
+    discovery, scrape each not-yet-seeded candidate's trackers and add it to
+    the watch dir only if there's live unmet demand - no need to leech it
+    first to find out.
+
+    allow_zero_seeders controls whether a candidate with zero seeders can
+    ever count as demand - see has_unmet_demand(). check_state
+    ({name: {'last_checked', 'leechers'}}) is consulted so a candidate that
+    was checked recently isn't re-downloaded and re-scraped on every daily
+    run - see should_recheck_old_release(). removed_history
+    ({name: {'removed_date', 'reason'}}) is consulted so a candidate cleanup
+    already gave up on isn't automatically re-added from a momentary demand
+    blip - see record_removal().
+
+    Returns (added_count, skipped_count, updated check_state).
+    """
+    check_state = dict(check_state) if check_state else {}
+    removed_history = removed_history or {}
+    today = today or date.today()
+
+    added = 0
+    skipped = 0
+
+    for distro in selected_distros:
+        discover = OLD_RELEASE_DISCOVERY.get(distro)
+        if not discover:
+            continue
+
+        candidates = discover()
+        if not candidates:
+            continue
+        candidates = filter_low_demand(candidates, include_low_demand)
+
+        for name, url in candidates.items():
+            dest = os.path.join(watch_dir, f"{name}.torrent")
+            added_marker = f"{dest}.added"
+            if os.path.exists(dest) or os.path.exists(added_marker):
+                continue
+
+            if name in removed_history:
+                logger.info(
+                    "Skipping old release %s - previously removed on %s, not re-adding automatically.",
+                    name, removed_history[name]['removed_date'],
+                )
+                skipped += 1
+                continue
+
+            if not should_recheck_old_release(name, check_state, today, recheck_interval_days):
+                logger.debug("Skipping old release %s - checked recently, not due for recheck.", name)
+                skipped += 1
+                continue
+
+            keep, torrent_bytes, scrape_result = evaluate_old_release_demand(
+                name, url, min_leechers, min_leecher_ratio, allow_zero_seeders,
+            )
+            check_state[name] = {
+                'last_checked': today.isoformat(),
+                'leechers': scrape_result['leechers'] if scrape_result else None,
+            }
+
+            if keep:
+                with open(dest, "wb") as f:
+                    f.write(torrent_bytes)
+                logger.info(
+                    "Found unmet demand on old release %s (%d leechers via %s) - added.",
+                    name, scrape_result['leechers'], scrape_result['tracker'],
+                )
+                added += 1
+            else:
+                if scrape_result is not None and scrape_result.get('seeders', 0) == 0 and not allow_zero_seeders:
+                    logger.info(
+                        "Skipping old release %s - %d leechers but 0 seeders via %s (no verified-complete copy "
+                        "in the swarm; set FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS=true to gamble on it).",
+                        name, scrape_result['leechers'], scrape_result['tracker'],
+                    )
+                elif scrape_result is not None:
+                    logger.info(
+                        "Skipping old release %s - %d leechers / %d seeders via %s "
+                        "(need >= %d leechers and >= %.1fx as many leechers as seeders).",
+                        name, scrape_result['leechers'], scrape_result.get('seeders', 0),
+                        scrape_result['tracker'], min_leechers, min_leecher_ratio,
+                    )
+                elif torrent_bytes is not None:
+                    logger.info(
+                        "Skipping old release %s - could not determine live demand from any tracker.", name,
+                    )
+                skipped += 1
+
+    return added, skipped, check_state
+
 
 def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):
     logger.info("Querying Transmission RPC for seed ratios...")
@@ -622,9 +949,14 @@ def cleanup_old_versions():
             "Keeping old version %s – ratio %.3f is below cleanup threshold %.3f.",
             torrent.name, ratio, min_ratio,
         )
+
+    removed_history = load_removed_history(removed_history_file)
+    today = date.today()
     for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
+        removed_history = record_removal(removed_history, torrent.name, today, 'keep_only_latest')
+    save_removed_history(removed_history_file, removed_history)
 
 
 RATIO_HISTORY_SAMPLE_INTERVAL_DAYS = 7
@@ -726,12 +1058,15 @@ def cleanup_stagnant_torrents():
                 "Keeping old version %s – ratio grew by %.3f over the last %d days.",
                 torrent.name, delta, window_days,
             )
+    removed_history = load_removed_history(removed_history_file)
     for torrent in to_remove:
         logger.info(
             "Removing stagnant torrent: %s (no meaningful ratio growth in %d days)",
             torrent.name, window_days,
         )
         tc.remove_torrent(torrent.id, delete_data=True)
+        removed_history = record_removal(removed_history, torrent.name, today, 'stagnant')
+    save_removed_history(removed_history_file, removed_history)
 
     save_ratio_history(ratio_history_file, history)
 
@@ -786,6 +1121,31 @@ if __name__ == "__main__":
         else:
             failure_count += 1
 
+    old_added = old_skipped = None
+    check_old_releases = parse_bool('FETCH_TORRENTS_CHECK_OLD_RELEASES', False)
+    if check_old_releases:
+        old_release_min_leechers = int(os.getenv('FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS', '10'))
+        old_release_min_leecher_ratio = float(os.getenv('FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO', '0.1'))
+        old_release_allow_zero_seeders = parse_bool('FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS', False)
+        old_release_recheck_days = int(os.getenv('FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS', '7'))
+        skip_previously_removed = parse_bool('FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED', True)
+
+        check_state = load_old_release_check_state(old_release_check_state_file)
+        removed_history = load_removed_history(removed_history_file) if skip_previously_removed else {}
+
+        logger.info(
+            "Checking old releases for unmet demand (min leechers: %d, min leecher/seeder ratio: %.1fx, "
+            "allow zero-seeder swarms: %s, recheck interval: %d days)...",
+            old_release_min_leechers, old_release_min_leecher_ratio, old_release_allow_zero_seeders,
+            old_release_recheck_days,
+        )
+        old_added, old_skipped, check_state = check_old_releases_for_demand(
+            selected_distros, include_low_demand, old_release_min_leechers, old_release_min_leecher_ratio,
+            old_release_allow_zero_seeders, check_state, removed_history, date.today(), old_release_recheck_days,
+        )
+        save_old_release_check_state(old_release_check_state_file, check_state)
+        logger.info("Old-release check complete: %d added, %d skipped.", old_added, old_skipped)
+
     if wait_for_transmission_rpc():
         try:
             log_seed_ratios_via_http()
@@ -806,7 +1166,6 @@ if __name__ == "__main__":
     logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
 
     elapsed = time.time() - start_time
-    logger.info(
-        f"Run complete in {elapsed:.2f} seconds. {success_count} added, "
-        f"{existing_count} existing, {not_found_count} not found upstream, {failure_count} failed."
-    )
+    logger.info(format_run_summary(
+        elapsed, success_count, existing_count, not_found_count, failure_count, old_added, old_skipped,
+    ))
