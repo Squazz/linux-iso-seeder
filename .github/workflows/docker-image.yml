@@ -4,8 +4,18 @@ on:
   push:
     branches: [ "main" ]
     tags: [ "v*", "[0-9]+.*" ]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitattributes"
+      - ".gitignore"
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - ".gitattributes"
+      - ".gitignore"
 
 permissions:
   contents: read
