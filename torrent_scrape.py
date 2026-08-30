@@ -12,6 +12,8 @@ Only HTTP(S) trackers are supported. UDP-only trackers use a different
 move on to the torrent's next tracker.
 """
 import hashlib
+import ipaddress
+import socket
 from urllib.parse import urlsplit, urlunsplit, quote_from_bytes
 
 import requests
@@ -139,6 +141,41 @@ def derive_scrape_url(announce_url):
     return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
 
 
+def _is_disallowed_ip(ip_str):
+    """True if ip_str is loopback/private/link-local/multicast/reserved -
+    i.e. not a real public tracker, so a scrape request should never be sent
+    there. Covers the cloud metadata endpoint (169.254.169.254) and this
+    container's own services (127.0.0.1) alongside RFC1918 space."""
+    ip = ipaddress.ip_address(ip_str)
+    return (
+        ip.is_private or ip.is_loopback or ip.is_link_local
+        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+    )
+
+
+def _resolve_addresses(hostname):
+    """I/O: DNS-resolves hostname to its IP address strings. Kept separate
+    from _is_disallowed_ip/_is_safe_scrape_host so the safety check itself
+    has no network dependency and is unit-testable; raises OSError on
+    resolution failure, same as socket.getaddrinfo."""
+    return [info[4][0] for info in socket.getaddrinfo(hostname, None)]
+
+
+def _is_safe_scrape_host(hostname):
+    """False (fail closed) if hostname is missing, fails to resolve, or
+    resolves to any disallowed address. Guards against a compromised or
+    malicious .torrent's announce URL pointing the scrape request at an
+    internal service (e.g. cloud metadata, this container's own Transmission
+    RPC) instead of a real tracker."""
+    if not hostname:
+        return False
+    try:
+        addresses = _resolve_addresses(hostname)
+    except OSError:
+        return False
+    return bool(addresses) and not any(_is_disallowed_ip(ip) for ip in addresses)
+
+
 def build_scrape_request_url(scrape_url, info_hash):
     encoded_hash = quote_from_bytes(info_hash, safe='')
     separator = '&' if '?' in scrape_url else '?'
@@ -178,6 +215,8 @@ def scrape_torrent(torrent_path, timeout=15):
     for announce_url in get_announce_urls(torrent_bytes):
         scrape_url = derive_scrape_url(announce_url)
         if not scrape_url:
+            continue
+        if not _is_safe_scrape_host(urlsplit(scrape_url).hostname):
             continue
 
         request_url = build_scrape_request_url(scrape_url, info_hash)

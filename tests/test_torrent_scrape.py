@@ -179,7 +179,60 @@ class ParseScrapeResponseTests(unittest.TestCase):
             ts.parse_scrape_response(response, b'A' * 20)
 
 
+class IsDisallowedIpTests(unittest.TestCase):
+    def test_public_ipv4_is_allowed(self):
+        self.assertFalse(ts._is_disallowed_ip('93.184.216.34'))
+
+    def test_private_ipv4_ranges_are_disallowed(self):
+        for ip in ('10.0.0.1', '172.16.0.1', '192.168.1.1'):
+            with self.subTest(ip=ip):
+                self.assertTrue(ts._is_disallowed_ip(ip))
+
+    def test_loopback_is_disallowed(self):
+        self.assertTrue(ts._is_disallowed_ip('127.0.0.1'))
+        self.assertTrue(ts._is_disallowed_ip('::1'))
+
+    def test_link_local_is_disallowed(self):
+        # Cloud metadata endpoint (AWS/GCP/Azure) lives here.
+        self.assertTrue(ts._is_disallowed_ip('169.254.169.254'))
+
+    def test_public_ipv6_is_allowed(self):
+        self.assertFalse(ts._is_disallowed_ip('2001:4860:4860::8888'))
+
+
+class IsSafeScrapeHostTests(unittest.TestCase):
+    def test_public_address_is_safe(self):
+        with unittest.mock.patch.object(ts, '_resolve_addresses', return_value=['93.184.216.34']):
+            self.assertTrue(ts._is_safe_scrape_host('tracker.example.com'))
+
+    def test_private_address_is_unsafe(self):
+        with unittest.mock.patch.object(ts, '_resolve_addresses', return_value=['10.1.2.3']):
+            self.assertFalse(ts._is_safe_scrape_host('tracker.internal'))
+
+    def test_any_disallowed_address_among_several_makes_host_unsafe(self):
+        with unittest.mock.patch.object(ts, '_resolve_addresses', return_value=['93.184.216.34', '127.0.0.1']):
+            self.assertFalse(ts._is_safe_scrape_host('multi-homed.example.com'))
+
+    def test_resolution_failure_is_unsafe(self):
+        with unittest.mock.patch.object(ts, '_resolve_addresses', side_effect=OSError('not known')):
+            self.assertFalse(ts._is_safe_scrape_host('nonexistent.invalid'))
+
+    def test_empty_hostname_is_unsafe(self):
+        self.assertFalse(ts._is_safe_scrape_host(None))
+        self.assertFalse(ts._is_safe_scrape_host(''))
+
+
 class ScrapeTorrentTests(unittest.TestCase):
+    def setUp(self):
+        # scrape_torrent() resolves each tracker's host before ever
+        # requesting it (see IsSafeScrapeHostTests) - default every test's
+        # hosts to a public address so existing tracker-selection behavior
+        # doesn't depend on real DNS. Tests of the SSRF guard itself override
+        # this per-case.
+        patcher = unittest.mock.patch.object(ts, '_resolve_addresses', return_value=['93.184.216.34'])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _write_torrent(self, announce_urls):
         tiers = b''.join(b'l' + bstr(u) + b'e' for u in announce_urls)
         info_bytes = b'd6:lengthi1e4:name4:teste'
@@ -244,6 +297,42 @@ class ScrapeTorrentTests(unittest.TestCase):
     def test_returns_none_when_no_tracker_usable(self):
         path = self._write_torrent(['udp://only.example.com/announce'])
         with unittest.mock.patch.object(ts.requests, 'get') as mock_get:
+            result = ts.scrape_torrent(path)
+        mock_get.assert_not_called()
+        self.assertIsNone(result)
+
+    def test_skips_tracker_resolving_to_a_private_address(self):
+        """A .torrent whose announce URL resolves to an internal address
+        (e.g. a compromised upstream mirror pointing at cloud metadata or
+        this container's own services) must never be scraped - no request
+        should go out to it at all."""
+        path = self._write_torrent([
+            'http://internal.example.com/announce',
+            'http://real-tracker.example.com/announce',
+        ])
+        with open(path, 'rb') as f:
+            info_hash = ts.compute_info_hash(f.read())
+        fake_response = unittest.mock.Mock()
+        fake_response.content = self._scrape_response_bytes(info_hash, 3, 4)
+        fake_response.raise_for_status = lambda: None
+
+        def fake_resolve(hostname):
+            if hostname == 'internal.example.com':
+                return ['127.0.0.1']
+            return ['93.184.216.34']
+
+        with unittest.mock.patch.object(ts, '_resolve_addresses', side_effect=fake_resolve), \
+                unittest.mock.patch.object(ts.requests, 'get', return_value=fake_response) as mock_get:
+            result = ts.scrape_torrent(path)
+
+        mock_get.assert_called_once()
+        self.assertIn('real-tracker.example.com', mock_get.call_args[0][0])
+        self.assertEqual(result['tracker'], 'http://real-tracker.example.com/scrape')
+
+    def test_returns_none_when_every_tracker_resolves_privately(self):
+        path = self._write_torrent(['http://internal.example.com/announce'])
+        with unittest.mock.patch.object(ts, '_resolve_addresses', return_value=['169.254.169.254']), \
+                unittest.mock.patch.object(ts.requests, 'get') as mock_get:
             result = ts.scrape_torrent(path)
         mock_get.assert_not_called()
         self.assertIsNone(result)

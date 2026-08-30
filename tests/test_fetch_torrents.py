@@ -553,6 +553,58 @@ class DownloadTorrent404Tests(unittest.TestCase):
             self.assertEqual(f.read(), b'fake torrent bytes')
 
 
+class SafeWatchPathTests(unittest.TestCase):
+    """_safe_watch_path() is the shared guard download_torrent(),
+    _remove_watch_file(), and check_old_releases_for_demand() all rely on to
+    keep a torrent name confined to a single file directly under watch_dir -
+    defense in depth against a future fetch_*() parser turning scraped
+    upstream content into a path escape."""
+
+    def setUp(self):
+        patcher = unittest.mock.patch.object(ft, 'watch_dir', '/watch')
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_normal_name_resolves_under_watch_dir(self):
+        self.assertEqual(
+            ft._safe_watch_path('ubuntu-24.04-desktop-amd64.iso'),
+            os.path.join('/watch', 'ubuntu-24.04-desktop-amd64.iso.torrent'),
+        )
+
+    def test_rejects_path_separators(self):
+        self.assertIsNone(ft._safe_watch_path('archlinux-../../../etc/cron.d/evil'))
+        self.assertIsNone(ft._safe_watch_path('foo/bar'))
+        self.assertIsNone(ft._safe_watch_path('foo\\bar'))
+
+    def test_rejects_empty_or_dot_names(self):
+        self.assertIsNone(ft._safe_watch_path(''))
+        self.assertIsNone(ft._safe_watch_path(None))
+        self.assertIsNone(ft._safe_watch_path('.'))
+        self.assertIsNone(ft._safe_watch_path('..'))
+
+
+class DownloadTorrentUnsafeNameTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
+        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_download_torrent_refuses_unsafe_name_without_any_request(self):
+        with unittest.mock.patch.object(ft.requests, 'get') as mock_get:
+            status = ft.download_torrent('../evil', 'https://example.invalid/x.torrent')
+
+        mock_get.assert_not_called()
+        self.assertEqual(status, 'failed')
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [])
+
+    def test_remove_watch_file_refuses_unsafe_name_without_touching_disk(self):
+        with unittest.mock.patch.object(ft.os, 'remove') as mock_remove:
+            ft._remove_watch_file('../evil')
+
+        mock_remove.assert_not_called()
+
+
 class UpdateRatioHistoryTests(unittest.TestCase):
     """update_ratio_history() must keep the on-disk history bounded: drop
     torrents that are no longer seeding, only add a new sample once per
@@ -1092,6 +1144,19 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
 
         mock_evaluate.assert_not_called()
         self.assertEqual((added, skipped), (0, 0))
+
+    def test_unsafe_candidate_name_is_skipped_without_evaluation(self):
+        name = 'kali-linux-2026.1-installer-../../etc/cron.d/evil'
+
+        with unittest.mock.patch.dict(
+                    ft.OLD_RELEASE_DISCOVERY,
+                    {'kali': lambda: {name: 'https://example.invalid/x.torrent'}}, clear=True,
+                ), \
+                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
+            added, skipped, _ = ft.check_old_releases_for_demand(['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+
+        mock_evaluate.assert_not_called()
+        self.assertEqual((added, skipped), (0, 1))
 
     def test_low_demand_variant_is_filtered_before_evaluation(self):
         name = 'kali-linux-2026.1-installer-netinst-amd64.iso'

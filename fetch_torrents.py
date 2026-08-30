@@ -370,8 +370,24 @@ def format_run_summary(elapsed, success_count, existing_count, not_found_count, 
     return summary
 
 
+def _safe_watch_path(name):
+    """Path under watch_dir for name's .torrent file, or None if name isn't
+    safe to use as a single filename component (empty, '.'/'..', or contains
+    a path separator). Defense in depth: today's fetch_*() functions already
+    constrain names enough that this never trips in practice, but centralizing
+    the check here means a future looser fetch_*() regex (parsing scraped
+    HTML/JSON from upstream) can't turn a crafted name into a write/delete
+    outside watch_dir."""
+    if not name or name in ('.', '..') or '/' in name or '\\' in name:
+        return None
+    return os.path.join(watch_dir, f"{name}.torrent")
+
+
 def download_torrent(name, url):
-    dest = os.path.join(watch_dir, f"{name}.torrent")
+    dest = _safe_watch_path(name)
+    if dest is None:
+        logger.error("Refusing to save torrent with unsafe name: %r", name)
+        return "failed"
 
     if os.path.exists(dest):
         logger.info("Skip %s – torrent already present.", os.path.basename(dest))
@@ -832,7 +848,11 @@ def check_old_releases_for_demand(selected_distros, include_low_demand, min_leec
         candidates = filter_low_demand(candidates, include_low_demand)
 
         for name, url in candidates.items():
-            dest = os.path.join(watch_dir, f"{name}.torrent")
+            dest = _safe_watch_path(name)
+            if dest is None:
+                logger.error("Refusing to save old release with unsafe name: %r", name)
+                skipped += 1
+                continue
             if os.path.exists(dest):
                 continue
 
@@ -955,7 +975,10 @@ def _remove_watch_file(name):
     remove its leftover .torrent file from /watch - otherwise these
     accumulate forever, since nothing else (including Transmission itself,
     by default) ever cleans them up."""
-    path = os.path.join(watch_dir, f"{name}.torrent")
+    path = _safe_watch_path(name)
+    if path is None:
+        logger.warning("Refusing to remove watch file with unsafe name: %r", name)
+        return
     try:
         os.remove(path)
     except FileNotFoundError:
