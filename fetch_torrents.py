@@ -117,6 +117,19 @@ logger.propagate = False
 watch_dir = "/watch"
 
 
+def get_rpc_credentials():
+    """TRANSMISSION_RPC_USERNAME/PASSWORD, read here so this script's own
+    RPC calls (cleanup, ratio logging) authenticate the same way
+    configure_transmission.py configured the daemon. Without this, setting
+    rpc-authentication-required (as the README instructs whenever
+    TRANSMISSION_RPC_WHITELIST is widened beyond localhost) makes every one
+    of this script's own localhost RPC calls fail with 401 - silently, since
+    callers only log the failure - permanently disabling cleanup."""
+    username = os.getenv('TRANSMISSION_RPC_USERNAME', '').strip()
+    password = os.getenv('TRANSMISSION_RPC_PASSWORD', '').strip()
+    return username or None, password or None
+
+
 def wait_for_transmission_rpc(host='localhost', port=9091, timeout=30):
     start = time.time()
     while time.time() - start < timeout:
@@ -863,8 +876,12 @@ def check_old_releases_for_demand(selected_distros, include_low_demand, min_leec
 
 
 def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):
+    if auth is None:
+        username, password = get_rpc_credentials()
+        auth = (username, password) if username and password else None
+
     logger.info("Querying Transmission RPC for seed ratios...")
-    r = requests.post(rpc_url)
+    r = requests.post(rpc_url, timeout=15)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
     payload = {
         "method": "torrent-get",
@@ -936,7 +953,8 @@ def cleanup_old_versions():
     """Space-constrained option (CLEANUP_KEEP_ONLY_LATEST_VERSION=true):
     remove superseded versions as soon as they clear the ratio floor,
     regardless of whether anyone's still downloading them."""
-    tc = Client(host='localhost', port=9091)
+    username, password = get_rpc_credentials()
+    tc = Client(host='localhost', port=9091, username=username, password=password)
     torrents = tc.get_torrents()
 
     skip_ratio_check = parse_bool('CLEANUP_SKIP_RATIO_CHECK', False)
@@ -1034,7 +1052,8 @@ def plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_
 
 
 def cleanup_stagnant_torrents():
-    tc = Client(host='localhost', port=9091)
+    username, password = get_rpc_credentials()
+    tc = Client(host='localhost', port=9091, username=username, password=password)
     torrents = tc.get_torrents()
 
     window_days = int(os.getenv('CLEANUP_STAGNATION_WINDOW_DAYS', '30'))

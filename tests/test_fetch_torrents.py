@@ -1251,5 +1251,119 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
         self.assertEqual(new_state[name], {'last_checked': '2026-01-08', 'leechers': 0})
 
 
+class CleanupRpcAuthTests(unittest.TestCase):
+    """cleanup_old_versions()/cleanup_stagnant_torrents() must authenticate
+    their own Transmission RPC connection the same way
+    configure_transmission.py configured the daemon. Without this, a user
+    who sets TRANSMISSION_RPC_USERNAME/PASSWORD (as the README requires once
+    TRANSMISSION_RPC_WHITELIST is widened beyond localhost) finds cleanup
+    silently stops working forever: every RPC call fails with 401 and the
+    failure is only logged, never surfaced."""
+
+    def setUp(self):
+        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_cleanup_auth_')
+        for attr, filename in (
+            ('removed_history_file', 'removed_history.json'),
+            ('ratio_history_file', 'ratio_history.json'),
+        ):
+            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _mock_client(self):
+        client = MagicMock()
+        client.get_torrents.return_value = []
+        return client
+
+    def test_cleanup_old_versions_passes_configured_credentials(self):
+        with unittest.mock.patch.dict(os.environ, {
+            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
+        }), unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+            ft.cleanup_old_versions()
+
+        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username='alice', password='hunter2')
+
+    def test_cleanup_old_versions_passes_no_credentials_when_unset(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('TRANSMISSION_RPC_USERNAME', None)
+            os.environ.pop('TRANSMISSION_RPC_PASSWORD', None)
+            with unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+                ft.cleanup_old_versions()
+
+        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username=None, password=None)
+
+    def test_cleanup_stagnant_torrents_passes_configured_credentials(self):
+        with unittest.mock.patch.dict(os.environ, {
+            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
+        }), unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+            ft.cleanup_stagnant_torrents()
+
+        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username='alice', password='hunter2')
+
+
+class LogSeedRatiosViaHttpTests(unittest.TestCase):
+    """log_seed_ratios_via_http() must not hang the daily run forever on a
+    stalled Transmission response, and must authenticate with whatever
+    credentials configure_transmission.py configured the daemon with when
+    the caller doesn't explicitly override auth."""
+
+    class FakeSessionIdResponse:
+        headers = {"X-Transmission-Session-Id": "abc"}
+
+    class FakeTorrentGetResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"arguments": {"torrents": []}}
+
+    def test_session_id_request_has_a_timeout(self):
+        with unittest.mock.patch.object(
+            ft.requests, 'post',
+            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+        ) as mock_post:
+            ft.log_seed_ratios_via_http()
+
+        first_call_kwargs = mock_post.call_args_list[0].kwargs
+        self.assertIn('timeout', first_call_kwargs)
+
+    def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
+        with unittest.mock.patch.dict(os.environ, {
+            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
+        }), unittest.mock.patch.object(
+            ft.requests, 'post',
+            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+        ) as mock_post:
+            ft.log_seed_ratios_via_http()
+
+        second_call_kwargs = mock_post.call_args_list[1].kwargs
+        self.assertEqual(second_call_kwargs.get('auth'), ('alice', 'hunter2'))
+
+    def test_no_auth_when_credentials_unset(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('TRANSMISSION_RPC_USERNAME', None)
+            os.environ.pop('TRANSMISSION_RPC_PASSWORD', None)
+            with unittest.mock.patch.object(
+                ft.requests, 'post',
+                side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+            ) as mock_post:
+                ft.log_seed_ratios_via_http()
+
+        second_call_kwargs = mock_post.call_args_list[1].kwargs
+        self.assertIsNone(second_call_kwargs.get('auth'))
+
+    def test_explicit_auth_argument_still_wins(self):
+        with unittest.mock.patch.dict(os.environ, {
+            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
+        }), unittest.mock.patch.object(
+            ft.requests, 'post',
+            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+        ) as mock_post:
+            ft.log_seed_ratios_via_http(auth=('bob', 'other'))
+
+        second_call_kwargs = mock_post.call_args_list[1].kwargs
+        self.assertEqual(second_call_kwargs.get('auth'), ('bob', 'other'))
+
+
 if __name__ == "__main__":
     unittest.main()
