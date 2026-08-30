@@ -1,0 +1,21 @@
+name: Clean up untagged GHCR image versions
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete untagged container versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: linux-iso-seeder
+          package-type: container
+          min-versions-to-keep: 0
+          delete-only-untagged-versions: true

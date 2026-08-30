@@ -9,6 +9,9 @@ on:
       - "LICENSE"
       - ".gitattributes"
       - ".gitignore"
+      - ".github/dependabot.yml"
+      - ".github/workflows/**"
+      - "!.github/workflows/docker-image.yml"
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -16,6 +19,9 @@ on:
       - "LICENSE"
       - ".gitattributes"
       - ".gitignore"
+      - ".github/dependabot.yml"
+      - ".github/workflows/**"
+      - "!.github/workflows/docker-image.yml"
 
 permissions:
   contents: read
