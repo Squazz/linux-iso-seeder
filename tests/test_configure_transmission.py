@@ -120,6 +120,46 @@ class BuildPeerLimitOverridesTests(unittest.TestCase):
         self.assertEqual(overrides, {})
 
 
+class BuildPortForwardingOverridesTests(unittest.TestCase):
+    def test_no_env_var_on_first_run_defaults_to_disabled(self):
+        overrides = ct.build_port_forwarding_overrides({}, settings_file_exists=False)
+
+        self.assertEqual(overrides, {'port-forwarding-enabled': False})
+
+    def test_no_env_var_on_later_run_yields_no_override(self):
+        overrides = ct.build_port_forwarding_overrides({}, settings_file_exists=True)
+
+        self.assertEqual(overrides, {})
+
+    def test_explicit_true_enables_it_even_on_first_run(self):
+        overrides = ct.build_port_forwarding_overrides(
+            {'TRANSMISSION_PORT_FORWARDING': 'true'}, settings_file_exists=False,
+        )
+
+        self.assertEqual(overrides, {'port-forwarding-enabled': True})
+
+    def test_explicit_false_disables_it_on_a_later_run(self):
+        overrides = ct.build_port_forwarding_overrides(
+            {'TRANSMISSION_PORT_FORWARDING': 'false'}, settings_file_exists=True,
+        )
+
+        self.assertEqual(overrides, {'port-forwarding-enabled': False})
+
+    def test_blank_env_var_on_first_run_falls_back_to_default(self):
+        overrides = ct.build_port_forwarding_overrides(
+            {'TRANSMISSION_PORT_FORWARDING': '   '}, settings_file_exists=False,
+        )
+
+        self.assertEqual(overrides, {'port-forwarding-enabled': False})
+
+    def test_invalid_env_var_on_later_run_yields_no_override(self):
+        overrides = ct.build_port_forwarding_overrides(
+            {'TRANSMISSION_PORT_FORWARDING': 'sometimes'}, settings_file_exists=True,
+        )
+
+        self.assertEqual(overrides, {})
+
+
 class WarnIfOpenWithoutAuthTests(unittest.TestCase):
     def test_warns_when_whitelist_broadened_without_auth(self):
         warning = ct.warn_if_open_without_auth({'rpc-whitelist-enabled': True, 'rpc-whitelist': '*'})

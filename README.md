@@ -153,6 +153,7 @@ below), remember to remove that forwarding rule too.
 | `TRANSMISSION_RPC_USERNAME` / `TRANSMISSION_RPC_PASSWORD` | *(unset)* | Set **both** to require a login for the RPC/web UI. Opt-in and off by default, matching Transmission's own default - required if you set `TRANSMISSION_RPC_WHITELIST` to anything beyond localhost, since Transmission has no read-only RPC mode. Also used to authenticate the fetch script's own RPC connection (cleanup, ratio logging), so it keeps working once this is set. |
 | `TRANSMISSION_PEER_LIMIT_GLOBAL` | *(unset, Transmission default: 200)* | Raises Transmission's cap on simultaneous peer connections across all torrents. There's no "unlimited" value Transmission accepts - it's a plain positive integer - so if you're seeding many ISOs at once and want to stop leaving peers on the table, set this to something generous instead, e.g. `1000`. Each connection holds open a file descriptor, so if you push this very high, make sure the container's open-file limit (`ulimit -n`, or `docker run --ulimit nofile=...`) can actually cover it - otherwise Transmission just starts failing to open new connections once it runs out. |
 | `TRANSMISSION_PEER_LIMIT_PER_TORRENT` | *(unset, Transmission default: 50)* | Same idea as `TRANSMISSION_PEER_LIMIT_GLOBAL`, but per torrent - relevant once a single release's swarm has more peers than the default cap. |
+| `TRANSMISSION_PORT_FORWARDING` | *(unset, defaults to `false` on first run only)* | Controls Transmission's own `port-forwarding-enabled` (UPnP/NAT-PMP) - see [Peer port forwarding](#-peer-port-forwarding-optional). Only applied the first time the container starts (before `settings.json` exists); afterwards it's left alone - so it won't fight a value you or Transmission's web UI later change. Set explicitly to force it either way on every start. |
 | `FETCH_TORRENTS_LOG_MAX_BYTES` | `5242880` (5 MB) | Maximum size of `fetch_torrents.log` before it's rotated. |
 | `FETCH_TORRENTS_LOG_BACKUP_COUNT` | `3` | Number of rotated `fetch_torrents.log.N` backups kept before the oldest is deleted. |
 
@@ -188,6 +189,20 @@ with `-p` - add that yourself if you want it (see the first example below).
   Leave Transmission's "randomize port on launch" option off (its default)
   so the forwarded port keeps matching what Transmission actually listens
   on.
+- **Transmission's own UPnP/NAT-PMP, separately from the manual forwarding
+  above.** Transmission can also try to forward the port itself via UPnP/
+  NAT-PMP (`port-forwarding-enabled`). With Docker's default bridge
+  networking this can't work - the container sits in its own network
+  namespace, so the discovery traffic never reaches your router - and it
+  just retries forever, filling the log with repeating `port-forwarding.cc`
+  `Starting` / `Not forwarded` lines. To avoid that noise out of the box,
+  a brand-new deployment starts with it turned **off** - see
+  `TRANSMISSION_PORT_FORWARDING` above. If you're running with
+  `--network=host` instead, where UPnP/NAT-PMP has a real chance of
+  reaching your router, set `TRANSMISSION_PORT_FORWARDING=true` before the
+  container's first start (an existing deployment can just flip
+  `port-forwarding-enabled` in the web UI - the container won't touch it
+  again on its own either way).
 
 ---
 

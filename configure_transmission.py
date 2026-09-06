@@ -4,7 +4,10 @@ settings.json before transmission-daemon starts, so operators can opt into
 broadening (and authenticating) the RPC/web UI without hand-editing the
 auto-generated config file. Every override is additive: an unset env var
 never touches - or resets - whatever's already on disk, whether that's a
-value Transmission wrote itself or one an operator edited by hand.
+value Transmission wrote itself or one an operator edited by hand. The one
+case that fills in a value despite no env var being set is
+build_port_forwarding_overrides()'s first-run default - see its docstring -
+which only ever applies before there's anything on disk to disturb.
 """
 import json
 import os
@@ -62,6 +65,31 @@ def build_peer_limit_overrides(env):
     return overrides
 
 
+def _parse_bool(value):
+    value = (value or '').strip().lower()
+    if value in ('true', 'false'):
+        return value == 'true'
+    return None
+
+
+def build_port_forwarding_overrides(env, settings_file_exists):
+    """Transmission defaults port-forwarding-enabled (UPnP/NAT-PMP) to on,
+    which just fails forever and spams the log under Docker's default bridge
+    networking (see README). We'd rather default it off, but doing that on
+    every start would fight anyone who later flips it back on themselves
+    (web UI, hand-edited settings.json) - so the off-default is only applied
+    once, the first time settings.json doesn't exist yet, same moment
+    Transmission itself would otherwise pick its own default. Once the file
+    exists, this is untouched unless TRANSMISSION_PORT_FORWARDING says
+    otherwise, same as every other setting here."""
+    explicit = _parse_bool(env.get('TRANSMISSION_PORT_FORWARDING', ''))
+    if explicit is not None:
+        return {'port-forwarding-enabled': explicit}
+    if not settings_file_exists:
+        return {'port-forwarding-enabled': False}
+    return {}
+
+
 def warn_if_open_without_auth(overrides):
     """Broadening rpc-whitelist without also requiring authentication means
     anyone who can reach the RPC port has full control (add/remove/delete
@@ -102,7 +130,12 @@ def save_settings(path, settings):
 
 def main():
     settings_path = os.getenv('TRANSMISSION_SETTINGS_FILE', '/config/settings.json')
-    overrides = {**build_rpc_overrides(os.environ), **build_peer_limit_overrides(os.environ)}
+    settings_file_exists = os.path.exists(settings_path)
+    overrides = {
+        **build_rpc_overrides(os.environ),
+        **build_peer_limit_overrides(os.environ),
+        **build_port_forwarding_overrides(os.environ, settings_file_exists),
+    }
     if not overrides:
         return
 
