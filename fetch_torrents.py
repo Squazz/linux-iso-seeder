@@ -340,7 +340,15 @@ def parse_version_type(name, distro):
         type_ = ''
     return version, type_
 
-def should_fetch_torrent(name, ratios):
+def should_fetch_torrent(name, ratios, removed_history=None):
+    """removed_history (record_removal()'s output) is consulted as a
+    fallback for versions ratios doesn't cover: ratios only reflects
+    torrents Transmission currently holds (see get_previous_ratios()), so a
+    previous version cleanup already removed would otherwise silently drop
+    out of this check and fall into the "no previous version, fetch" branch
+    below - bypassing the ratio gate for exactly the versions cleanup
+    already gave up on. Live ratios still take priority when a name somehow
+    appears in both."""
     if os.getenv('SKIP_RATIO_CHECK', 'false').lower() == 'true':
         return True
     distro = get_distro(name)
@@ -354,6 +362,8 @@ def should_fetch_torrent(name, ratios):
         logger.error("Could not determine ratio decision for %s: %s", name, exc)
         return True
 
+    removed_history = removed_history or {}
+
     # get all ratios for this type
     type_ratios = {}
     for n, r in ratios.items():
@@ -365,6 +375,18 @@ def should_fetch_torrent(name, ratios):
                     type_ratios[version_to_tuple(v_str)] = r
             except Exception as exc:
                 logger.warning("Skipping stored ratio entry %s due to parse error: %s", n, exc)
+
+    for n, record in removed_history.items():
+        if n in ratios or 'ratio' not in record:
+            continue
+        d = get_distro(n)
+        if d == distro:
+            try:
+                v_str, t = parse_version_type(n, d)
+                if t == type_:
+                    type_ratios.setdefault(version_to_tuple(v_str), record['ratio'])
+            except Exception as exc:
+                logger.warning("Skipping removed-history ratio entry %s due to parse error: %s", n, exc)
 
     if not type_ratios:
         return True  # no previous, fetch
@@ -847,16 +869,21 @@ def save_removed_history(path, history):
     os.replace(tmp_path, path)
 
 
-def record_removal(history, name, today, reason):
+def record_removal(history, name, today, reason, ratio):
     """Pure: returns a copy of history noting name was removed today, for
     whatever reason cleanup removed it (a superseded low-ratio version, or
     stagnation). Once here, check_old_releases_for_demand() treats it as
     permanently excluded by default - a momentary leecher blip on a torrent
     that already took 30 stagnant days to justify removing shouldn't trigger
     re-downloading it, since the ratio may never be recouped before it goes
-    stagnant again. See FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED."""
+    stagnant again. See FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED.
+
+    ratio is the torrent's live ratio at the moment of removal, so
+    should_fetch_torrent() can still gate the next version on it after
+    Transmission stops reporting this (now-deleted) torrent - see its
+    removed_history fallback."""
     updated = dict(history)
-    updated[name] = {'removed_date': today.isoformat(), 'reason': reason}
+    updated[name] = {'removed_date': today.isoformat(), 'reason': reason, 'ratio': round(float(ratio), 3)}
     return updated
 
 
@@ -1086,7 +1113,10 @@ def cleanup_old_versions():
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
-        removed_history = record_removal(removed_history, torrent.name, today, 'keep_only_latest')
+        removed_history = record_removal(
+            removed_history, torrent.name, today, 'keep_only_latest',
+            float(getattr(torrent, 'ratio', 0.0) or 0.0),
+        )
     save_removed_history(removed_history_file, removed_history)
 
 
@@ -1138,13 +1168,14 @@ def enforce_disk_usage_limit(threshold_percent, download_path="/downloads"):
         used_percent = (used / total * 100) if total else 0.0
         if used_percent < threshold_percent:
             break
+        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
         logger.warning(
             "Downloads folder usage %.1f%% >= %.1f%% threshold - removing %s (ratio %.3f) to free space.",
-            used_percent, threshold_percent, torrent.name, float(getattr(torrent, 'ratio', 0.0) or 0.0),
+            used_percent, threshold_percent, torrent.name, ratio,
         )
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
-        removed_history = record_removal(removed_history, torrent.name, today, 'disk_pressure')
+        removed_history = record_removal(removed_history, torrent.name, today, 'disk_pressure', ratio)
     save_removed_history(removed_history_file, removed_history)
 
 
@@ -1256,7 +1287,7 @@ def cleanup_stagnant_torrents():
         )
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
-        removed_history = record_removal(removed_history, torrent.name, today, 'stagnant')
+        removed_history = record_removal(removed_history, torrent.name, today, 'stagnant', current_ratios[torrent.name])
     save_removed_history(removed_history_file, removed_history)
 
     save_ratio_history(ratio_history_file, history)
@@ -1266,6 +1297,7 @@ if __name__ == "__main__":
     logger.info("Starting torrent fetch run.")
 
     ratios = get_previous_ratios(ratio_log_file)
+    removed_history = load_removed_history(removed_history_file)
 
     success_count = 0
     existing_count = 0
@@ -1298,7 +1330,7 @@ if __name__ == "__main__":
         if torrents:
             torrents = filter_low_demand(torrents, include_low_demand)
             for name, url in torrents.items():
-                if should_fetch_torrent(name, ratios):
+                if should_fetch_torrent(name, ratios, removed_history):
                     status = download_torrent(name, url)
                     if status == "added":
                         success_count += 1

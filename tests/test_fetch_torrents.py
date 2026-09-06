@@ -216,6 +216,67 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
         self.assertTrue(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
 
 
+class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
+    """Once a previous version is removed by cleanup, Transmission stops
+    reporting it and it drops out of `ratios` (see get_previous_ratios()) -
+    without a fallback, should_fetch_torrent() would then hit its "no
+    previous version" branch and fetch unconditionally, silently bypassing
+    the ratio gate for exactly the versions cleanup already gave up on.
+    removed_history (record_removal()'s output) is the fallback source."""
+
+    def test_falls_back_to_removed_history_ratio_when_not_live(self):
+        removed_history = {
+            'ubuntu-23.10-desktop-amd64.iso': {
+                'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.4,
+            },
+        }
+        self.assertFalse(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+        )
+
+    def test_removed_history_ratio_above_floor_allows_fetch(self):
+        removed_history = {
+            'ubuntu-23.10-desktop-amd64.iso': {
+                'removed_date': '2026-01-01', 'reason': 'keep_only_latest', 'ratio': 1.5,
+            },
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+        )
+
+    def test_live_ratio_takes_priority_over_removed_history(self):
+        # Same name in both is not expected in practice (a torrent Transmission
+        # still reports hasn't been removed), but live data winning if it ever
+        # happens is the safer default.
+        removed_history = {
+            'ubuntu-23.10-desktop-amd64.iso': {
+                'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.1,
+            },
+        }
+        ratios = {'ubuntu-23.10-desktop-amd64.iso': 1.5}
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios, removed_history=removed_history)
+        )
+
+    def test_removed_history_entry_without_ratio_is_ignored(self):
+        # Legacy entries recorded before this field existed have no 'ratio'
+        # key - must not crash, and must not count as a usable prior version.
+        removed_history = {
+            'ubuntu-23.10-desktop-amd64.iso': {'removed_date': '2026-01-01', 'reason': 'stagnant'},
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+        )
+
+    def test_removed_history_from_a_different_distro_is_not_consulted(self):
+        removed_history = {
+            'debian-12.4.0-amd64-DVD-1.iso': {'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.1},
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+        )
+
+
 class RatioLogSurvivesRestartTests(unittest.TestCase):
     """Each container run is a fresh `python fetch_torrents.py` process: the
     ratio log from the *previous* run is what should_fetch_torrent() needs in
@@ -1376,12 +1437,14 @@ class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
 class RecordRemovalTests(unittest.TestCase):
     def test_adds_entry_without_mutating_input(self):
         history = {}
-        updated = ft.record_removal(history, 'kali-linux-2026.1-installer-amd64.iso', date(2026, 2, 1), 'stagnant')
+        updated = ft.record_removal(
+            history, 'kali-linux-2026.1-installer-amd64.iso', date(2026, 2, 1), 'stagnant', 0.42,
+        )
 
         self.assertEqual(history, {})  # input untouched
         self.assertEqual(
             updated['kali-linux-2026.1-installer-amd64.iso'],
-            {'removed_date': '2026-02-01', 'reason': 'stagnant'},
+            {'removed_date': '2026-02-01', 'reason': 'stagnant', 'ratio': 0.42},
         )
 
 
@@ -1646,6 +1709,8 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
         self.assertFalse(os.path.exists(old_path))
+        history = ft.load_removed_history(ft.removed_history_file)
+        self.assertEqual(history['ubuntu-23.10-desktop-amd64.iso']['ratio'], 2.0)
 
     def test_missing_watch_file_does_not_raise(self):
         # No .torrent file created for the superseded version - cleanup must
@@ -1689,6 +1754,8 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
         self.assertFalse(os.path.exists(old_path))
+        history = ft.load_removed_history(ft.removed_history_file)
+        self.assertEqual(history['ubuntu-23.10-desktop-amd64.iso']['ratio'], 2.0)
 
 
 class PlanDiskPressureCleanupTests(unittest.TestCase):
@@ -1834,6 +1901,7 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
 
         history = ft.load_removed_history(ft.removed_history_file)
         self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]['reason'], 'disk_pressure')
+        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]['ratio'], 0.2)
 
 
 if __name__ == "__main__":
