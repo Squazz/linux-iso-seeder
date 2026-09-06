@@ -31,6 +31,37 @@ def build_rpc_overrides(env):
     return overrides
 
 
+def _parse_positive_int(value):
+    value = (value or '').strip()
+    if not value:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def build_peer_limit_overrides(env):
+    """Transmission has no 'unlimited' value for peer-limit-global/
+    peer-limit-per-torrent - both must be positive integers, so an operator
+    asking for unlimited should instead set a generously high number here.
+    Invalid or non-positive values are ignored rather than passed through,
+    since they'd otherwise write a settings.json Transmission may refuse to
+    honor (or that blocks all peers, in the case of 0)."""
+    overrides = {}
+
+    global_limit = _parse_positive_int(env.get('TRANSMISSION_PEER_LIMIT_GLOBAL', ''))
+    if global_limit is not None:
+        overrides['peer-limit-global'] = global_limit
+
+    per_torrent_limit = _parse_positive_int(env.get('TRANSMISSION_PEER_LIMIT_PER_TORRENT', ''))
+    if per_torrent_limit is not None:
+        overrides['peer-limit-per-torrent'] = per_torrent_limit
+
+    return overrides
+
+
 def warn_if_open_without_auth(overrides):
     """Broadening rpc-whitelist without also requiring authentication means
     anyone who can reach the RPC port has full control (add/remove/delete
@@ -71,7 +102,7 @@ def save_settings(path, settings):
 
 def main():
     settings_path = os.getenv('TRANSMISSION_SETTINGS_FILE', '/config/settings.json')
-    overrides = build_rpc_overrides(os.environ)
+    overrides = {**build_rpc_overrides(os.environ), **build_peer_limit_overrides(os.environ)}
     if not overrides:
         return
 

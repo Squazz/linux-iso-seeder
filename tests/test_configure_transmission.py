@@ -73,6 +73,53 @@ class BuildRpcOverridesTests(unittest.TestCase):
         )
 
 
+class BuildPeerLimitOverridesTests(unittest.TestCase):
+    def test_no_relevant_env_vars_yields_no_overrides(self):
+        self.assertEqual(ct.build_peer_limit_overrides({}), {})
+
+    def test_global_limit_env_var_sets_override(self):
+        overrides = ct.build_peer_limit_overrides({'TRANSMISSION_PEER_LIMIT_GLOBAL': '1000'})
+
+        self.assertEqual(overrides, {'peer-limit-global': 1000})
+
+    def test_per_torrent_limit_env_var_sets_override(self):
+        overrides = ct.build_peer_limit_overrides({'TRANSMISSION_PEER_LIMIT_PER_TORRENT': '300'})
+
+        self.assertEqual(overrides, {'peer-limit-per-torrent': 300})
+
+    def test_both_limits_can_combine(self):
+        overrides = ct.build_peer_limit_overrides({
+            'TRANSMISSION_PEER_LIMIT_GLOBAL': '1000',
+            'TRANSMISSION_PEER_LIMIT_PER_TORRENT': '300',
+        })
+
+        self.assertEqual(overrides, {'peer-limit-global': 1000, 'peer-limit-per-torrent': 300})
+
+    def test_blank_env_vars_are_ignored(self):
+        overrides = ct.build_peer_limit_overrides({
+            'TRANSMISSION_PEER_LIMIT_GLOBAL': '   ',
+            'TRANSMISSION_PEER_LIMIT_PER_TORRENT': '',
+        })
+
+        self.assertEqual(overrides, {})
+
+    def test_non_numeric_env_vars_are_ignored(self):
+        overrides = ct.build_peer_limit_overrides({
+            'TRANSMISSION_PEER_LIMIT_GLOBAL': 'unlimited',
+            'TRANSMISSION_PEER_LIMIT_PER_TORRENT': 'lots',
+        })
+
+        self.assertEqual(overrides, {})
+
+    def test_zero_and_negative_values_are_ignored(self):
+        overrides = ct.build_peer_limit_overrides({
+            'TRANSMISSION_PEER_LIMIT_GLOBAL': '0',
+            'TRANSMISSION_PEER_LIMIT_PER_TORRENT': '-5',
+        })
+
+        self.assertEqual(overrides, {})
+
+
 class WarnIfOpenWithoutAuthTests(unittest.TestCase):
     def test_warns_when_whitelist_broadened_without_auth(self):
         warning = ct.warn_if_open_without_auth({'rpc-whitelist-enabled': True, 'rpc-whitelist': '*'})
