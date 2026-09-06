@@ -34,10 +34,11 @@ import fetch_torrents as ft
 
 
 class FakeTorrent:
-    def __init__(self, name, id_, ratio=0.0):
+    def __init__(self, name, id_, ratio=0.0, added_date=None):
         self.name = name
         self.id = id_
         self.ratio = ratio
+        self.added_date = added_date
 
     def __repr__(self):
         return f"FakeTorrent({self.name!r}, ratio={self.ratio})"
@@ -170,6 +171,73 @@ class PlanCleanupTests(unittest.TestCase):
         self.assertEqual(to_keep_low_ratio, [])
 
 
+class PlanCleanupDevuanGroupingTests(unittest.TestCase):
+    """Devuan releases (e.g. "devuan_excalibur") carry no dotted version to
+    compare - see DEVUAN_NAME_PATTERN - so _old_version_candidates() groups
+    them separately and orders by added_date (when Transmission added the
+    torrent) instead of a parsed version, same idea as should_fetch_torrent()'s
+    ratio gate for Devuan."""
+
+    def test_older_devuan_release_is_a_cleanup_candidate(self):
+        torrents = [
+            FakeTorrent("devuan_daedalus", 1, ratio=2.0, added_date=1000),
+            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=2000),
+        ]
+
+        to_remove, _ = ft.plan_cleanup(torrents)
+
+        self.assertEqual(names_of(to_remove), ["devuan_daedalus"])
+
+    def test_single_devuan_release_is_left_alone(self):
+        torrents = [FakeTorrent("devuan_excalibur", 1, ratio=0.0, added_date=1000)]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(to_keep_low_ratio, [])
+
+    def test_older_devuan_release_below_ratio_threshold_is_kept(self):
+        torrents = [
+            FakeTorrent("devuan_daedalus", 1, ratio=0.4, added_date=1000),
+            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=2000),
+        ]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents, min_ratio=1.0)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(len(to_keep_low_ratio), 1)
+        kept_torrent, kept_ratio = to_keep_low_ratio[0]
+        self.assertEqual(kept_torrent.name, "devuan_daedalus")
+        self.assertEqual(kept_ratio, 0.4)
+
+    def test_stagnant_older_devuan_release_is_removed(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("devuan_daedalus", 1, ratio=1.5, added_date=1000),
+            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=2000),
+        ]
+        history = {"devuan_daedalus": [{"date": "2026-07-20", "ratio": 1.495}]}
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, window_days=30, min_ratio_delta=0.02
+        )
+
+        self.assertEqual(names_of(to_remove), ["devuan_daedalus"])
+        self.assertEqual(to_keep, [])
+
+    def test_missing_added_date_does_not_crash(self):
+        # Real Transmission torrents always carry added_date; this just
+        # guards _devuan_sort_key() against a hypothetical missing attribute.
+        torrents = [
+            FakeTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None),
+            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=None),
+        ]
+
+        to_remove, _ = ft.plan_cleanup(torrents)
+
+        self.assertEqual(len(to_remove), 1)
+
+
 class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     """Candidate names must key into the same ratio-lookup bucket as the names Transmission
     actually reports (which include the arch suffix and .iso extension),
@@ -274,6 +342,46 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         }
         self.assertTrue(
             ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+        )
+
+
+class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
+    """Devuan has no per-name version to compare (get_distro() returns None
+    for it - see distro_patterns), so should_fetch_torrent() instead gates
+    fetching a new Devuan release on the ratio achieved by whichever Devuan
+    release we currently hold, using the same 1.0 floor as other distros."""
+
+    def test_no_previous_devuan_release_fetches(self):
+        self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios={}))
+
+    def test_low_ratio_on_current_release_blocks_next_release(self):
+        ratios = {"devuan_daedalus": 0.4}
+        self.assertFalse(ft.should_fetch_torrent("devuan_excalibur", ratios))
+
+    def test_high_ratio_on_current_release_allows_next_release(self):
+        ratios = {"devuan_daedalus": 1.5}
+        self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios))
+
+    def test_already_holding_this_exact_release_is_always_fetched(self):
+        # download_torrent()'s own file-existence check is what actually
+        # dedupes a re-offered current release - not this ratio gate.
+        ratios = {"devuan_excalibur": 0.1}
+        self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios))
+
+    def test_falls_back_to_removed_history_when_no_live_ratio(self):
+        removed_history = {
+            "devuan_daedalus": {"removed_date": "2026-01-01", "reason": "stagnant", "ratio": 0.4},
+        }
+        self.assertFalse(
+            ft.should_fetch_torrent("devuan_excalibur", ratios={}, removed_history=removed_history)
+        )
+
+    def test_other_distros_removed_history_not_consulted_for_devuan(self):
+        removed_history = {
+            "debian-12.4.0-amd64-DVD-1.iso": {"removed_date": "2026-01-01", "reason": "stagnant", "ratio": 0.1},
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent("devuan_excalibur", ratios={}, removed_history=removed_history)
         )
 
 

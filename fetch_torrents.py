@@ -202,12 +202,20 @@ distro_patterns = {
     'mint': re.compile(r'^linuxmint-'),
     'fedora': re.compile(r'^Fedora-Workstation-Live-'),
     # devuan has no entry here deliberately: it publishes a single
-    # multi-file torrent per release (see fetch_devuan_latest()), so there's
-    # no per-name version to compare and get_distro() returning None for it
-    # is exactly what's wanted - should_fetch_torrent() always fetches it
-    # and it's excluded from the old-version/stagnation cleanup grouping,
-    # which don't apply to a release that's just one combined torrent.
+    # multi-file torrent per release (see fetch_devuan_latest()), so its
+    # name (e.g. "devuan_excalibur") carries no dotted version string for
+    # parse_version_type()/version_to_tuple() to compare - get_distro()
+    # returning None for it is exactly what's wanted. should_fetch_torrent()
+    # and the cleanup grouping in _old_version_candidates() both still cover
+    # Devuan, just via DEVUAN_NAME_PATTERN below instead of a version
+    # compare - see _should_fetch_devuan() and _devuan_sort_key().
 }
+
+# Matches Devuan's release torrent names (e.g. "devuan_excalibur"), used
+# instead of distro_patterns above wherever Devuan needs identifying without
+# a dotted version to parse: should_fetch_torrent()'s ratio gate and
+# _old_version_candidates()'s cleanup grouping.
+DEVUAN_NAME_PATTERN = re.compile(r'^devuan_')
 
 # Every distro fetch_torrents.py knows how to fetch, for FETCH_TORRENTS_DISTROS
 # validation - deliberately not the same set as distro_patterns above (see
@@ -340,6 +348,32 @@ def parse_version_type(name, distro):
         type_ = ''
     return version, type_
 
+def _should_fetch_devuan(name, ratios, removed_history):
+    """Devuan bundles every edition/arch into one multi-file torrent per
+    release (see fetch_devuan_latest()), so there's no per-name version to
+    gate on like should_fetch_torrent() does for other distros - and no
+    visibility into which files inside that bundle anyone actually
+    re-seeds (Transmission's RPC only reports upload/ratio per torrent, not
+    per file - see the user's question this was added for). If large parts
+    of the bundle are never requested by peers, our overall ratio for it can
+    never clear 1.0, so fetching the *next* Devuan release is instead gated
+    on whatever ratio we achieved on whichever release we currently hold."""
+    if name in ratios:
+        return True  # already holding this exact release
+
+    prior_ratios = [r for n, r in ratios.items() if n != name and DEVUAN_NAME_PATTERN.match(n)]
+    if not prior_ratios:
+        prior_ratios = [
+            record['ratio'] for n, record in removed_history.items()
+            if n != name and DEVUAN_NAME_PATTERN.match(n) and 'ratio' in record
+        ]
+
+    if not prior_ratios:
+        return True  # no previous Devuan release on record, fetch
+
+    return max(prior_ratios) >= 1.0
+
+
 def should_fetch_torrent(name, ratios, removed_history=None):
     """removed_history (record_removal()'s output) is consulted as a
     fallback for versions ratios doesn't cover: ratios only reflects
@@ -353,6 +387,8 @@ def should_fetch_torrent(name, ratios, removed_history=None):
         return True
     distro = get_distro(name)
     if not distro:
+        if DEVUAN_NAME_PATTERN.match(name):
+            return _should_fetch_devuan(name, ratios, removed_history or {})
         return True
 
     try:
@@ -1027,18 +1063,38 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     logger.info("[ratio] RATIOS END")
     logger.info("")
 
+def _devuan_sort_key(torrent):
+    """Devuan releases carry no dotted version in their name to compare (see
+    DEVUAN_NAME_PATTERN), so _old_version_candidates() orders them by when
+    Transmission added them instead - the most-recently-added one is treated
+    as the current release, the same role the highest parsed version plays
+    for every other distro."""
+    added = getattr(torrent, 'added_date', None)
+    if added is None:
+        return 0.0
+    if hasattr(added, 'timestamp'):
+        return added.timestamp()
+    return float(added)
+
+
 # Group torrents by (distro, type_) using the same parsing logic used for
 # ratio lookups, so grouping matches how real Transmission torrent names are
-# actually structured for each distro. The newest entry per group is never
-# returned - it's the version fetch_*() functions currently consider "latest"
-# upstream, so removing it would just get it silently re-fetched and
-# re-downloaded on the very next run (should_fetch_torrent() only knows to
-# skip a fetch once a *previous* version's ratio is on record). Kept separate
-# from the cleanup_*() functions so the selection logic can be unit tested
-# without a live Transmission RPC connection (see tests/test_fetch_torrents.py).
+# actually structured for each distro. Devuan releases (DEVUAN_NAME_PATTERN)
+# are grouped together instead, ordered by _devuan_sort_key() since their
+# name has no version to parse. The newest entry per group is never
+# returned - it's the version (or, for Devuan, the release) fetch_*()
+# functions currently consider "latest" upstream, so removing it would just
+# get it silently re-fetched and re-downloaded on the very next run
+# (should_fetch_torrent() only knows to skip a fetch once a *previous*
+# version's ratio is on record). Kept separate from the cleanup_*()
+# functions so the selection logic can be unit tested without a live
+# Transmission RPC connection (see tests/test_fetch_torrents.py).
 def _old_version_candidates(torrents):
     groups = {}
     for torrent in torrents:
+        if DEVUAN_NAME_PATTERN.match(torrent.name):
+            groups.setdefault(('devuan', ''), []).append((_devuan_sort_key(torrent), torrent))
+            continue
         distro = get_distro(torrent.name)
         if not distro:
             continue
