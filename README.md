@@ -312,3 +312,37 @@ restarts some other way (e.g. an external orchestrator).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution workflow, ideas
 for contribution, and guidance on modifying the fetch logic.
+
+---
+
+## 🤔 **Open considerations**
+
+Things flagged during development that don't have a settled answer yet -
+noted here instead of decided unilaterally, so the community can weigh in.
+Open an issue if you have thoughts.
+
+- **Should the five default distros (Ubuntu, Debian, Kali, Mint, Fedora) get
+  a live pre-fetch demand check too**, the same way
+  `FETCH_TORRENTS_CHECK_OLD_RELEASES` already gates old releases? Looked
+  into and parked for now: a snapshot of live tracker data showed every
+  default distro's current release has real, non-zero demand today, and
+  reusing the old-release absolute leecher floor
+  (`FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS`, default `10`) as-is would have
+  rejected editions that are obviously still worth fetching - e.g. Fedora
+  Workstation's primary x86_64 edition, at just 3 live leechers on an
+  otherwise healthy 636-seeder swarm. A floor tuned for "has this abandoned
+  release become relevant again" isn't the same bar as "is this current
+  release still worth serving". If this gets revisited, it needs its own,
+  more permissive threshold rather than reusing the old-release one.
+- **The default cleanup path never removes the latest/only version of an
+  ISO type, no matter how stagnant its ratio.** This is a known, deliberate
+  gap, not an oversight: a current release that goes completely quiet after
+  being fetched is never cleaned up today. Removing that exemption is safer
+  than it used to be - `fetch_torrents_removed_history.json` now records
+  the seed ratio at time of removal, and `should_fetch_torrent()` falls
+  back to it once a version drops out of Transmission's live ratio
+  reporting, so a stagnation-removed "latest" version no longer defeats the
+  smart-fetching ratio gate for whatever release comes next. But whether
+  it's actually *worth* removing a distro's current release - even one
+  with a genuinely dead swarm - hasn't been decided, and could use more
+  real-world observation before committing to it either way.
