@@ -8,6 +8,8 @@ Run with: python -m unittest discover -s tests
 """
 import hashlib
 import os
+import socket
+import struct
 import sys
 import tempfile
 import unittest
@@ -179,6 +181,174 @@ class ParseScrapeResponseTests(unittest.TestCase):
             ts.parse_scrape_response(response, b'A' * 20)
 
 
+class ParseUdpTrackerUrlTests(unittest.TestCase):
+    def test_udp_url_with_port(self):
+        self.assertEqual(
+            ts.parse_udp_tracker_url("udp://tracker.example.com:1337/announce"),
+            ("tracker.example.com", 1337),
+        )
+
+    def test_udp_url_without_path_still_parses(self):
+        self.assertEqual(
+            ts.parse_udp_tracker_url("udp://tracker.example.com:1337"),
+            ("tracker.example.com", 1337),
+        )
+
+    def test_missing_port_is_none(self):
+        self.assertIsNone(ts.parse_udp_tracker_url("udp://tracker.example.com/announce"))
+
+    def test_non_udp_scheme_is_none(self):
+        self.assertIsNone(ts.parse_udp_tracker_url("http://tracker.example.com:1337/announce"))
+
+
+def _connect_response(transaction_id, connection_id, action=0):
+    """Hand-rolled BEP 15 connect response, independent of
+    ts.build_udp_connect_request()/parse_udp_connect_response(), so it serves
+    as an oracle rather than testing the implementation against itself."""
+    return struct.pack(">IIQ", action, transaction_id, connection_id)
+
+
+def _scrape_response(transaction_id, seeders, completed, leechers, action=2):
+    return struct.pack(">IIIII", action, transaction_id, seeders, completed, leechers)
+
+
+def _error_response(transaction_id, message):
+    return struct.pack(">II", 3, transaction_id) + message.encode("utf-8")
+
+
+class BuildParseUdpConnectRequestTests(unittest.TestCase):
+    def test_request_matches_bep15_layout(self):
+        request = ts.build_udp_connect_request(0xAABBCCDD)
+        protocol_id, action, transaction_id = struct.unpack(">QII", request)
+        self.assertEqual(protocol_id, 0x41727101980)
+        self.assertEqual(action, 0)
+        self.assertEqual(transaction_id, 0xAABBCCDD)
+
+    def test_parses_valid_response(self):
+        response = _connect_response(transaction_id=42, connection_id=0x1122334455667788)
+        connection_id = ts.parse_udp_connect_response(response, transaction_id=42)
+        self.assertEqual(connection_id, 0x1122334455667788)
+
+    def test_transaction_id_mismatch_raises(self):
+        response = _connect_response(transaction_id=42, connection_id=1)
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_connect_response(response, transaction_id=99)
+
+    def test_wrong_action_raises(self):
+        response = _connect_response(transaction_id=42, connection_id=1, action=2)
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_connect_response(response, transaction_id=42)
+
+    def test_short_response_raises(self):
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_connect_response(b'\x00' * 8, transaction_id=42)
+
+    def test_tracker_error_action_raises_with_message(self):
+        response = _error_response(transaction_id=42, message="bad request")
+        with self.assertRaises(ts.UdpTrackerError) as ctx:
+            ts.parse_udp_connect_response(response, transaction_id=42)
+        self.assertIn("bad request", str(ctx.exception))
+
+
+class BuildParseUdpScrapeRequestTests(unittest.TestCase):
+    def test_request_matches_bep15_layout(self):
+        info_hash = bytes(range(20))
+        request = ts.build_udp_scrape_request(
+            connection_id=0x1122334455667788, transaction_id=7, info_hash=info_hash,
+        )
+        connection_id, action, transaction_id = struct.unpack(">QII", request[:16])
+        self.assertEqual(connection_id, 0x1122334455667788)
+        self.assertEqual(action, 2)
+        self.assertEqual(transaction_id, 7)
+        self.assertEqual(request[16:], info_hash)
+
+    def test_wrong_length_info_hash_raises(self):
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.build_udp_scrape_request(connection_id=1, transaction_id=1, info_hash=b'short')
+
+    def test_parses_valid_response(self):
+        response = _scrape_response(transaction_id=7, seeders=33, completed=9, leechers=73)
+        stats = ts.parse_udp_scrape_response(response, transaction_id=7)
+        self.assertEqual(stats, {'seeders': 33, 'leechers': 73, 'completed': 9})
+
+    def test_transaction_id_mismatch_raises(self):
+        response = _scrape_response(transaction_id=7, seeders=1, completed=1, leechers=1)
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_scrape_response(response, transaction_id=8)
+
+    def test_wrong_action_raises(self):
+        response = _scrape_response(transaction_id=7, seeders=1, completed=1, leechers=1, action=0)
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_scrape_response(response, transaction_id=7)
+
+    def test_short_response_raises(self):
+        with self.assertRaises(ts.UdpTrackerError):
+            ts.parse_udp_scrape_response(b'\x00' * 4, transaction_id=7)
+
+    def test_tracker_error_action_raises_with_message(self):
+        response = _error_response(transaction_id=7, message="scrape not supported")
+        with self.assertRaises(ts.UdpTrackerError) as ctx:
+            ts.parse_udp_scrape_response(response, transaction_id=7)
+        self.assertIn("scrape not supported", str(ctx.exception))
+
+
+class ScrapeUdpTrackerTests(unittest.TestCase):
+    """Exercises scrape_udp_tracker()'s socket I/O via a mocked socket, so
+    no real network access is required - same spirit as ScrapeTorrentTests
+    mocking ts.requests.get for the HTTP path."""
+
+    def _make_fake_socket(self, recvfrom_side_effect):
+        fake_sock = unittest.mock.Mock()
+        fake_sock.recvfrom.side_effect = recvfrom_side_effect
+        return fake_sock
+
+    def test_full_round_trip_returns_stats(self):
+        info_hash = b'A' * 20
+        connect_resp = _connect_response(transaction_id=0x00000001, connection_id=0xCAFEBABE)
+        scrape_resp = _scrape_response(transaction_id=0x00000001, seeders=5, completed=2, leechers=3)
+        fake_sock = self._make_fake_socket([
+            (connect_resp, ('1.2.3.4', 1337)),
+            (scrape_resp, ('1.2.3.4', 1337)),
+        ])
+
+        with unittest.mock.patch.object(ts.socket, 'socket', return_value=fake_sock), \
+                unittest.mock.patch.object(ts.os, 'urandom', return_value=b'\x00\x00\x00\x01'):
+            stats = ts.scrape_udp_tracker('tracker.example.com', 1337, info_hash, timeout=5)
+
+        self.assertEqual(stats, {'seeders': 5, 'leechers': 3, 'completed': 2})
+        fake_sock.settimeout.assert_called_once_with(5)
+        self.assertEqual(fake_sock.sendto.call_count, 2)
+        # Second (scrape) request must carry the connection_id from the connect response.
+        scrape_request_bytes = fake_sock.sendto.call_args_list[1][0][0]
+        connection_id_sent, action_sent = struct.unpack(">QI", scrape_request_bytes[:12])
+        self.assertEqual(connection_id_sent, 0xCAFEBABE)
+        self.assertEqual(action_sent, 2)
+        fake_sock.close.assert_called_once()
+
+    def test_connect_transaction_mismatch_raises_and_closes_socket(self):
+        info_hash = b'A' * 20
+        bad_connect_resp = _connect_response(transaction_id=0x00000002, connection_id=1)
+        fake_sock = self._make_fake_socket([(bad_connect_resp, ('1.2.3.4', 1337))])
+
+        with unittest.mock.patch.object(ts.socket, 'socket', return_value=fake_sock), \
+                unittest.mock.patch.object(ts.os, 'urandom', return_value=b'\x00\x00\x00\x01'):
+            with self.assertRaises(ts.UdpTrackerError):
+                ts.scrape_udp_tracker('tracker.example.com', 1337, info_hash, timeout=5)
+
+        fake_sock.close.assert_called_once()
+
+    def test_socket_timeout_propagates(self):
+        info_hash = b'A' * 20
+        fake_sock = unittest.mock.Mock()
+        fake_sock.recvfrom.side_effect = socket.timeout("timed out")
+
+        with unittest.mock.patch.object(ts.socket, 'socket', return_value=fake_sock):
+            with self.assertRaises(socket.timeout):
+                ts.scrape_udp_tracker('tracker.example.com', 1337, info_hash, timeout=5)
+
+        fake_sock.close.assert_called_once()
+
+
 class IsDisallowedIpTests(unittest.TestCase):
     def test_public_ipv4_is_allowed(self):
         self.assertFalse(ts._is_disallowed_ip('93.184.216.34'))
@@ -252,7 +422,23 @@ class ScrapeTorrentTests(unittest.TestCase):
         return b'd5:filesd' + bstr(info_hash) + \
             f'd8:completei{seeders}e10:incompletei{leechers}e10:downloadedi0ee'.encode() + b'ee' + b'e'
 
-    def test_skips_udp_tracker_and_scrapes_first_http_tracker(self):
+    def test_uses_udp_tracker_when_it_succeeds(self):
+        path = self._write_torrent([
+            'udp://tracker.example.com:80/announce',
+            'http://tracker.example.com:6969/announce',
+        ])
+        with unittest.mock.patch.object(ts, 'scrape_udp_tracker', return_value={
+            'seeders': 5, 'leechers': 7, 'completed': 1,
+        }) as mock_udp_scrape, unittest.mock.patch.object(ts.requests, 'get') as mock_get:
+            result = ts.scrape_torrent(path)
+
+        mock_udp_scrape.assert_called_once()
+        mock_get.assert_not_called()
+        self.assertEqual(result['seeders'], 5)
+        self.assertEqual(result['leechers'], 7)
+        self.assertEqual(result['tracker'], 'udp://tracker.example.com:80')
+
+    def test_falls_through_from_failing_udp_tracker_to_http_tracker(self):
         path = self._write_torrent([
             'udp://tracker.example.com:80/announce',
             'http://tracker.example.com:6969/announce',
@@ -263,13 +449,35 @@ class ScrapeTorrentTests(unittest.TestCase):
         fake_response.content = self._scrape_response_bytes(info_hash, 5, 7)
         fake_response.raise_for_status = lambda: None
 
-        with unittest.mock.patch.object(ts.requests, 'get', return_value=fake_response) as mock_get:
+        with unittest.mock.patch.object(ts, 'scrape_udp_tracker', side_effect=OSError("unreachable")), \
+                unittest.mock.patch.object(ts.requests, 'get', return_value=fake_response) as mock_get:
             result = ts.scrape_torrent(path)
 
         mock_get.assert_called_once()
         self.assertIn('tracker.example.com:6969/scrape', mock_get.call_args[0][0])
         self.assertEqual(result['seeders'], 5)
         self.assertEqual(result['leechers'], 7)
+        self.assertEqual(result['tracker'], 'http://tracker.example.com:6969/scrape')
+
+    def test_skips_udp_tracker_with_no_port(self):
+        """BEP 15 requires an explicit port; an announce URL without one
+        can't be dialed, so it should be skipped like any other unusable
+        tracker rather than raising."""
+        path = self._write_torrent([
+            'udp://tracker.example.com/announce',
+            'http://tracker.example.com:6969/announce',
+        ])
+        with open(path, 'rb') as f:
+            info_hash = ts.compute_info_hash(f.read())
+        fake_response = unittest.mock.Mock()
+        fake_response.content = self._scrape_response_bytes(info_hash, 5, 7)
+        fake_response.raise_for_status = lambda: None
+
+        with unittest.mock.patch.object(ts, 'scrape_udp_tracker') as mock_udp_scrape, \
+                unittest.mock.patch.object(ts.requests, 'get', return_value=fake_response):
+            result = ts.scrape_torrent(path)
+
+        mock_udp_scrape.assert_not_called()
         self.assertEqual(result['tracker'], 'http://tracker.example.com:6969/scrape')
 
     def test_falls_through_to_next_tracker_on_failure(self):
@@ -295,11 +503,37 @@ class ScrapeTorrentTests(unittest.TestCase):
         self.assertEqual(result['tracker'], 'http://alive.example.com/scrape')
 
     def test_returns_none_when_no_tracker_usable(self):
-        path = self._write_torrent(['udp://only.example.com/announce'])
-        with unittest.mock.patch.object(ts.requests, 'get') as mock_get:
+        path = self._write_torrent(['udp://only.example.com:1337/announce'])
+        with unittest.mock.patch.object(ts, 'scrape_udp_tracker', side_effect=OSError("unreachable")), \
+                unittest.mock.patch.object(ts.requests, 'get') as mock_get:
             result = ts.scrape_torrent(path)
         mock_get.assert_not_called()
         self.assertIsNone(result)
+
+    def test_skips_udp_tracker_resolving_to_a_private_address(self):
+        path = self._write_torrent([
+            'udp://internal.example.com:1337/announce',
+            'http://real-tracker.example.com/announce',
+        ])
+        with open(path, 'rb') as f:
+            info_hash = ts.compute_info_hash(f.read())
+        fake_response = unittest.mock.Mock()
+        fake_response.content = self._scrape_response_bytes(info_hash, 3, 4)
+        fake_response.raise_for_status = lambda: None
+
+        def fake_resolve(hostname):
+            if hostname == 'internal.example.com':
+                return ['127.0.0.1']
+            return ['93.184.216.34']
+
+        with unittest.mock.patch.object(ts, '_resolve_addresses', side_effect=fake_resolve), \
+                unittest.mock.patch.object(ts, 'scrape_udp_tracker') as mock_udp_scrape, \
+                unittest.mock.patch.object(ts.requests, 'get', return_value=fake_response) as mock_get:
+            result = ts.scrape_torrent(path)
+
+        mock_udp_scrape.assert_not_called()
+        mock_get.assert_called_once()
+        self.assertEqual(result['tracker'], 'http://real-tracker.example.com/scrape')
 
     def test_skips_tracker_resolving_to_a_private_address(self):
         """A .torrent whose announce URL resolves to an internal address

@@ -201,9 +201,29 @@ distro_patterns = {
     'arch': re.compile(r'^archlinux-'),
     'mint': re.compile(r'^linuxmint-'),
     'fedora': re.compile(r'^Fedora-Workstation-Live-'),
+    # devuan has no entry here deliberately: it publishes a single
+    # multi-file torrent per release (see fetch_devuan_latest()), so there's
+    # no per-name version to compare and get_distro() returning None for it
+    # is exactly what's wanted - should_fetch_torrent() always fetches it
+    # and it's excluded from the old-version/stagnation cleanup grouping,
+    # which don't apply to a release that's just one combined torrent.
 }
 
-DEFAULT_DISTROS = tuple(distro_patterns.keys())
+# Every distro fetch_torrents.py knows how to fetch, for FETCH_TORRENTS_DISTROS
+# validation - deliberately not the same set as distro_patterns above (see
+# the devuan comment there).
+ALL_DISTROS = tuple(distro_patterns.keys()) + ('devuan',)
+
+# Distros fetched when FETCH_TORRENTS_DISTROS is unset. Arch and Devuan are
+# opt-in only - see tasks/01-demand-checks-for-default-distros.md:
+#  - Arch's official torrent publishes no tracker at all (only DHT + ~400
+#    HTTP webseeds), so real peer demand can never be verified before
+#    fetching it.
+#  - Devuan bundles every edition/arch into one multi-file torrent under a
+#    single info-hash, so any demand check only ever reads the swarm as a
+#    whole, never which of the bundled files anyone actually wants.
+OPT_IN_DISTROS = ('arch', 'devuan')
+DEFAULT_DISTROS = tuple(d for d in ALL_DISTROS if d not in OPT_IN_DISTROS)
 
 def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
     value = os.getenv(env_var, '').strip()
@@ -211,20 +231,20 @@ def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
         return list(DEFAULT_DISTROS)
 
     requested = [entry.strip().lower() for entry in value.split(',') if entry.strip()]
-    valid = [d for d in DEFAULT_DISTROS if d in requested]
+    valid = [d for d in ALL_DISTROS if d in requested]
 
-    invalid = [entry for entry in requested if entry not in DEFAULT_DISTROS]
+    invalid = [entry for entry in requested if entry not in ALL_DISTROS]
     if invalid:
         logger.warning(
             "%s contains unknown distributions: %s. Valid values: %s",
             env_var,
             ", ".join(invalid),
-            ", ".join(DEFAULT_DISTROS),
+            ", ".join(ALL_DISTROS),
         )
 
     if not valid:
         logger.warning(
-            "%s did not specify any valid distros. Falling back to all: %s",
+            "%s did not specify any valid distros. Falling back to defaults: %s",
             env_var,
             ", ".join(DEFAULT_DISTROS),
         )
@@ -559,6 +579,14 @@ def fetch_kali_old_versions():
         return {}
 
 def fetch_arch_latest():
+    """Opt-in (FETCH_TORRENTS_DISTROS=arch,...): Arch's official torrent
+    publishes no tracker at all - only DHT and ~400 HTTP webseeds - so real
+    peer demand can never be verified ahead of time (see
+    tasks/01-demand-checks-for-default-distros.md). releng's release table
+    lists every release still available (typically the last 2-3 months) as
+    available-yes; only the single newest one is fetched, since grabbing
+    all of them would only fragment what little swarm demand exists across
+    several near-duplicate monthly builds."""
     base_url = "https://archlinux.org"
     url = f"{base_url}/releng/releases/"
     try:
@@ -566,22 +594,56 @@ def fetch_arch_latest():
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
 
-        results = {}
+        torrent_url_pattern = "/releng/releases/(.+)/torrent/"
+        candidates = []
         release_rows = soup.find("table", id="release-table").find_all("tr")
         for row in release_rows:
             if not row.find("td", class_="available-yes"):
                 continue
 
-            torrent_url_pattern = "/releng/releases/(.+)/torrent/"
-            href = row.find("a", href=re.compile(torrent_url_pattern))['href']
+            link = row.find("a", href=re.compile(torrent_url_pattern))
+            if not link:
+                continue
+            href = link['href']
             version = re.sub(torrent_url_pattern, "\\1", href)
+            candidates.append((version, href))
 
-            logger.debug(f"Arch Linux {version}: {base_url}{href}")
-            results[f"archlinux-{version}"] = base_url + href
+        if not candidates:
+            logger.warning("No available Arch Linux releases found on %s", url)
+            return False
 
-        return results
+        # Version strings are YYYY.MM.DD, so lexicographic order == chronological order.
+        version, href = max(candidates, key=lambda entry: entry[0])
+        logger.debug(f"Arch Linux {version}: {base_url}{href}")
+        return {f"archlinux-{version}": base_url + href}
     except Exception as exc:
         logger.error("Arch Linux fetch error: %s", exc)
+        return False
+
+
+def fetch_devuan_latest():
+    """Opt-in (FETCH_TORRENTS_DISTROS=devuan,...): Devuan bundles every
+    edition and architecture (desktop-live, minimal-live, netinstall,
+    server, ...) into a single multi-file torrent per release under one
+    info-hash, rather than a separate .torrent per variant like Kali/Solus -
+    so a demand check only ever reads the whole bundle, never which of the
+    files within it anyone actually wants (see
+    tasks/01-demand-checks-for-default-distros.md). The get-devuan page
+    links exactly one release torrent, whose filename embeds the current
+    release codename (e.g. devuan_excalibur.torrent)."""
+    url = "https://www.devuan.org/get-devuan"
+    try:
+        text = requests.get(url, timeout=30).text
+        match = re.search(r"https://files\.devuan\.org/devuan_\w+\.torrent", text)
+        if not match:
+            logger.warning("Could not find a Devuan release torrent link on %s", url)
+            return False
+
+        torrent_url = match.group(0)
+        name = os.path.basename(torrent_url).replace(".torrent", "")
+        return {name: torrent_url}
+    except Exception as e:
+        logger.error(f"Devuan fetch error: {e}")
         return False
 
 def fetch_linuxmint_cinnamon():
@@ -1217,6 +1279,7 @@ if __name__ == "__main__":
         ('arch', fetch_arch_latest),
         ('mint', fetch_linuxmint_cinnamon),
         ('fedora', fetch_fedora_workstation),
+        ('devuan', fetch_devuan_latest),
     ]
 
     selected_distros = parse_supported_distros()

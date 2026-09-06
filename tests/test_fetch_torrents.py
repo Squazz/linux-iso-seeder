@@ -415,6 +415,126 @@ class FetchFedoraWorkstationNamingTests(unittest.TestCase):
         )
 
 
+class FetchArchLatestNamingTests(unittest.TestCase):
+    """archlinux.org/releng/releases/ lists every release still available
+    (typically the last 2-3 months) as available-yes. fetch_arch_latest()
+    must pick only the single newest one - fetching all of them fragments
+    whatever little torrent demand Arch has across several near-duplicate
+    monthly builds (see tasks/01-demand-checks-for-default-distros.md)."""
+
+    def test_picks_only_the_single_newest_release(self):
+        html = (
+            "<html><body><table id='release-table'>"
+            "<tr><td class='available-yes'></td><td><a href='/releng/releases/2026.07.01/torrent/'>t</a></td></tr>"
+            "<tr><td class='available-yes'></td><td><a href='/releng/releases/2026.09.01/torrent/'>t</a></td></tr>"
+            "<tr><td class='available-yes'></td><td><a href='/releng/releases/2026.08.01/torrent/'>t</a></td></tr>"
+            "</table></body></html>"
+        )
+
+        class FakeResponse:
+            text = html
+
+            def raise_for_status(self):
+                pass
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_arch_latest()
+
+        self.assertEqual(
+            results,
+            {"archlinux-2026.09.01": "https://archlinux.org/releng/releases/2026.09.01/torrent/"},
+        )
+
+    def test_no_available_releases_returns_false(self):
+        html = "<html><body><table id='release-table'></table></body></html>"
+
+        class FakeResponse:
+            text = html
+
+            def raise_for_status(self):
+                pass
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            result = ft.fetch_arch_latest()
+
+        self.assertFalse(result)
+
+
+class FetchDevuanLatestNamingTests(unittest.TestCase):
+    """Devuan's get-devuan page links a single release torrent whose
+    filename embeds the current release codename (e.g.
+    devuan_excalibur.torrent, verified against the real download) - the
+    dict key must match that basename since it's also what Transmission
+    later reports as torrent.name."""
+
+    def test_extracts_current_release_torrent(self):
+        html = (
+            '<h2 id="torrent-and-magnet-link">Torrent and Magnet Link</h2><ul>'
+            '<li><a href="https://files.devuan.org/devuan_excalibur.torrent">Release torrent</a></li>'
+            '</ul>'
+        )
+
+        class FakeResponse:
+            text = html
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            results = ft.fetch_devuan_latest()
+
+        self.assertEqual(
+            results,
+            {"devuan_excalibur": "https://files.devuan.org/devuan_excalibur.torrent"},
+        )
+
+    def test_returns_false_when_no_torrent_link_found(self):
+        class FakeResponse:
+            text = "<html><body>nothing here</body></html>"
+
+        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+            result = ft.fetch_devuan_latest()
+
+        self.assertFalse(result)
+
+
+class ParseSupportedDistrosTests(unittest.TestCase):
+    """Arch and Devuan are opt-in only: neither can be pre-verified for real
+    demand (Arch publishes no tracker at all; Devuan bundles every edition
+    into one multi-file torrent, so a demand reading only ever covers the
+    whole bundle, never a specific file within it) - see
+    tasks/01-demand-checks-for-default-distros.md. They must never be
+    fetched just because FETCH_TORRENTS_DISTROS is unset."""
+
+    def test_default_excludes_opt_in_distros(self):
+        with unittest.mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop('FETCH_TORRENTS_DISTROS', None)
+            result = ft.parse_supported_distros()
+        self.assertNotIn('arch', result)
+        self.assertNotIn('devuan', result)
+        for expected in ('ubuntu', 'debian', 'kali', 'mint', 'fedora'):
+            self.assertIn(expected, result)
+
+    def test_explicit_opt_in_distros_are_honored(self):
+        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'arch,devuan'}):
+            result = ft.parse_supported_distros()
+        self.assertEqual(sorted(result), ['arch', 'devuan'])
+
+    def test_can_mix_default_and_opt_in_distros(self):
+        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'ubuntu,arch'}):
+            result = ft.parse_supported_distros()
+        self.assertEqual(sorted(result), ['arch', 'ubuntu'])
+
+    def test_unknown_entries_are_dropped_but_valid_ones_kept(self):
+        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'ubuntu,nonsense'}):
+            result = ft.parse_supported_distros()
+        self.assertEqual(result, ['ubuntu'])
+
+    def test_all_invalid_falls_back_to_default_not_all_distros(self):
+        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'nonsense'}):
+            result = ft.parse_supported_distros()
+        self.assertEqual(sorted(result), sorted(ft.DEFAULT_DISTROS))
+        self.assertNotIn('arch', result)
+        self.assertNotIn('devuan', result)
+
+
 class LowDemandVariantTests(unittest.TestCase):
     """cloud-genericcloud images and Kali's netinst installer are
     chronically low-ratio in fetch_torrents_ratios.log regardless of

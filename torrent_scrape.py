@@ -7,19 +7,29 @@ registering the caller as a peer or joining the swarm at all. This lets a
 seeder check whether a torrent has any real demand before ever downloading
 or seeding it - no artificial demand required.
 
-Only HTTP(S) trackers are supported. UDP-only trackers use a different
-(binary, BEP 15) protocol that isn't implemented here; callers should just
+Both HTTP(S) trackers (the unofficial "scrape convention") and UDP trackers
+(BEP 15) are supported. Any other scheme is skipped; callers should just
 move on to the torrent's next tracker.
 """
 import hashlib
 import ipaddress
+import os
 import socket
+import struct
 from urllib.parse import urlsplit, urlunsplit, quote_from_bytes
 
 import requests
 
 
 class BencodeError(ValueError):
+    pass
+
+
+class UdpTrackerError(ValueError):
+    """Raised for any BEP 15 protocol-level failure (short/malformed
+    response, transaction ID mismatch, or an explicit tracker error
+    action) - callers should catch it the same as any other scrape
+    failure and move on to the next tracker."""
     pass
 
 
@@ -141,6 +151,99 @@ def derive_scrape_url(announce_url):
     return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
 
 
+UDP_TRACKER_PROTOCOL_ID = 0x41727101980  # BEP 15 magic connection_id for the initial connect request
+UDP_ACTION_CONNECT = 0
+UDP_ACTION_SCRAPE = 2
+UDP_ACTION_ERROR = 3
+
+
+def parse_udp_tracker_url(announce_url):
+    """Returns (host, port) for a udp:// tracker URL, or None if the scheme
+    isn't udp or no port is present - BEP 15 has no default port, so a
+    tracker URL without one can't be dialed."""
+    parts = urlsplit(announce_url)
+    if parts.scheme != 'udp':
+        return None
+    if not parts.hostname or not parts.port:
+        return None
+    return parts.hostname, parts.port
+
+
+def build_udp_connect_request(transaction_id):
+    return struct.pack(">QII", UDP_TRACKER_PROTOCOL_ID, UDP_ACTION_CONNECT, transaction_id)
+
+
+def _check_for_udp_error_action(data, transaction_id):
+    """Tracker-level failures (e.g. malformed request) come back as action 3
+    with a plain-text message, on either the connect or scrape response -
+    raise with that message if so, otherwise do nothing."""
+    if len(data) >= 8:
+        action, resp_transaction_id = struct.unpack(">II", data[:8])
+        if action == UDP_ACTION_ERROR and resp_transaction_id == transaction_id:
+            raise UdpTrackerError(f"Tracker error: {data[8:].decode('utf-8', 'replace')}")
+
+
+def parse_udp_connect_response(data, transaction_id):
+    _check_for_udp_error_action(data, transaction_id)
+    if len(data) < 16:
+        raise UdpTrackerError(f"Connect response too short ({len(data)} bytes)")
+    action, resp_transaction_id, connection_id = struct.unpack(">IIQ", data[:16])
+    if action != UDP_ACTION_CONNECT:
+        raise UdpTrackerError(f"Unexpected action {action} in connect response")
+    if resp_transaction_id != transaction_id:
+        raise UdpTrackerError("Transaction ID mismatch in connect response")
+    return connection_id
+
+
+def build_udp_scrape_request(connection_id, transaction_id, info_hash):
+    if len(info_hash) != 20:
+        raise UdpTrackerError(f"info_hash must be 20 bytes, got {len(info_hash)}")
+    return struct.pack(">QII", connection_id, UDP_ACTION_SCRAPE, transaction_id) + info_hash
+
+
+def parse_udp_scrape_response(data, transaction_id):
+    """Parses a scrape response containing stats for a single info_hash -
+    the only kind this module ever requests."""
+    _check_for_udp_error_action(data, transaction_id)
+    if len(data) < 20:
+        raise UdpTrackerError(f"Scrape response too short ({len(data)} bytes)")
+    action, resp_transaction_id = struct.unpack(">II", data[:8])
+    if action != UDP_ACTION_SCRAPE:
+        raise UdpTrackerError(f"Unexpected action {action} in scrape response")
+    if resp_transaction_id != transaction_id:
+        raise UdpTrackerError("Transaction ID mismatch in scrape response")
+    seeders, completed, leechers = struct.unpack(">III", data[8:20])
+    return {'seeders': seeders, 'leechers': leechers, 'completed': completed}
+
+
+def _random_transaction_id():
+    return int.from_bytes(os.urandom(4), 'big')
+
+
+def scrape_udp_tracker(host, port, info_hash, timeout=15):
+    """Scrapes a BEP 15 UDP tracker for info_hash's stats via a connect
+    round trip followed by a scrape round trip. Returns {'seeders',
+    'leechers', 'completed'}. Raises (UdpTrackerError, OSError/socket.timeout,
+    struct.error) on any protocol or network failure - callers should catch
+    and move on to the next tracker, same as the HTTP path."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.settimeout(timeout)
+        addr = (host, port)
+
+        connect_transaction_id = _random_transaction_id()
+        sock.sendto(build_udp_connect_request(connect_transaction_id), addr)
+        data, _ = sock.recvfrom(2048)
+        connection_id = parse_udp_connect_response(data, connect_transaction_id)
+
+        scrape_transaction_id = _random_transaction_id()
+        sock.sendto(build_udp_scrape_request(connection_id, scrape_transaction_id, info_hash), addr)
+        data, _ = sock.recvfrom(2048)
+        return parse_udp_scrape_response(data, scrape_transaction_id)
+    finally:
+        sock.close()
+
+
 def _is_disallowed_ip(ip_str):
     """True if ip_str is loopback/private/link-local/multicast/reserved -
     i.e. not a real public tracker, so a scrape request should never be sent
@@ -213,6 +316,17 @@ def scrape_torrent(torrent_path, timeout=15):
     info_hash = compute_info_hash(torrent_bytes)
 
     for announce_url in get_announce_urls(torrent_bytes):
+        udp_target = parse_udp_tracker_url(announce_url)
+        if udp_target is not None:
+            host, port = udp_target
+            if not _is_safe_scrape_host(host):
+                continue
+            try:
+                stats = scrape_udp_tracker(host, port, info_hash, timeout=timeout)
+            except Exception:
+                continue
+            return {'tracker': f'udp://{host}:{port}', **stats}
+
         scrape_url = derive_scrape_url(announce_url)
         if not scrape_url:
             continue

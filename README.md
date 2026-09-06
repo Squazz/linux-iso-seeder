@@ -24,9 +24,19 @@ Seeding Linux ISOs improves global availability, helps users download faster, an
 - Ubuntu (All LTS & ESM, including Lubuntu & Xubuntu)
 - Debian (latest stable, DVD and netinst/CD images, amd64 + arm64)
 - Kali Linux (latest installer, netInstaller & everything ISO)
-- Arch Linux (All available ISOs)
 - Linux Mint (latest Cinnamon edition, 64-bit)
 - Fedora Workstation (latest Live ISO, x86_64 + aarch64)
+
+Opt-in only (see `FETCH_TORRENTS_DISTROS` below) - neither of these can be
+verified for real BitTorrent demand ahead of time, so they're not fetched
+by default:
+
+- Arch Linux (latest release only) - its official torrent publishes no
+  tracker at all (only DHT + ~400 HTTP webseeds), so there's no way to
+  check real peer demand before seeding it
+- Devuan (latest release) - bundles every edition/architecture into one
+  combined multi-file torrent, so a demand check can only ever read the
+  whole bundle, never which file within it anyone actually wants
 
 ✅ Daily updates with minimal resource usage  
 ✅ Uses **Transmission-daemon** (lightweight torrent client)  
@@ -121,9 +131,9 @@ below), remember to remove that forwarding rule too.
 | `LOG_LEVEL` | `INFO` | Set the minimum log level for the fetch script. Supported values: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. |
 | `FETCH_TORRENTS_LOG_LEVEL` | `INFO` | Overrides `LOG_LEVEL` when both are set. |
 | `FETCH_TORRENTS_ALWAYS_LOG` | `true` | If `true`, always logs a small set of important run-status messages even when the effective level is `ERROR`. Set to `false` to only log messages at or above the configured level. |
-| `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,arch,mint,fedora` | Comma-separated list of distributions to fetch. Valid values: `ubuntu`, `debian`, `kali`, `arch`, `mint`, `fedora`. |
+| `FETCH_TORRENTS_DISTROS` | `ubuntu,debian,kali,mint,fedora` | Comma-separated list of distributions to fetch. Default (also used as the fallback if this is set but empty/invalid): `ubuntu`, `debian`, `kali`, `mint`, `fedora`. Also valid but **opt-in only** (not included in the default, must be listed explicitly - see Features above for why): `arch`, `devuan`, e.g. `FETCH_TORRENTS_DISTROS=ubuntu,debian,kali,mint,fedora,arch` to add Arch alongside the defaults. |
 | `FETCH_TORRENTS_INCLUDE_LOW_DEMAND` | `false` | By default, `cloud-genericcloud` images and Kali's `netinst` installer are skipped — these image families see very few peers over BitTorrent and chronically end up with a seed ratio well below 1.0 regardless of architecture or how recent the release is (see `fetch_torrents_ratios.log`), leaving this seeder as a leecher. Set to `true` to fetch and seed these low-demand variants too. |
-| `FETCH_TORRENTS_CHECK_OLD_RELEASES` | `false` | Set to `true` to also look for unmet demand on older, non-latest releases (currently: Kali's previous release still on `cdimage.kali.org`, and non-latest Fedora Workstation images — Ubuntu and Arch already surface old releases through their normal fetch, since their upstream feeds list more than just the newest one). Each candidate's `.torrent` is downloaded and its tracker(s) queried via BitTorrent's "scrape" convention for live seeder/leecher counts *without joining the swarm* — it's only added to seed if that shows real, currently-unmet demand (see `FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS`/`FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO`). |
+| `FETCH_TORRENTS_CHECK_OLD_RELEASES` | `false` | Set to `true` to also look for unmet demand on older, non-latest releases (currently: Kali's previous release still on `cdimage.kali.org`, and non-latest Fedora Workstation images — Ubuntu already surfaces old releases through its normal fetch, since its upstream feed lists more than just the newest one; Arch and Devuan are opt-in only and not covered by this check, see Features above). Each candidate's `.torrent` is downloaded and its tracker(s) queried via BitTorrent's "scrape" convention (HTTP/HTTPS trackers, and UDP trackers per BEP 15) for live seeder/leecher counts *without joining the swarm* — it's only added to seed if that shows real, currently-unmet demand (see `FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS`/`FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO`). |
 | `FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS` | `10` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. Minimum leecher count, in absolute terms, a live tracker scrape must show before an old release is even considered — a single leecher shouldn't justify a download on its own. |
 | `FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO` | `0.1` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. Leechers must reach at least this fraction of the seeder count (e.g. `0.1` = leechers only need to reach 10% of seeders — 10 leechers on 100 seeders, or 100 on 1000, both count) before an old release counts as unmet demand. Deliberately low: scrape data can't tell us whether existing seeders have spare upload capacity or are bandwidth-constrained, so leechers don't need to approach or outnumber seeders — this mainly guards against the extreme case of a handful of leechers on a vastly larger, clearly-already-served swarm. Doesn't apply to a swarm with zero seeders — see `FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS`. |
 | `FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS` | `false` | Only used when `FETCH_TORRENTS_CHECK_OLD_RELEASES=true`. A scrape showing zero seeders means there's no verified-complete copy anywhere in the swarm — the leechers present may not collectively hold every piece, so the download could stall short of 100% forever, leaving us leeching something we can never actually seed back. Excluded by default for that reason, regardless of leecher count. Set to `true` to gamble on reviving such swarms anyway (the absolute leecher floor above still applies) — for the official, well-seeded Linux ISO trackers this project currently targets this is mostly theoretical, but may matter more if this project expands to less centrally-seeded content in the future. |
@@ -208,6 +218,18 @@ docker run -d \
 docker run -d \
   --restart=unless-stopped \
   -e SKIP_RATIO_CHECK=true \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -v /path/to/watch:/watch \
+  -v /path/to/logs:/logs \
+  -p 9091:9091 \
+  ghcr.io/squazz/linux-iso-seeder:latest
+
+# Opt in to also seeding Arch Linux and/or Devuan (unverifiable BitTorrent
+# demand - see Features above), alongside the default distros
+docker run -d \
+  --restart=unless-stopped \
+  -e FETCH_TORRENTS_DISTROS=ubuntu,debian,kali,mint,fedora,arch,devuan \
   -v /path/to/config:/config \
   -v /path/to/downloads:/downloads \
   -v /path/to/watch:/watch \
