@@ -1,0 +1,13 @@
+{
+  "detected": "2026-10-18",
+  "stacks": ["python"],
+  "frameworks": ["unittest"],
+  "packageManager": "pip",
+  "hasDocker": true,
+  "indicators": {
+    "requirements-test.txt": true,
+    "requirements-dev.txt": true,
+    "pyproject.toml": false,
+    "Dockerfile": true
+  }
+}

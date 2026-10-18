@@ -1,0 +1,5 @@
+{
+  "codegraph": {"install_accepted": true, "init_accepted": true},
+  "mcp_hygiene": {"gitignore": "added"},
+  "last_run": {"stack": ["python"], "all_slots_bound": true, "capability_tools_resolved": false, "checked_at": "2026-10-18T00:00:00Z"}
+}

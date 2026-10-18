@@ -201,3 +201,21 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# dev-team hygiene — machine-specific MCP config (absolute-path pollution — issues #1376, #1416)
+.mcp.json
+
+# dev-team workflow runtime artifacts (.claude/-scoped + .dev-team-reports/, #1406) v2 (regeneratable; not deliverables — issues #1101, #1377, #1406, #1412)
+.claude/memory/
+.claude/metrics/
+.claude/plans/
+/.dev-team-reports/*
+!/.dev-team-reports/test-improve/
+memory/
+reports/
+metrics/
+plans/
+.pr-review-passed
+
+# CodeGraph local index (machine-local)
+.codegraph/
