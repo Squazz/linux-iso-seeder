@@ -69,7 +69,9 @@ faked with `helpers.fake_response()` (a real `requests.Response`) or
 `test_persistence.py`, `test_logging.py`, `test_old_release_demand.py`,
 `test_config.py` (`load_config()`, `parse_bool()`, `make_client_factory()`,
 the run summary) and `test_daily_run.py` (`run()`, `__main__`).
-`test_helpers.py` tests the doubles in `tests/helpers.py` themselves.
+`test_helpers.py` tests the doubles in `tests/helpers.py` themselves;
+`test_repo_hygiene.py` checks the repository itself (shebang files are
+executable in git).
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from
