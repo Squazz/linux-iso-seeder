@@ -152,7 +152,9 @@ class FakeWorld:
         )
 
 
-class RunTests(unittest.TestCase):
+class RunTestCase(unittest.TestCase):
+    """Base for tests of ft.run() inside a FakeWorld; defines no tests."""
+
     def setUp(self):
         self.world = FakeWorld(self)
         patches = [
@@ -184,7 +186,7 @@ class RunTests(unittest.TestCase):
     def _rpc_port_open(*args, **kwargs):
         yield MagicMock()
 
-    def _run(self, **env):
+    def _run(self, fetchers=ft.DEFAULT_FETCHERS, **env):
         """Runs ft.run() with load_config(env); returns (summary, messages)."""
         with self.assertLogs(ft.logger, level="DEBUG") as logs:
             summary = ft.run(
@@ -192,10 +194,13 @@ class RunTests(unittest.TestCase):
                 client_factory=self.world.connect,
                 today=date(2026, 9, 2),
                 now=lambda: 1000.0,
+                fetchers=fetchers,
                 disk_usage=self.world.disk_usage,
             )
         return summary, [record.getMessage() for record in logs.records]
 
+
+class RunTests(RunTestCase):
     def test_counts_each_download_outcome(self):
         self.world.route_ubuntu()
 
@@ -441,32 +446,139 @@ class RunTests(unittest.TestCase):
 
         log_ratios.assert_called_once_with(auth=("alice", "hunter2"))
 
-    def test_old_release_check_runs_only_when_enabled(self):
-        with unittest.mock.patch.object(
-            ft, "check_old_releases_for_demand", return_value=(2, 3, {"x": "y"})
-        ) as check:
-            disabled, _ = self._run(FETCH_TORRENTS_DISTROS="arch")
-            check.assert_not_called()
+    def test_old_release_check_is_off_by_default(self):
+        discovered = []
+        with unittest.mock.patch.dict(
+            ft.OLD_RELEASE_DISCOVERY,
+            {"kali": lambda: discovered.append("kali") or {}},
+            clear=True,
+        ):
+            summary, _ = self._run(FETCH_TORRENTS_DISTROS="kali", fetchers=())
 
-            enabled, messages = self._run(
-                FETCH_TORRENTS_DISTROS="arch",
+        self.assertEqual(discovered, [])
+        self.assertEqual((summary.old_added, summary.old_skipped), (None, None))
+        self.assertFalse(os.path.exists(ft.old_release_check_state_file))
+
+
+class OldReleaseRunTests(RunTestCase):
+    """The daily run's old-release check end to end: config thresholds, the
+    saved check state and removed history all reach the real
+    check_old_releases_for_demand(), with only the downloads (FakeWorld
+    routes) and the tracker scrape faked."""
+
+    TODAY = "2026-09-02"
+
+    def setUp(self):
+        super().setUp()
+        self.swarms = {}
+        patcher = unittest.mock.patch.object(
+            ft.torrent_scrape, "scrape_torrent", side_effect=self._scrape
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _scrape(self, path, timeout=15):
+        with open(path, "rb") as f:
+            return self.swarms[f.read()]
+
+    def _candidate(self, version, variant, leechers, seeders):
+        name = f"kali-linux-2025.{version}-{variant}-amd64.iso"
+        url = f"https://cdimage.kali.org/{name}.torrent"
+        body = f"{name} metadata".encode()
+        self.world.routes[url] = helpers.fake_response(body)
+        self.swarms[body] = {
+            "tracker": "udp://tracker.example:6969",
+            "seeders": seeders,
+            "leechers": leechers,
+            "completed": 0,
+        }
+        return name, url
+
+    def _write_state(self, filename, data):
+        with open(self.world.state_path(filename), "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+    def _check(self, candidates, **env):
+        with unittest.mock.patch.dict(
+            ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: dict(candidates)}, clear=True
+        ):
+            return self._run(
+                fetchers=(),
+                FETCH_TORRENTS_DISTROS="kali",
                 FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
                 FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS="4",
+                FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO="0.5",
+                FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS="true",
+                FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="10",
+                **env,
             )
 
-        self.assertEqual((disabled.old_added, disabled.old_skipped), (None, None))
-        self.assertEqual((enabled.old_added, enabled.old_skipped), (2, 3))
-        self.assertEqual(check.call_args.args[2], 4)
-        self.assertEqual(check.call_args.args[7], date(2026, 9, 2))
+    def test_config_and_saved_state_drive_the_check(self):
+        recent = self._candidate(1, "installer", 50, 1)
+        removed = self._candidate(1, "live", 50, 1)
+        thin = self._candidate(2, "installer", 3, 1)  # under the 4-leecher floor
+        crowded = self._candidate(2, "live", 5, 20)  # under 0.5x the seeders
+        wanted = self._candidate(3, "installer", 6, 10)
+        unseeded = self._candidate(3, "live", 5, 0)  # zero seeders allowed
+        netinst = self._candidate(3, "installer-netinst", 50, 1)  # low demand
+        # Checked 8 days ago: due under the default 7-day interval, not 10.
+        self._write_state(
+            "fetch_torrents_old_release_check_state.json",
+            {recent[0]: {"last_checked": "2026-08-25", "leechers": 0}},
+        )
+        self._write_state(
+            "fetch_torrents_removed_history.json",
+            {removed[0]: {"removed_date": "2026-08-01", "reason": "stagnant"}},
+        )
+
+        summary, messages = self._check(
+            [recent, removed, thin, crowded, wanted, unseeded, netinst]
+        )
+
+        self.assertEqual((summary.old_added, summary.old_skipped), (2, 4))
+        self.assertEqual(
+            sorted(os.listdir(self.world.watch_dir)),
+            [f"{wanted[0]}.torrent", f"{unseeded[0]}.torrent"],
+        )
+        self.assertEqual(
+            self.world.requested, [thin[1], crowded[1], wanted[1], unseeded[1]]
+        )
         self.assertEqual(
             ft.load_old_release_check_state(ft.old_release_check_state_file),
-            {"x": "y"},
+            {
+                recent[0]: {"last_checked": "2026-08-25", "leechers": 0},
+                thin[0]: {"last_checked": self.TODAY, "leechers": 3},
+                crowded[0]: {"last_checked": self.TODAY, "leechers": 5},
+                wanted[0]: {"last_checked": self.TODAY, "leechers": 6},
+                unseeded[0]: {"last_checked": self.TODAY, "leechers": 5},
+            },
+        )
+        self.assertIn(
+            "Checking old releases for unmet demand (min leechers: 4, min "
+            "leecher/seeder ratio: 0.5x, allow zero-seeder swarms: True, "
+            "recheck interval: 10 days)...",
+            messages,
         )
         self.assertTrue(
             messages[-1].endswith(
-                "Old releases (FETCH_TORRENTS_CHECK_OLD_RELEASES): 2 added, 3 skipped."
-            )
+                "Old releases (FETCH_TORRENTS_CHECK_OLD_RELEASES): 2 added, 4 skipped."
+            ),
+            messages[-1],
         )
+
+    def test_previously_removed_release_is_rechecked_when_skip_removed_is_off(self):
+        removed = self._candidate(1, "live", 50, 1)
+        self._write_state(
+            "fetch_torrents_removed_history.json",
+            {removed[0]: {"removed_date": "2026-08-01", "reason": "stagnant"}},
+        )
+
+        summary, _ = self._check(
+            [removed], FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED="false"
+        )
+
+        self.assertEqual((summary.old_added, summary.old_skipped), (1, 0))
+        self.assertEqual(os.listdir(self.world.watch_dir), [f"{removed[0]}.torrent"])
 
     def test_invalid_old_release_setting_aborts_the_run(self):
         # Unlike cleanup and the disk limit, the old-release check has never
