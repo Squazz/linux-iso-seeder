@@ -96,7 +96,9 @@ class ImportOpensNoFilesTests(unittest.TestCase):
             "ft.logger.warning('logged before configure_logging()')\n"
         )
         result = subprocess.run(
-            [sys.executable, "-c", script],
+            # -W ignore: a dependency warning at import must not fail the
+            # stderr check below.
+            [sys.executable, "-W", "ignore", "-c", script],
             check=False,
             env=dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir),
             capture_output=True,
@@ -151,7 +153,7 @@ class ConfigureLoggingTests(unittest.TestCase):
             [h for h in ft.logger.handlers if h is not other], list(second)
         )
         self.assertIn(other, ft.logger.handlers)
-        self.assertTrue(all(h not in ft.logger.handlers for h in first))
+        self.assertEqual([h for h in first if h in ft.logger.handlers], [])
 
 
 class ParseLogLevelTests(unittest.TestCase):
@@ -346,17 +348,6 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 "[ratio] RATIOS END",
             ],
         )
-
-    def test_session_id_request_has_a_timeout(self):
-        with unittest.mock.patch.object(
-            ft.requests,
-            "post",
-            side_effect=[self.session_id_response(), self.torrent_get_response()],
-        ) as mock_post:
-            ft.log_seed_ratios_via_http()
-
-        first_call_kwargs = mock_post.call_args_list[0].kwargs
-        self.assertEqual(first_call_kwargs, {"timeout": 15})
 
     def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
         with (

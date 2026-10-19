@@ -67,18 +67,11 @@ def isolated_env(**overrides):
     """patch.dict replacing os.environ with scrubbed_environ(**overrides).
 
     Usable as a context manager, or started/stopped manually (see
-    use_isolated_env()). The scrubbed copy is taken when this is called, not
+    isolate_module()). The scrubbed copy is taken when this is called, not
     when it is entered, so call it at the point of use."""
     return unittest.mock.patch.dict(
         os.environ, scrubbed_environ(**overrides), clear=True
     )
-
-
-def use_isolated_env(testcase, **overrides):
-    """Apply isolated_env() for the rest of a test (call from setUp)."""
-    patcher = isolated_env(**overrides)
-    patcher.start()
-    testcase.addCleanup(patcher.stop)
 
 
 def isolate_module():
@@ -167,7 +160,7 @@ class FakeTransmission:
 
     Every call is bound against the real Client's signature first, so an
     argument the pinned library wouldn't accept raises TypeError here too
-    (see tests/test_transmission_double.py)."""
+    (see tests/test_helpers.py)."""
 
     def __init__(self, torrents=()):
         self.torrents = list(torrents)
@@ -189,6 +182,11 @@ class FakeTransmission:
     @property
     def names(self):
         return sorted(t.name for t in self.torrents)
+
+    @property
+    def removals(self):
+        """The remove_torrent calls made so far, as (ids, delete_data)."""
+        return [call[1:] for call in self.calls if call != "get_torrents"]
 
 
 class FakeDisk:
@@ -298,6 +296,35 @@ class RecordedPages:
                 return fake_response(f.read(), url=url)
         self.unexpected.append(url)
         return fake_response(b"not recorded", status=404, url=url)
+
+
+# Every image fetch_kali_latest()/fetch_kali_old_versions() offer for a
+# release, written out by hand (not taken from fetch_torrents) so tests can
+# check the scrapers against it.
+KALI_SUFFIXES = (
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-amd64.iso",
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-netinst-amd64.iso",
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-everything-amd64.iso",
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-arm64.iso",
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-netinst-arm64.iso",
+    "cdimage.kali.org/kali-{v}/kali-linux-{v}-installer-purple-amd64.iso",
+    "kali.download/arm-images/kali-{v}/kali-linux-{v}-raspberry-pi-armhf.img.xz",
+    "kali.download/arm-images/kali-{v}/kali-linux-{v}-raspberry-pi-zero-2-w-armhf.img.xz",
+    "kali.download/arm-images/kali-{v}/kali-linux-{v}-raspberry-pi-zero-w-armel.img.xz",
+    "kali.download/cloud-images/kali-{v}/kali-linux-{v}-cloud-genericcloud-amd64.tar.xz",
+    "kali.download/cloud-images/kali-{v}/kali-linux-{v}-cloud-genericcloud-arm64.tar.xz",
+)
+
+
+def kali_candidates(*versions):
+    """{name: torrent URL} for every Kali image of each version, in order."""
+    return {
+        os.path.basename(suffix.format(v=version)): (
+            "https://" + suffix.format(v=version) + ".torrent"
+        )
+        for version in versions
+        for suffix in KALI_SUFFIXES
+    }
 
 
 def _refuse_network(*args, **kwargs):

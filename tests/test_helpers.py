@@ -1,7 +1,10 @@
-"""The Transmission doubles in tests/helpers.py must not drift from the real
-transmission_rpc library (pinned in requirements-test.txt to the version
-Alpine's py3-transmission-rpc ships): a call production code makes that the
-real Client wouldn't accept has to fail here, not in the container.
+"""Tests for the test doubles and guards in tests/helpers.py.
+
+The Transmission doubles must not drift from the real transmission_rpc
+library (pinned in requirements-test.txt to the version Alpine's
+py3-transmission-rpc ships): a call production code makes that the real
+Client wouldn't accept has to fail here, not in the container. And
+isolate_module() must really keep tests off the network.
 
 Run with: python -m unittest discover -s tests
 """
@@ -9,7 +12,12 @@ Run with: python -m unittest discover -s tests
 import unittest
 
 import helpers
+import requests
 import transmission_rpc
+
+
+def setUpModule():
+    helpers.isolate_module()
 
 
 class FakeTransmissionMatchesClientTests(unittest.TestCase):
@@ -39,6 +47,21 @@ class FakeTransmissionMatchesClientTests(unittest.TestCase):
         }
 
         self.assertEqual(own - set(dir(transmission_rpc.Client)), set())
+
+    def test_removals_lists_only_the_remove_torrent_calls(self):
+        transmission = helpers.FakeTransmission(
+            [
+                helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
+                helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2),
+            ]
+        )
+
+        transmission.get_torrents()
+        transmission.remove_torrent(2, delete_data=True)
+        transmission.get_torrents()
+        transmission.remove_torrent(1)
+
+        self.assertEqual(transmission.removals, [(2, True), (1, False)])
 
 
 class FakeDiskTests(unittest.TestCase):
@@ -76,6 +99,12 @@ class FakeTorrentTests(unittest.TestCase):
             (torrent.name, torrent.id, torrent.ratio, torrent.added_date.timestamp()),
             ("devuan_excalibur", 7, 1.25, 2000.0),
         )
+
+
+class NetworkGuardTests(unittest.TestCase):
+    def test_real_connections_are_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "must not open network"):
+            requests.get("http://192.0.2.1/", timeout=1)
 
 
 if __name__ == "__main__":

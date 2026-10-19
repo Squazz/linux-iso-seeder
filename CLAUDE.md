@@ -40,7 +40,7 @@ bump the pin when `alpine:latest` moves), so they run without a container
 or a live Transmission daemon. Never talk to a real `Client` in a test: use
 `tests/helpers.py` `FakeTransmission` and `FakeTorrent`, which are checked
 against the pinned library's `Client` signatures and `Torrent` fields (see
-`tests/test_transmission_double.py`), so they can't drift from it.
+`tests/test_helpers.py`), so they can't drift from it.
 
 Importing the module opens no files: log handlers are only attached by
 `configure_logging()`, which the `__main__` block calls. Tests that need it
@@ -59,8 +59,10 @@ faked with `helpers.fake_response()` (a real `requests.Response`) or
 `helpers.RecordedPages` (pages captured by `scripts/record_fixtures.py`).
 `fetch_torrents` tests are split by concern: `test_ratio_gate.py`,
 `test_fetchers.py`, `test_scrapers.py`, `test_cleanup.py`,
-`test_persistence.py`, `test_logging.py`, `test_old_release_demand.py` and
-`test_daily_run.py` (config, `run()`, `__main__`).
+`test_persistence.py`, `test_logging.py`, `test_old_release_demand.py`,
+`test_config.py` (`load_config()`, `parse_bool()`, `make_client_factory()`,
+the run summary) and `test_daily_run.py` (`run()`, `__main__`).
+`test_helpers.py` tests the doubles in `tests/helpers.py` themselves.
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from

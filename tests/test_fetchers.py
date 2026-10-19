@@ -19,6 +19,12 @@ def setUpModule():
     helpers.isolate_module()
 
 
+# Written out rather than read from ft.DEFAULT_DISTROS/ft.ALL_DISTROS, so a
+# change to either has to be made here on purpose.
+DEFAULT_DISTROS = ["ubuntu", "debian", "kali", "mint", "fedora"]
+ALL_DISTROS_TEXT = "ubuntu, debian, kali, arch, mint, fedora, devuan"
+
+
 class FetchUbuntuLtsNamingTests(unittest.TestCase):
     """The names fetch_ubuntu_lts() uses as dict keys are also what gets
     passed to should_fetch_torrent() before download, so they must match the
@@ -155,16 +161,6 @@ class FetchArchLatestNamingTests(unittest.TestCase):
             },
         )
 
-    def test_no_available_releases_returns_false(self):
-        html = "<html><body><table id='release-table'></table></body></html>"
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            result = ft.fetch_arch_latest()
-
-        self.assertFalse(result)
-
 
 class FetchDevuanLatestNamingTests(unittest.TestCase):
     """Devuan's get-devuan page links a single release torrent whose
@@ -190,14 +186,6 @@ class FetchDevuanLatestNamingTests(unittest.TestCase):
             {"devuan_excalibur": "https://files.devuan.org/devuan_excalibur.torrent"},
         )
 
-    def test_returns_false_when_no_torrent_link_found(self):
-        response = helpers.fake_response("<html><body>nothing here</body></html>")
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            result = ft.fetch_devuan_latest()
-
-        self.assertFalse(result)
-
 
 class FetchKaliOldVersionsTests(unittest.TestCase):
     """fetch_kali_old_versions() discovers the prior release(s) still listed
@@ -219,25 +207,7 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
         with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_kali_old_versions()
 
-        # The URL templates themselves are pinned in tests/test_scrapers.py;
-        # what matters here is which version they're built for.
-        self.assertEqual(
-            results,
-            {
-                os.path.basename(url).removesuffix(".torrent"): url
-                for url in ft._kali_torrent_urls("2026.1")
-            },
-        )
-
-    def test_single_version_folder_returns_nothing(self):
-        html = '<html><body><a href="current/">current</a><a href="kali-2026.2/">kali-2026.2</a></body></html>'
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_kali_old_versions()
-
-        self.assertEqual(results, {})
+        self.assertEqual(results, helpers.kali_candidates("2026.1"))
 
 
 class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
@@ -289,40 +259,61 @@ class ParseSupportedDistrosTests(unittest.TestCase):
     def test_default_excludes_opt_in_distros(self):
         with helpers.isolated_env():
             result = ft.parse_supported_distros()
-        self.assertNotIn("arch", result)
-        self.assertNotIn("devuan", result)
-        for expected in ("ubuntu", "debian", "kali", "mint", "fedora"):
-            self.assertIn(expected, result)
+        self.assertEqual(result, DEFAULT_DISTROS)
 
     def test_explicit_opt_in_distros_are_honored(self):
         with unittest.mock.patch.dict(
             os.environ, {"FETCH_TORRENTS_DISTROS": "arch,devuan"}
         ):
             result = ft.parse_supported_distros()
-        self.assertEqual(sorted(result), ["arch", "devuan"])
+        self.assertEqual(result, ["arch", "devuan"])
 
     def test_can_mix_default_and_opt_in_distros(self):
         with unittest.mock.patch.dict(
             os.environ, {"FETCH_TORRENTS_DISTROS": "ubuntu,arch"}
         ):
             result = ft.parse_supported_distros()
-        self.assertEqual(sorted(result), ["arch", "ubuntu"])
+        self.assertEqual(result, ["ubuntu", "arch"])
 
     def test_unknown_entries_are_dropped_but_valid_ones_kept(self):
-        with unittest.mock.patch.dict(
-            os.environ, {"FETCH_TORRENTS_DISTROS": "ubuntu,nonsense"}
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"FETCH_TORRENTS_DISTROS": "ubuntu,nonsense"}
+            ),
+            self.assertLogs(ft.logger, level="WARNING") as logs,
         ):
             result = ft.parse_supported_distros()
         self.assertEqual(result, ["ubuntu"])
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                "FETCH_TORRENTS_DISTROS contains unknown distributions: nonsense. "
+                "Valid values: " + ALL_DISTROS_TEXT
+            ],
+        )
 
     def test_all_invalid_falls_back_to_default_not_all_distros(self):
-        with unittest.mock.patch.dict(
-            os.environ, {"FETCH_TORRENTS_DISTROS": "nonsense"}
+        with (
+            unittest.mock.patch.dict(
+                os.environ, {"FETCH_TORRENTS_DISTROS": "nonsense"}
+            ),
+            self.assertLogs(ft.logger, level="WARNING") as logs,
         ):
             result = ft.parse_supported_distros()
-        self.assertEqual(sorted(result), sorted(ft.DEFAULT_DISTROS))
-        self.assertNotIn("arch", result)
-        self.assertNotIn("devuan", result)
+        self.assertEqual(result, DEFAULT_DISTROS)
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                (
+                    "FETCH_TORRENTS_DISTROS contains unknown distributions: "
+                    "nonsense. Valid values: " + ALL_DISTROS_TEXT
+                ),
+                (
+                    "FETCH_TORRENTS_DISTROS did not specify any valid distros. "
+                    "Falling back to defaults: ubuntu, debian, kali, mint, fedora"
+                ),
+            ],
+        )
 
 
 class LowDemandVariantTests(unittest.TestCase):
@@ -571,7 +562,8 @@ class DownloadTorrentUnsafeNameTests(unittest.TestCase):
         with unittest.mock.patch.object(ft, "watch_dir", watch_dir):
             ft._remove_watch_file("../evil")
 
-        self.assertTrue(os.path.exists(outside))
+        with open(outside, encoding="utf-8") as f:
+            self.assertEqual(f.read(), "must survive")
 
 
 class FetcherRequestTimeoutTests(unittest.TestCase):
@@ -663,11 +655,9 @@ class FetchKaliSelectionTests(unittest.TestCase):
         with _get_page(f"<html><body>{html}</body></html>"):
             results = ft.fetch_kali_old_versions()
 
-        expected = {}
-        for version in ("2025.4", "2025.10", "2026.1"):
-            for url in ft._kali_torrent_urls(version):
-                expected[os.path.basename(url).removesuffix(".torrent")] = url
-        self.assertEqual(results, expected)
+        self.assertEqual(
+            results, helpers.kali_candidates("2025.4", "2025.10", "2026.1")
+        )
 
 
 class FetchFedoraSelectionTests(unittest.TestCase):
@@ -718,21 +708,8 @@ class ParseSupportedDistrosWarningTests(unittest.TestCase):
             [r.getMessage() for r in logs.records],
             [
                 "FETCH_TORRENTS_DISTROS contains unknown distributions: gentoo, "
-                "slackware. Valid values: " + ", ".join(ft.ALL_DISTROS)
+                "slackware. Valid values: " + ALL_DISTROS_TEXT
             ],
-        )
-
-    def test_all_unknown_warns_twice_and_falls_back(self):
-        with self.assertLogs(ft.logger, level="WARNING") as logs:
-            result = ft.parse_supported_distros(
-                env={"FETCH_TORRENTS_DISTROS": "gentoo"}
-            )
-
-        self.assertEqual(result, list(ft.DEFAULT_DISTROS))
-        self.assertEqual(
-            [r.getMessage() for r in logs.records][1],
-            "FETCH_TORRENTS_DISTROS did not specify any valid distros. "
-            "Falling back to defaults: " + ", ".join(ft.DEFAULT_DISTROS),
         )
 
 

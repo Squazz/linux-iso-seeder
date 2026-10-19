@@ -23,53 +23,63 @@ def setUpModule():
 
 
 class PlanCleanupTests(unittest.TestCase):
+    # (group, newer, older): one (distro, type) group per row.
+    VERSION_PAIRS = (
+        (
+            "ubuntu desktop",
+            "ubuntu-24.04-desktop-amd64.iso",
+            "ubuntu-23.10-desktop-amd64.iso",
+        ),
+        (
+            "ubuntu live-server",
+            "ubuntu-24.04.1-live-server-amd64.iso",
+            "ubuntu-22.04.1-live-server-amd64.iso",
+        ),
+        ("debian", "debian-12.5.0-amd64-DVD-1.iso", "debian-12.4.0-amd64-DVD-1.iso"),
+        (
+            "kali",
+            "kali-linux-2024.1-installer-amd64.iso",
+            "kali-linux-2023.4-installer-amd64.iso",
+        ),
+        ("arch", "archlinux-2024.05.01-x86_64.iso", "archlinux-2024.04.01-x86_64.iso"),
+        (
+            "mint",
+            "linuxmint-22.3-cinnamon-64bit.iso",
+            "linuxmint-22.2-cinnamon-64bit.iso",
+        ),
+        (
+            "fedora",
+            "Fedora-Workstation-Live-x86_64-44",
+            "Fedora-Workstation-Live-x86_64-43",
+        ),
+    )
+
     def test_selects_older_version_per_distro_and_type(self):
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-24.04.1-live-server-amd64.iso", 3, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-22.04.1-live-server-amd64.iso", 4, ratio=2.0),
-            helpers.FakeTorrent("debian-12.5.0-amd64-DVD-1.iso", 5, ratio=2.0),
-            helpers.FakeTorrent("debian-12.4.0-amd64-DVD-1.iso", 6, ratio=2.0),
-            helpers.FakeTorrent("kali-linux-2024.1-installer-amd64.iso", 7, ratio=2.0),
-            helpers.FakeTorrent("kali-linux-2023.4-installer-amd64.iso", 8, ratio=2.0),
-            helpers.FakeTorrent("archlinux-2024.05.01-x86_64.iso", 9, ratio=2.0),
-            helpers.FakeTorrent("archlinux-2024.04.01-x86_64.iso", 10, ratio=2.0),
-            helpers.FakeTorrent("linuxmint-22.3-cinnamon-64bit.iso", 11, ratio=2.0),
-            helpers.FakeTorrent("linuxmint-22.2-cinnamon-64bit.iso", 12, ratio=2.0),
-            helpers.FakeTorrent("Fedora-Workstation-Live-x86_64-44", 13, ratio=2.0),
-            helpers.FakeTorrent("Fedora-Workstation-Live-x86_64-43", 14, ratio=2.0),
-        ]
+        for group, newer, older in self.VERSION_PAIRS:
+            with self.subTest(group):
+                to_remove, to_keep_low_ratio = ft.plan_cleanup(
+                    [
+                        helpers.FakeTorrent(newer, 1, ratio=2.0),
+                        helpers.FakeTorrent(older, 2, ratio=2.0),
+                    ]
+                )
+
+                self.assertEqual(helpers.names_of(to_remove), [older])
+                self.assertEqual(to_keep_low_ratio, [])
+
+    def test_groups_planned_together_do_not_affect_each_other(self):
+        torrents = []
+        for _group, newer, older in self.VERSION_PAIRS:
+            torrents.append(helpers.FakeTorrent(newer, len(torrents), ratio=2.0))
+            torrents.append(helpers.FakeTorrent(older, len(torrents), ratio=2.0))
 
         to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
 
         self.assertEqual(
             helpers.names_of(to_remove),
-            [
-                "Fedora-Workstation-Live-x86_64-43",
-                "archlinux-2024.04.01-x86_64.iso",
-                "debian-12.4.0-amd64-DVD-1.iso",
-                "kali-linux-2023.4-installer-amd64.iso",
-                "linuxmint-22.2-cinnamon-64bit.iso",
-                "ubuntu-22.04.1-live-server-amd64.iso",
-                "ubuntu-23.10-desktop-amd64.iso",
-            ],
+            sorted(older for _group, _newer, older in self.VERSION_PAIRS),
         )
         self.assertEqual(to_keep_low_ratio, [])
-
-        # The newest torrent in each (distro, type) group must never be
-        # scheduled for removal.
-        removed_names = set(helpers.names_of(to_remove))
-        for newest in (
-            "ubuntu-24.04-desktop-amd64.iso",
-            "ubuntu-24.04.1-live-server-amd64.iso",
-            "debian-12.5.0-amd64-DVD-1.iso",
-            "kali-linux-2024.1-installer-amd64.iso",
-            "archlinux-2024.05.01-x86_64.iso",
-            "linuxmint-22.3-cinnamon-64bit.iso",
-            "Fedora-Workstation-Live-x86_64-44",
-        ):
-            self.assertNotIn(newest, removed_names)
 
     def test_single_torrent_per_group_is_left_alone(self):
         torrents = [helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=0.0)]
@@ -322,7 +332,9 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
 
         to_remove, _ = ft.plan_cleanup(torrents)
 
-        self.assertEqual(len(to_remove), 1)
+        # Tied (missing) dates: the stable sort keeps the first one listed as
+        # the current release, so only the other is a candidate.
+        self.assertEqual(helpers.names_of(to_remove), ["devuan_excalibur"])
 
     def test_release_without_added_date_sorts_as_oldest(self):
         undated = helpers.DuckTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None)
@@ -592,7 +604,7 @@ class PlanStagnationCleanupTests(unittest.TestCase):
         )
 
         self.assertEqual(to_remove, [])
-        self.assertEqual(len(to_keep), 1)
+        self.assertEqual(to_keep, [(torrents[1], None)])
 
     def test_unrelated_single_torrent_groups_are_ignored(self):
         today = date(2026, 8, 29)
@@ -841,7 +853,11 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
 
         ft.cleanup_old_versions(transmission, today=date(2026, 8, 1), min_ratio=2.0)
 
-        self.assertEqual(len(transmission.torrents), 2)
+        self.assertEqual(
+            transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+        self.assertEqual(transmission.removals, [])
 
     def test_cleanup_stagnant_torrents_removes_the_watch_file(self):
         old_path = self._touch_watch_file("ubuntu-23.10-desktop-amd64.iso")
@@ -925,7 +941,11 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         with self.assertLogs(ft.logger, level="INFO") as logs:
             ft.cleanup_stagnant_torrents(transmission, today=today)
 
-        self.assertEqual(len(transmission.torrents), 2)
+        self.assertEqual(
+            transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+        self.assertEqual(transmission.removals, [])
         self.assertIn(
             "Keeping old version ubuntu-23.10-desktop-amd64.iso – ratio grew by "
             "0.500 over the last 30 days.",
@@ -1410,10 +1430,6 @@ class RecordRemovalRatioTests(unittest.TestCase):
         history = ft.record_removal({}, "x.iso", date(2026, 8, 1), "stagnant", 0.12345)
 
         self.assertEqual(history["x.iso"]["ratio"], 0.123)
-
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 if __name__ == "__main__":

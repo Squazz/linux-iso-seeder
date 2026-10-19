@@ -122,6 +122,8 @@ class ProblemsTests(unittest.TestCase):
             ["name 'linuxmint-latest-cinnamon' has no parseable version"],
         )
 
+
+class DistroOfTests(unittest.TestCase):
     def test_old_release_fetchers_are_checked_as_their_distro(self):
         self.assertEqual(live_check.distro_of("kali-old"), "kali")
         self.assertEqual(live_check.distro_of("fedora-old"), "fedora")

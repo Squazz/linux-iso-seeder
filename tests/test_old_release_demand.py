@@ -353,6 +353,7 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
                 min_leechers=1,
                 min_leecher_ratio=0.0,
                 allow_zero_seeders=False,
+                today=date(2026, 1, 8),
             )
 
         self.assertEqual(added, 1)
@@ -375,6 +376,7 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
                 min_leechers=1,
                 min_leecher_ratio=0.0,
                 allow_zero_seeders=False,
+                today=date(2026, 1, 8),
             )
 
         self.assertEqual((added, skipped), (0, 0))
@@ -401,6 +403,7 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
                 min_leechers=1,
                 min_leecher_ratio=0.0,
                 allow_zero_seeders=False,
+                today=date(2026, 1, 8),
             )
 
         mock_evaluate.assert_not_called()
@@ -425,6 +428,7 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
                 min_leechers=1,
                 min_leecher_ratio=0.0,
                 allow_zero_seeders=False,
+                today=date(2026, 1, 8),
             )
 
         mock_evaluate.assert_not_called()
@@ -449,6 +453,7 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
                 min_leechers=1,
                 min_leecher_ratio=0.0,
                 allow_zero_seeders=False,
+                today=date(2026, 1, 8),
             )
 
         mock_evaluate.assert_not_called()
@@ -596,6 +601,37 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
         self.assertEqual(
             new_state[name], {"last_checked": "2026-01-08", "leechers": 30}
         )
+
+    def test_today_defaults_to_the_current_date(self):
+        name = "kali-linux-2026.1-installer-amd64.iso"
+        candidates = {name: "https://example.invalid/x.torrent"}
+
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft,
+                "evaluate_old_release_demand",
+                return_value=(
+                    False,
+                    b"bytes",
+                    {"tracker": "t", "seeders": 1, "leechers": 0, "completed": 0},
+                ),
+            ),
+            unittest.mock.patch.object(
+                ft, "date", helpers.fixed_date(date(2026, 3, 14))
+            ),
+        ):
+            _added, _skipped, new_state = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
+
+        self.assertEqual(new_state[name], {"last_checked": "2026-03-14", "leechers": 0})
 
     def test_no_demand_result_is_still_recorded_for_future_recheck_gating(self):
         name = "kali-linux-2026.1-installer-arm64.iso"

@@ -1,4 +1,4 @@
-"""Tests for the ratio gate: parse_version_type(), should_fetch_torrent()
+"""Tests for the ratio gate: get_distro(), parse_version_type(), should_fetch_torrent()
 (and its removed-history / Devuan variants) and reading the previous
 run's ratio log with get_previous_ratios().
 
@@ -57,27 +57,6 @@ class ParseVersionTypeTests(unittest.TestCase):
         ("anything-1.0", "not-a-distro", ("", "")),
     )
 
-    def test_every_ubuntu_flavour_fetched_is_recognised_as_ubuntu(self):
-        # fetch_ubuntu_lts() fetches ubuntu, lubuntu and xubuntu images; a
-        # flavour get_distro() doesn't recognise skips the ratio gate and
-        # cleanup grouping entirely.
-        for name in (
-            "ubuntu-24.04-desktop-amd64.iso",
-            "lubuntu-24.04-desktop-amd64.iso",
-            "xubuntu-24.04-desktop-amd64.iso",
-        ):
-            with self.subTest(name):
-                self.assertEqual(ft.get_distro(name), "ubuntu")
-
-    def test_lubuntu_is_ratio_gated_on_its_own_previous_release(self):
-        ratios = {
-            "lubuntu-23.10-desktop-amd64.iso": 0.2,
-            "ubuntu-23.10-desktop-amd64.iso": 5.0,
-        }
-        self.assertFalse(
-            ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
-        )
-
     def test_version_and_type_per_distro(self):
         for name, distro, expected in self.CASES:
             with self.subTest(name):
@@ -114,10 +93,33 @@ class ParseVersionTypeTests(unittest.TestCase):
                 )
 
 
+class GetDistroTests(unittest.TestCase):
+    def test_every_ubuntu_flavour_fetched_is_recognised_as_ubuntu(self):
+        # fetch_ubuntu_lts() fetches ubuntu, lubuntu and xubuntu images; a
+        # flavour get_distro() doesn't recognise skips the ratio gate and
+        # cleanup grouping entirely.
+        for name in (
+            "ubuntu-24.04-desktop-amd64.iso",
+            "lubuntu-24.04-desktop-amd64.iso",
+            "xubuntu-24.04-desktop-amd64.iso",
+        ):
+            with self.subTest(name):
+                self.assertEqual(ft.get_distro(name), "ubuntu")
+
+
 class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     """Candidate names must key into the same ratio-lookup bucket as the names Transmission
     actually reports (which include the arch suffix and .iso extension),
     for all supported distros."""
+
+    def test_lubuntu_is_ratio_gated_on_its_own_previous_release(self):
+        ratios = {
+            "lubuntu-23.10-desktop-amd64.iso": 0.2,
+            "ubuntu-23.10-desktop-amd64.iso": 5.0,
+        }
+        self.assertFalse(
+            ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}

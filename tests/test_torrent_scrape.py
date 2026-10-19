@@ -276,7 +276,11 @@ class BuildScrapeRequestUrlTests(unittest.TestCase):
     def test_adds_query_param_with_no_existing_query(self):
         info_hash = bytes(range(20))
         url = ts.build_scrape_request_url("http://example.com/scrape", info_hash)
-        self.assertTrue(url.startswith("http://example.com/scrape?info_hash="))
+        self.assertEqual(
+            url,
+            "http://example.com/scrape?info_hash="
+            "%00%01%02%03%04%05%06%07%08%09%0A%0B%0C%0D%0E%0F%10%11%12%13",
+        )
 
     def test_appends_to_existing_query(self):
         info_hash = bytes(range(20))

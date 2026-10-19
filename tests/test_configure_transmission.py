@@ -350,7 +350,11 @@ class MainTests(unittest.TestCase):
     def test_whitelist_without_credentials_warns_on_stderr(self):
         stderr = self._run(TRANSMISSION_RPC_WHITELIST="10.0.0.*")
 
-        self.assertTrue(stderr.startswith("WARNING: TRANSMISSION_RPC_WHITELIST is set"))
+        # The warning text itself is pinned by the whitelist warning tests above.
+        self.assertRegex(
+            stderr,
+            r"\AWARNING: TRANSMISSION_RPC_WHITELIST is set .+ authentication\.\n\Z",
+        )
         self.assertEqual(self._read_settings()["rpc-whitelist"], "10.0.0.*")
 
     def test_invalid_peer_limits_are_dropped_silently(self):
