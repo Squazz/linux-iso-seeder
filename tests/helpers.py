@@ -246,13 +246,16 @@ PAGES_DIR = os.path.join(
 
 def fake_response(body=b"", status=200, url="", headers=None):
     """A real requests.Response with the given body (str or bytes), so
-    .text, .content, .json() and raise_for_status() behave as for real."""
+    .text, .content, .json(), raise_for_status() and `with` behave as for
+    real."""
     response = requests.Response()
     response.status_code = status
     response.reason = {200: "OK", 404: "Not Found", 500: "Internal Server Error"}.get(
         status, ""
     )
     response._content = body.encode("utf-8") if isinstance(body, str) else body
+    # Already read, so close() (and so `with response:`) needn't touch .raw.
+    response._content_consumed = True
     response.encoding = "utf-8"
     response.url = url
     response.headers.update(headers or {})

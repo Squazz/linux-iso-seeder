@@ -62,20 +62,20 @@ def problems(distro, name, url):
     return found
 
 
-def is_reachable(url):
+def is_reachable(url, *, head=requests.head, get=requests.get):
     try:
-        r = requests.head(url, allow_redirects=True, timeout=30)
+        r = head(url, allow_redirects=True, timeout=30)
         if r.status_code == 405:  # HEAD not allowed: ask for the body instead
-            with requests.get(url, stream=True, timeout=30) as r:
+            with get(url, stream=True, timeout=30) as r:
                 return r.status_code == 200
         return r.status_code == 200
     except requests.RequestException:
         return False
 
 
-def check_scrapers():
+def check_scrapers(fetchers=FETCHERS, reachable=is_reachable):
     failures = []
-    for fetcher_name, fetcher in FETCHERS:
+    for fetcher_name, fetcher in fetchers:
         distro = distro_of(fetcher_name)
         candidates = fetcher() or {}
         print(f"{fetcher_name}: {len(candidates)} candidates")
@@ -93,19 +93,21 @@ def check_scrapers():
 
         # ESM-only Ubuntu releases etc. are expected to 404 (download_torrent()
         # counts those as "not found upstream"), so one reachable is enough.
-        reachable = next((url for url in well_formed if is_reachable(url)), None)
-        if reachable:
-            print(f"  reachable: {reachable}")
+        first_reachable = next((url for url in well_formed if reachable(url)), None)
+        if first_reachable:
+            print(f"  reachable: {first_reachable}")
         elif well_formed:
             failures.append(f"{fetcher_name}: none of its torrent URLs returned 200")
     return failures
 
 
-def check_tracker():
-    candidates = ft.fetch_ubuntu_lts() or {}
+def check_tracker(
+    fetch=ft.fetch_ubuntu_lts, get=requests.get, scrape=torrent_scrape.scrape_torrent
+):
+    candidates = fetch() or {}
     desktop = [url for name, url in candidates.items() if "-desktop-" in name]
     for url in desktop:  # newest first; older ones may be gone (404)
-        r = requests.get(url, timeout=30)
+        r = get(url, timeout=30)
         if r.status_code == 200:
             break
     else:
@@ -115,7 +117,7 @@ def check_tracker():
         path = os.path.join(tmp, "ubuntu.torrent")
         with open(path, "wb") as f:
             f.write(r.content)
-        result = torrent_scrape.scrape_torrent(path)
+        result = scrape(path)
     print(f"tracker: {url} -> {result}")
     if result is None:
         return ["tracker: no tracker answered the scrape"]
@@ -124,8 +126,10 @@ def check_tracker():
     return []
 
 
-def main(argv):
-    checks = {"scrapers": check_scrapers, "tracker": check_tracker}
+CHECKS = {"scrapers": check_scrapers, "tracker": check_tracker}
+
+
+def main(argv, checks=CHECKS):
     if len(argv) != 1 or argv[0] not in checks:
         print(__doc__, file=sys.stderr)
         return 2
