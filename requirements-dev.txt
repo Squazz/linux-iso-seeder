@@ -2,3 +2,5 @@
 # Pinned so new upstream lint/type rules can't break CI unannounced.
 ruff==0.17.1
 mypy==2.4.0
+coverage==7.16.2
+mutmut==2.5.1

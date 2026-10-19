@@ -25,11 +25,12 @@ When making changes to the fetch logic or features:
 ## Mutation testing
 
 Mutation testing checks that the tests actually pin behavior, not just
-execute lines. It uses mutmut 2.x (`mutmut<3`):
+execute lines. It uses mutmut 2.x (pinned in `requirements-dev.txt`), configured
+under `[tool.mutmut]` in `pyproject.toml`:
 
 ```
-mutmut run --paths-to-mutate fetch_torrents.py,torrent_scrape.py,configure_transmission.py \
-           --tests-dir tests/ --runner "python -m unittest discover -s tests -f -q"
+pip install -r requirements-dev.txt
+mutmut run            # mutate all three modules, run the suite per mutant
 mutmut results        # list surviving mutants
 mutmut show <id>      # show one mutant's diff
 ```

@@ -12,7 +12,8 @@ Testing rules and the import-stubbing pattern live in the root [CLAUDE.md](../CL
 - Lint/format: `ruff check .` / `ruff format .`
 - Typecheck: `mypy` (files and settings in `pyproject.toml`)
 - CI's `test` job runs ruff check, ruff format --check and mypy before the tests; versions are pinned in `requirements-dev.txt`
-- Mutation: `mutmut run` (mutmut<3)
+- Coverage: `coverage run -m unittest discover -s tests` then `coverage report` (branch coverage; config in `pyproject.toml`)
+- Mutation: `mutmut run` (mutmut<3; config in `pyproject.toml`, see CONTRIBUTING.md)
 - Dev deps: `pip install -r requirements-dev.txt` (includes `requirements-test.txt`)
 
 ## Active agent templates

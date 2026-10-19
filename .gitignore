@@ -219,3 +219,7 @@ plans/
 
 # CodeGraph local index (machine-local)
 .codegraph/
+
+# Mutation testing (mutmut 2.x)
+.mutmut-cache
+mutants/
