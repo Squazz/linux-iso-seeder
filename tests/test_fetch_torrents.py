@@ -1,20 +1,19 @@
-"""Tests for fetch_torrents.py, focused on the cleanup_old_versions() logic.
+"""Tests for fetch_torrents.py.
 
-fetch_torrents.py is written to run inside the container: it imports
-transmission_rpc (an apk-only package not available via pip) and opens log
-files under /logs at import time. To make the module importable in a plain
-test environment, this file stubs transmission_rpc and points
-FETCH_TORRENTS_LOG_DIR at a temp directory before importing it.
+fetch_torrents.py imports transmission_rpc, which the container installs
+from Alpine's py3-transmission-rpc and isn't a test dependency, so this file
+stubs it in sys.modules before importing the module. Importing it touches no
+files (logging is only set up by configure_logging()).
 
 Run with: python -m unittest discover -s tests
 """
 
 import json
+import logging
+import logging.handlers
 import os
-import shutil
 import subprocess
 import sys
-import tempfile
 import types
 import unittest
 import unittest.mock
@@ -25,9 +24,6 @@ if "transmission_rpc" not in sys.modules:
     stub = types.ModuleType("transmission_rpc")
     stub.Client = MagicMock()
     sys.modules["transmission_rpc"] = stub
-
-_TEST_LOG_DIR = tempfile.mkdtemp(prefix="fetch_torrents_test_logs_")
-os.environ.setdefault("FETCH_TORRENTS_LOG_DIR", _TEST_LOG_DIR)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -45,16 +41,6 @@ def setUpModule():
     patcher = helpers.isolated_env()
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
-
-
-def tearDownModule():
-    # The import-time log dir can only be removed once ft's handlers have
-    # released their files (Windows refuses to delete open files).
-    for handler in (ft.file_handler, ft.ratio_handler):
-        ft.logger.removeHandler(handler)
-        handler.close()
-    if os.environ.get("FETCH_TORRENTS_LOG_DIR") == _TEST_LOG_DIR:
-        shutil.rmtree(_TEST_LOG_DIR, ignore_errors=True)
 
 
 class FakeTorrent:
@@ -444,10 +430,9 @@ class ParseVersionTypeTests(unittest.TestCase):
             "lubuntu-23.10-desktop-amd64.iso": 0.2,
             "ubuntu-23.10-desktop-amd64.iso": 5.0,
         }
-        with helpers.isolated_env():
-            self.assertFalse(
-                ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
-            )
+        self.assertFalse(
+            ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
+        )
 
     def test_version_and_type_per_distro(self):
         for name, distro, expected in self.CASES:
@@ -489,10 +474,6 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     """Candidate names must key into the same ratio-lookup bucket as the names Transmission
     actually reports (which include the arch suffix and .iso extension),
     for all supported distros."""
-
-    def setUp(self):
-        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
-        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
 
     def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}
@@ -562,10 +543,6 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
     previous version" branch and fetch unconditionally, silently bypassing
     the ratio gate for exactly the versions cleanup already gave up on.
     removed_history (record_removal()'s output) is the fallback source."""
-
-    def setUp(self):
-        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
-        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
 
     def test_falls_back_to_removed_history_ratio_when_not_live(self):
         removed_history = {
@@ -698,10 +675,6 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
     fetching a new Devuan release on the ratio achieved by whichever Devuan
     release we currently hold, using the same 1.0 floor as other distros."""
 
-    def setUp(self):
-        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
-        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
-
     def test_no_previous_devuan_release_fetches(self):
         self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios={}))
 
@@ -751,9 +724,6 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
 class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
     """The 1.0 floor is inclusive, only strictly older versions count as the
     "previous" one, and the branches that bypass the gate entirely."""
-
-    def setUp(self):
-        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
 
     def test_previous_ratio_exactly_at_floor_allows_fetch(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.0}
@@ -842,10 +812,11 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
 
     def test_skip_ratio_check_fetches_despite_low_previous_ratio(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.1}
-        with helpers.isolated_env(SKIP_RATIO_CHECK="TRUE"):
-            self.assertTrue(
-                ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        self.assertTrue(
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso", ratios, skip_ratio_check=True
             )
+        )
 
     def test_unknown_distro_fetches(self):
         ratios = {"slackware-15.0-install-dvd.iso": 0.1}
@@ -873,53 +844,92 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
             )
 
 
-class RatioLogSurvivesRestartTests(unittest.TestCase):
-    """Each container run is a fresh `python fetch_torrents.py` process: the
-    ratio log from the *previous* run is what should_fetch_torrent() needs in
-    order to gate a new version's download. Simulate a real restart (fresh
-    interpreter, pre-existing ratio log on disk) rather than reusing the
-    already-imported module, since the bug this guards against is specifically
-    about what happens between import and the first get_previous_ratios() call."""
+def configure_logging_for_test(testcase, log_dir, **env):
+    """ft.configure_logging() with only `env`, undone when the test ends."""
+    saved = (
+        list(ft.logger.handlers),
+        list(ft._configured_handlers),
+        ft.logger.level,
+        ft.logger.propagate,
+    )
 
-    def test_previous_ratios_are_readable_after_a_fresh_start(self):
-        log_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_restart_")
-        ratio_log_path = os.path.join(log_dir, "fetch_torrents_ratios.log")
-        with open(ratio_log_path, "w", encoding="utf-8") as f:
+    def restore():
+        for handler in ft._configured_handlers:
+            handler.close()
+        ft.logger.handlers[:] = saved[0]
+        ft._configured_handlers[:] = saved[1]
+        ft.logger.setLevel(saved[2])
+        ft.logger.propagate = saved[3]
+
+    testcase.addCleanup(restore)
+    return ft.configure_logging(log_dir, env=env)
+
+
+class RatioLogSurvivesConfigureLoggingTests(unittest.TestCase):
+    """Each container run is a fresh process: the ratio log from the
+    *previous* run is what should_fetch_torrent() needs in order to gate a
+    new version's download. configure_logging() opens that same file with
+    mode="w" for this run's ratios, so it must not truncate it before
+    get_previous_ratios() has read it - otherwise the low-ratio fetch gate
+    is silently defeated for every distro."""
+
+    def setUp(self):
+        self.log_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_restart_")
+        self.path = os.path.join(self.log_dir, "fetch_torrents_ratios.log")
+        with open(self.path, "w", encoding="utf-8") as f:
             f.write(
                 "2026-08-01 00:00:00,000 INFO: [ratio] RATIOS START\n"
                 "2026-08-01 00:00:00,000 INFO: [ratio] archlinux-2026.04.01-x86_64.iso            → 0.664\n"
                 "2026-08-01 00:00:00,000 INFO: [ratio] RATIOS END\n"
             )
 
+    def test_previous_ratios_are_readable_after_configure_logging(self):
+        configure_logging_for_test(self, self.log_dir)
+
+        self.assertEqual(
+            ft.get_previous_ratios(self.path),
+            {"archlinux-2026.04.01-x86_64.iso": 0.664},
+        )
+
+    def test_first_ratio_line_of_the_run_replaces_the_previous_log(self):
+        _stream, _file, ratio_handler = configure_logging_for_test(self, self.log_dir)
+
+        ft.logger.info("[ratio] %-50s → %.3f", "new.iso", 1.0)
+        ratio_handler.flush()
+
+        self.assertEqual(ft.get_previous_ratios(self.path), {"new.iso": 1.0})
+
+
+class ImportOpensNoFilesTests(unittest.TestCase):
+    """Importing fetch_torrents (tests, other scripts) must not create or
+    truncate anything under FETCH_TORRENTS_LOG_DIR - only
+    configure_logging() does. Needs a fresh interpreter, since this process
+    imported the module long ago."""
+
+    def test_import_leaves_the_log_dir_untouched(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_import_")
         script = (
-            "import os, sys, types\n"
+            "import sys, types\n"
             "from unittest.mock import MagicMock\n"
             "stub = types.ModuleType('transmission_rpc')\n"
             "stub.Client = MagicMock()\n"
             "sys.modules['transmission_rpc'] = stub\n"
             f"sys.path.insert(0, {REPO_ROOT!r})\n"
             "import fetch_torrents as ft\n"
-            "print(ft.get_previous_ratios(ft.ratio_log_file))\n"
+            "ft.logger.warning('logged before configure_logging()')\n"
         )
-        env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir)
         result = subprocess.run(
             [sys.executable, "-c", script],
             check=False,
-            env=env,
+            env=dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir),
             capture_output=True,
             text=True,
             timeout=30,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn(
-            "archlinux-2026.04.01-x86_64.iso",
-            result.stdout,
-            "get_previous_ratios() found nothing from the prior run's ratio "
-            "log - it was likely wiped by the ratio FileHandler's mode='w' "
-            "open at import time, before ever being read. That silently "
-            "defeats the low-ratio fetch gate for every distro.",
-        )
+        self.assertEqual(os.listdir(log_dir), [])
+        self.assertEqual(result.stderr, "")
 
 
 class GetPreviousRatiosTests(unittest.TestCase):
@@ -1033,66 +1043,49 @@ class GetPreviousRatiosTests(unittest.TestCase):
         self.assertEqual(ft.get_previous_ratios(path), {"dup.iso": 1.1})
 
 
-class LogFileRotationTests(unittest.TestCase):
+class ConfigureLoggingTests(unittest.TestCase):
     """fetch_torrents.log must be bounded (RotatingFileHandler), not a plain
     FileHandler appending forever for the life of a 'deploy and forget'
-    container. Import-time behavior driven by env vars, so this uses a fresh
-    subprocess like RatioLogSurvivesRestartTests, rather than the
-    already-imported module (whose handler was built once, at whatever env
-    was in effect during test collection)."""
+    container."""
 
-    def _run(self, extra_env=None):
+    def _configure(self, **env):
         log_dir = helpers.make_temp_dir(self, "fetch_torrents_log_rotation_")
-        script = (
-            "import os, sys, types\n"
-            "from unittest.mock import MagicMock\n"
-            "stub = types.ModuleType('transmission_rpc')\n"
-            "stub.Client = MagicMock()\n"
-            "sys.modules['transmission_rpc'] = stub\n"
-            f"sys.path.insert(0, {REPO_ROOT!r})\n"
-            "import fetch_torrents as ft\n"
-            "print(type(ft.file_handler).__name__)\n"
-            "print(ft.file_handler.maxBytes)\n"
-            "print(ft.file_handler.backupCount)\n"
-        )
-        env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir, **(extra_env or {}))
-        result = subprocess.run(
-            [sys.executable, "-c", script],
-            check=False,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        lines = result.stdout.splitlines()
-        return lines[0], int(lines[1]), int(lines[2])
+        return configure_logging_for_test(self, log_dir, **env)
 
     def test_defaults_to_a_bounded_rotating_handler(self):
-        handler_type, max_bytes, backup_count = self._run()
-        self.assertEqual(handler_type, "RotatingFileHandler")
-        self.assertEqual(max_bytes, 5 * 1024 * 1024)
-        self.assertEqual(backup_count, 3)
+        _stream, file_handler, _ratio = self._configure()
+        self.assertIsInstance(file_handler, logging.handlers.RotatingFileHandler)
+        self.assertEqual(file_handler.maxBytes, 5 * 1024 * 1024)
+        self.assertEqual(file_handler.backupCount, 3)
 
     def test_env_vars_override_rotation_settings(self):
-        _handler_type, max_bytes, backup_count = self._run(
-            {
-                "FETCH_TORRENTS_LOG_MAX_BYTES": "1000",
-                "FETCH_TORRENTS_LOG_BACKUP_COUNT": "1",
-            }
+        _stream, file_handler, _ratio = self._configure(
+            FETCH_TORRENTS_LOG_MAX_BYTES="1000", FETCH_TORRENTS_LOG_BACKUP_COUNT="1"
         )
-        self.assertEqual(max_bytes, 1000)
-        self.assertEqual(backup_count, 1)
+        self.assertEqual(file_handler.maxBytes, 1000)
+        self.assertEqual(file_handler.backupCount, 1)
 
     def test_invalid_env_vars_fall_back_to_defaults(self):
-        _handler_type, max_bytes, backup_count = self._run(
-            {
-                "FETCH_TORRENTS_LOG_MAX_BYTES": "not-a-number",
-                "FETCH_TORRENTS_LOG_BACKUP_COUNT": "also-bad",
-            }
+        _stream, file_handler, _ratio = self._configure(
+            FETCH_TORRENTS_LOG_MAX_BYTES="not-a-number",
+            FETCH_TORRENTS_LOG_BACKUP_COUNT="also-bad",
         )
-        self.assertEqual(max_bytes, 5 * 1024 * 1024)
-        self.assertEqual(backup_count, 3)
+        self.assertEqual(file_handler.maxBytes, 5 * 1024 * 1024)
+        self.assertEqual(file_handler.backupCount, 3)
+
+    def test_calling_again_replaces_its_own_handlers_only(self):
+        other = logging.NullHandler()
+        ft.logger.addHandler(other)
+        self.addCleanup(ft.logger.removeHandler, other)
+
+        first = self._configure()
+        second = self._configure()
+
+        self.assertEqual(
+            [h for h in ft.logger.handlers if h is not other], list(second)
+        )
+        self.assertIn(other, ft.logger.handlers)
+        self.assertTrue(all(h not in ft.logger.handlers for h in first))
 
 
 class FetchUbuntuLtsNamingTests(unittest.TestCase):
@@ -2765,82 +2758,193 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
         self.assertEqual(new_state[name], {"last_checked": "2026-01-08", "leechers": 0})
 
 
-class CleanupRpcAuthTests(unittest.TestCase):
-    """cleanup_old_versions()/cleanup_stagnant_torrents() must authenticate
-    their own Transmission RPC connection the same way
-    configure_transmission.py configured the daemon. Without this, a user
-    who sets TRANSMISSION_RPC_USERNAME/PASSWORD (as the README requires once
+class LoadConfigTests(unittest.TestCase):
+    """load_config() is the one place the daily run reads its environment:
+    each env var must land on the right field, and a bad number must be
+    deferred (recorded, then raised by require()) rather than crash the
+    whole run up front."""
+
+    def test_empty_env_gives_the_documented_defaults(self):
+        self.assertEqual(ft.load_config({}), ft.Config())
+        self.assertEqual(
+            ft.Config(),
+            ft.Config(
+                distros=ft.DEFAULT_DISTROS,
+                include_low_demand=False,
+                skip_ratio_check=False,
+                check_old_releases=False,
+                old_release_min_leechers=10,
+                old_release_min_leecher_ratio=0.1,
+                old_release_allow_zero_seeders=False,
+                old_release_recheck_days=7,
+                old_release_skip_removed=True,
+                cleanup_keep_only_latest=False,
+                cleanup_skip_ratio_check=False,
+                cleanup_min_ratio=1.0,
+                stagnation_window_days=30,
+                stagnation_min_ratio_delta=0.02,
+                disk_usage_threshold_percent=95.0,
+                rpc_username=None,
+                rpc_password=None,
+                invalid={},
+            ),
+        )
+
+    def test_each_env_var_sets_its_field(self):
+        config = ft.load_config(
+            {
+                "FETCH_TORRENTS_DISTROS": "devuan, arch",
+                "FETCH_TORRENTS_INCLUDE_LOW_DEMAND": "true",
+                "SKIP_RATIO_CHECK": "yes",
+                "FETCH_TORRENTS_CHECK_OLD_RELEASES": "1",
+                "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS": "3",
+                "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO": "0.5",
+                "FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS": "true",
+                "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS": "2",
+                "FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED": "false",
+                "CLEANUP_KEEP_ONLY_LATEST_VERSION": "true",
+                "CLEANUP_SKIP_RATIO_CHECK": "true",
+                "CLEANUP_MIN_RATIO": "1.5",
+                "CLEANUP_STAGNATION_WINDOW_DAYS": "14",
+                "CLEANUP_STAGNATION_MIN_RATIO_DELTA": "0.1",
+                "CLEANUP_DISK_USAGE_THRESHOLD_PERCENT": "80",
+                "TRANSMISSION_RPC_USERNAME": " alice ",
+                "TRANSMISSION_RPC_PASSWORD": "hunter2",
+            }
+        )
+
+        self.assertEqual(
+            config,
+            ft.Config(
+                distros=tuple(d for d in ft.ALL_DISTROS if d in {"arch", "devuan"}),
+                include_low_demand=True,
+                skip_ratio_check=True,
+                check_old_releases=True,
+                old_release_min_leechers=3,
+                old_release_min_leecher_ratio=0.5,
+                old_release_allow_zero_seeders=True,
+                old_release_recheck_days=2,
+                old_release_skip_removed=False,
+                cleanup_keep_only_latest=True,
+                cleanup_skip_ratio_check=True,
+                cleanup_min_ratio=1.5,
+                stagnation_window_days=14,
+                stagnation_min_ratio_delta=0.1,
+                disk_usage_threshold_percent=80.0,
+                rpc_username="alice",
+                rpc_password="hunter2",
+            ),
+        )
+
+    def test_reads_only_the_env_it_is_given(self):
+        with helpers.isolated_env(SKIP_RATIO_CHECK="true", CLEANUP_MIN_RATIO="9"):
+            config = ft.load_config({})
+
+        self.assertFalse(config.skip_ratio_check)
+        self.assertEqual(config.cleanup_min_ratio, 1.0)
+
+    def test_invalid_number_is_recorded_not_raised(self):
+        config = ft.load_config(
+            {"CLEANUP_MIN_RATIO": "high", "CLEANUP_STAGNATION_WINDOW_DAYS": "1.5"}
+        )
+
+        self.assertIsNone(config.cleanup_min_ratio)
+        self.assertIsNone(config.stagnation_window_days)
+        self.assertEqual(
+            config.invalid,
+            {
+                "cleanup_min_ratio": (
+                    "CLEANUP_MIN_RATIO: could not convert string to float: 'high'"
+                ),
+                "stagnation_window_days": (
+                    "CLEANUP_STAGNATION_WINDOW_DAYS: invalid literal for int() "
+                    "with base 10: '1.5'"
+                ),
+            },
+        )
+
+    def test_require_raises_the_first_invalid_field_named(self):
+        config = ft.load_config({"CLEANUP_MIN_RATIO": "high"})
+
+        config.require("stagnation_window_days")  # valid: no error
+        with self.assertRaisesRegex(ValueError, "^CLEANUP_MIN_RATIO: "):
+            config.require("stagnation_window_days", "cleanup_min_ratio")
+
+    def test_rpc_auth_needs_both_username_and_password(self):
+        cases = (
+            ({}, None),
+            ({"TRANSMISSION_RPC_USERNAME": "alice"}, None),
+            ({"TRANSMISSION_RPC_PASSWORD": "hunter2"}, None),
+            (
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "  ",
+                },
+                None,
+            ),
+            (
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
+                },
+                ("alice", "hunter2"),
+            ),
+        )
+        for env, expected in cases:
+            with self.subTest(env=env):
+                self.assertEqual(ft.load_config(env).rpc_auth, expected)
+
+
+class MakeClientFactoryTests(unittest.TestCase):
+    """The daily run's own Transmission connections (cleanup, disk-usage
+    limit) must authenticate the same way configure_transmission.py
+    configured the daemon. Without this, a user who sets
+    TRANSMISSION_RPC_USERNAME/PASSWORD (as the README requires once
     TRANSMISSION_RPC_WHITELIST is widened beyond localhost) finds cleanup
     silently stops working forever: every RPC call fails with 401 and the
     failure is only logged, never surfaced."""
 
-    def setUp(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_auth_")
-        for attr, filename in (
-            ("removed_history_file", "removed_history.json"),
-            ("ratio_history_file", "ratio_history.json"),
-        ):
-            patcher = unittest.mock.patch.object(
-                ft, attr, os.path.join(tmp_dir, filename)
-            )
-            patcher.start()
-            self.addCleanup(patcher.stop)
+    def _connect(self, env):
+        config = ft.load_config(env)
+        with unittest.mock.patch.object(ft, "Client") as client_cls:
+            client = ft.make_client_factory(config)()
+        return client_cls, client
 
-    def _mock_client(self):
-        client = MagicMock()
-        client.get_torrents.return_value = []
-        return client
-
-    def test_cleanup_old_versions_passes_configured_credentials(self):
-        with (
-            unittest.mock.patch.dict(
-                os.environ,
-                {
-                    "TRANSMISSION_RPC_USERNAME": "alice",
-                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
-                },
-            ),
-            unittest.mock.patch.object(
-                ft, "Client", return_value=self._mock_client()
-            ) as mock_client_cls,
-        ):
-            ft.cleanup_old_versions()
-
-        mock_client_cls.assert_called_once_with(
-            host="localhost", port=9091, username="alice", password="hunter2"
+    def test_passes_configured_credentials(self):
+        client_cls, client = self._connect(
+            {
+                "TRANSMISSION_RPC_USERNAME": "alice",
+                "TRANSMISSION_RPC_PASSWORD": "hunter2",
+            }
         )
 
-    def test_cleanup_old_versions_passes_no_credentials_when_unset(self):
-        with (
-            helpers.isolated_env(),
-            unittest.mock.patch.object(
-                ft, "Client", return_value=self._mock_client()
-            ) as mock_client_cls,
-        ):
-            ft.cleanup_old_versions()
+        client_cls.assert_called_once_with(
+            host="localhost", port=9091, username="alice", password="hunter2"
+        )
+        self.assertIs(client, client_cls.return_value)
 
-        mock_client_cls.assert_called_once_with(
+    def test_passes_no_credentials_when_unset(self):
+        client_cls, _client = self._connect({})
+
+        client_cls.assert_called_once_with(
             host="localhost", port=9091, username=None, password=None
         )
 
-    def test_cleanup_stagnant_torrents_passes_configured_credentials(self):
-        with (
-            unittest.mock.patch.dict(
-                os.environ,
-                {
-                    "TRANSMISSION_RPC_USERNAME": "alice",
-                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
-                },
-            ),
-            unittest.mock.patch.object(
-                ft, "Client", return_value=self._mock_client()
-            ) as mock_client_cls,
-        ):
-            ft.cleanup_stagnant_torrents()
-
-        mock_client_cls.assert_called_once_with(
-            host="localhost", port=9091, username="alice", password="hunter2"
+    def test_blank_credentials_count_as_unset(self):
+        client_cls, _client = self._connect(
+            {"TRANSMISSION_RPC_USERNAME": "  ", "TRANSMISSION_RPC_PASSWORD": ""}
         )
+
+        client_cls.assert_called_once_with(
+            host="localhost", port=9091, username=None, password=None
+        )
+
+    def test_factory_connects_only_when_called(self):
+        with unittest.mock.patch.object(ft, "Client") as client_cls:
+            factory = ft.make_client_factory(ft.load_config({}))
+
+        client_cls.assert_not_called()
+        self.assertTrue(callable(factory))
 
 
 class LogSeedRatiosViaHttpTests(unittest.TestCase):
@@ -2942,7 +3046,7 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
     by default) ever cleans them up."""
 
     def setUp(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_watchfile_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_")
         for attr, filename in (
             ("removed_history_file", "removed_history.json"),
             ("ratio_history_file", "ratio_history.json"),
@@ -2964,54 +3068,65 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
             f.write("fake torrent bytes")
         return path
 
+    def _transmission(self):
+        return helpers.FakeTransmission(
+            [
+                FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
+            ]
+        )
+
     def test_cleanup_old_versions_removes_the_watch_file(self):
         old_path = self._touch_watch_file("ubuntu-23.10-desktop-amd64.iso")
-        self._touch_watch_file("ubuntu-24.04-desktop-amd64.iso")
-        torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        new_path = self._touch_watch_file("ubuntu-24.04-desktop-amd64.iso")
+        transmission = self._transmission()
 
-        with (
-            unittest.mock.patch.dict(os.environ, {"CLEANUP_SKIP_RATIO_CHECK": "true"}),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.cleanup_old_versions()
+        ft.cleanup_old_versions(
+            transmission, today=date(2026, 8, 1), skip_ratio_check=True
+        )
 
-        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+        self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+        self.assertIn(("remove_torrent", 2, True), transmission.calls)
         self.assertFalse(os.path.exists(old_path))
-        history = ft.load_removed_history(ft.removed_history_file)
-        self.assertEqual(history["ubuntu-23.10-desktop-amd64.iso"]["ratio"], 2.0)
+        self.assertTrue(os.path.exists(new_path))
+        self.assertEqual(
+            ft.load_removed_history(ft.removed_history_file),
+            {
+                "ubuntu-23.10-desktop-amd64.iso": {
+                    "removed_date": "2026-08-01",
+                    "reason": "keep_only_latest",
+                    "ratio": 2.0,
+                }
+            },
+        )
 
     def test_missing_watch_file_does_not_raise(self):
         # No .torrent file created for the superseded version - cleanup must
         # still succeed and remove the torrent from Transmission.
-        torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        transmission = self._transmission()
 
-        with (
-            unittest.mock.patch.dict(os.environ, {"CLEANUP_SKIP_RATIO_CHECK": "true"}),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.cleanup_old_versions()  # must not raise
+        ft.cleanup_old_versions(
+            transmission, today=date(2026, 8, 1), skip_ratio_check=True
+        )
 
-        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+        self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+
+    def test_cleanup_old_versions_keeps_versions_below_min_ratio(self):
+        transmission = helpers.FakeTransmission(
+            [
+                FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+            ]
+        )
+
+        ft.cleanup_old_versions(transmission, today=date(2026, 8, 1), min_ratio=2.0)
+
+        self.assertEqual(len(transmission.torrents), 2)
 
     def test_cleanup_stagnant_torrents_removes_the_watch_file(self):
         old_path = self._touch_watch_file("ubuntu-23.10-desktop-amd64.iso")
         self._touch_watch_file("ubuntu-24.04-desktop-amd64.iso")
-        torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        transmission = self._transmission()
 
         # 32 days old: past the default 30-day stagnation window, but still
         # within update_ratio_history()'s own 37-day (window + sample
@@ -3019,7 +3134,6 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         # history - before plan_stagnation_cleanup() ever sees it. Ratio
         # unchanged since then, so plan_stagnation_cleanup() must select this
         # torrent for removal.
-        # The clock is pinned so a run crossing midnight can't shift the offset.
         today = date(2026, 8, 1)
         anchor_date = (today - timedelta(days=32)).isoformat()
         history = {
@@ -3028,16 +3142,34 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         with open(ft.ratio_history_file, "w", encoding="utf-8") as f:
             json.dump(history, f)
 
-        with (
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-            unittest.mock.patch.object(ft, "date", fixed_date(today)),
-        ):
-            ft.cleanup_stagnant_torrents()
+        ft.cleanup_stagnant_torrents(transmission, today=today)
 
-        client.remove_torrent.assert_called_once_with(2, delete_data=True)
+        self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
         self.assertFalse(os.path.exists(old_path))
-        history = ft.load_removed_history(ft.removed_history_file)
-        self.assertEqual(history["ubuntu-23.10-desktop-amd64.iso"]["ratio"], 2.0)
+        removed = ft.load_removed_history(ft.removed_history_file)
+        self.assertEqual(
+            removed["ubuntu-23.10-desktop-amd64.iso"],
+            {"removed_date": "2026-08-01", "reason": "stagnant", "ratio": 2.0},
+        )
+
+    def test_cleanup_stagnant_torrents_records_todays_sample(self):
+        transmission = self._transmission()
+
+        ft.cleanup_stagnant_torrents(
+            transmission, today=date(2026, 8, 1), window_days=10
+        )
+
+        self.assertEqual(
+            ft.load_ratio_history(ft.ratio_history_file),
+            {
+                "ubuntu-24.04-desktop-amd64.iso": [
+                    {"date": "2026-08-01", "ratio": 2.0}
+                ],
+                "ubuntu-23.10-desktop-amd64.iso": [
+                    {"date": "2026-08-01", "ratio": 2.0}
+                ],
+            },
+        )
 
 
 class PlanDiskPressureCleanupTests(unittest.TestCase):
@@ -3152,12 +3284,12 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
 
 class EnforceDiskUsageLimitTests(unittest.TestCase):
     """enforce_disk_usage_limit() wires plan_disk_pressure_cleanup() to a
-    live Transmission connection and real disk usage, re-checking usage
-    between removals since ratio data alone can't say how many bytes each
-    torrent holds."""
+    Transmission connection and real disk usage, re-checking usage between
+    removals since ratio data alone can't say how many bytes each torrent
+    holds."""
 
     def setUp(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_disk_pressure_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_")
         for attr, filename in (
             ("removed_history_file", "removed_history.json"),
             ("ratio_history_file", "ratio_history.json"),
@@ -3173,52 +3305,76 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def test_disabled_threshold_never_touches_disk_or_rpc(self):
-        with (
-            unittest.mock.patch.object(ft.shutil, "disk_usage") as mock_disk_usage,
-            unittest.mock.patch.object(ft, "Client") as mock_client_cls,
-        ):
-            ft.enforce_disk_usage_limit(0)
+        self.transmission = helpers.FakeTransmission(
+            [
+                FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
+                FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
+                FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
+            ]
+        )
+        self.connections = 0
 
-        mock_disk_usage.assert_not_called()
-        mock_client_cls.assert_not_called()
+    def _connect(self):
+        self.connections += 1
+        return self.transmission
+
+    def _disk(self, base_used, sizes=None):
+        # 100 GB disk; each torrent's size in GB.
+        return helpers.FakeDisk(
+            self.transmission, 100, sizes or {1: 2, 2: 2, 3: 6}, base_used
+        )
+
+    def _enforce(self, threshold, disk):
+        ft.enforce_disk_usage_limit(
+            self._connect,
+            threshold,
+            today=date(2026, 8, 1),
+            disk_usage=disk,
+            download_path="/downloads",
+        )
+
+    def test_disabled_threshold_never_touches_disk_or_rpc(self):
+        disk = self._disk(base_used=99)
+
+        self._enforce(0, disk)
+
+        self.assertEqual((disk.paths, self.connections), ([], 0))
 
     def test_below_threshold_does_not_connect_to_transmission(self):
-        with (
-            unittest.mock.patch.object(
-                ft.shutil, "disk_usage", return_value=(100, 50, 50)
-            ),
-            unittest.mock.patch.object(ft, "Client") as mock_client_cls,
-        ):
-            ft.enforce_disk_usage_limit(95)
+        disk = self._disk(base_used=40)  # 50%
 
-        mock_client_cls.assert_not_called()
+        self._enforce(95, disk)
+
+        self.assertEqual(disk.paths, ["/downloads"])
+        self.assertEqual(self.connections, 0)
 
     def test_removes_lowest_ratio_candidates_until_under_threshold(self):
-        torrents = [
-            FakeTorrent(
-                "ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0
-            ),  # latest, never removed
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
-            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        # 86 + 10 = 96% used. Removing 22.04 (lowest ratio, 6 GB) gets to
+        # 90%, under the threshold, so 23.10 must be left alone.
+        disk = self._disk(base_used=86)
 
-        # 96% initially (over threshold); drops to 90% (under threshold)
-        # after the first removal - the second, higher-ratio candidate must
-        # be left alone.
-        with (
-            unittest.mock.patch.object(
-                ft.shutil,
-                "disk_usage",
-                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-            ),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.enforce_disk_usage_limit(95)
+        self._enforce(95, disk)
 
-        client.remove_torrent.assert_called_once_with(3, delete_data=True)
+        self.assertEqual(
+            self.transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+
+    def test_keeps_removing_while_still_over_threshold(self):
+        # 96%; removing 22.04 (1 GB) leaves 95% - still at the threshold -
+        # so 23.10 (4 GB) goes too.
+        disk = self._disk(base_used=90, sizes={1: 1, 2: 4, 3: 1})
+
+        self._enforce(95, disk)
+
+        self.assertEqual(self.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+
+    def test_never_removes_the_latest_version(self):
+        disk = self._disk(base_used=99)
+
+        self._enforce(95, disk)
+
+        self.assertEqual(self.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
 
     def test_removes_the_watch_file_for_each_removal(self):
         watch_path = os.path.join(
@@ -3227,65 +3383,32 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         with open(watch_path, "w", encoding="utf-8") as f:
             f.write("fake torrent bytes")
 
-        torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
-            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
-
-        with (
-            unittest.mock.patch.object(
-                ft.shutil,
-                "disk_usage",
-                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-            ),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.enforce_disk_usage_limit(95)
+        self._enforce(95, self._disk(base_used=86))
 
         self.assertFalse(os.path.exists(watch_path))
 
     def test_no_candidates_logs_warning_and_does_not_raise(self):
-        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0)]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        self.transmission.torrents = self.transmission.torrents[:1]
 
-        with (
-            unittest.mock.patch.object(
-                ft.shutil, "disk_usage", return_value=(100, 96, 4)
-            ),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.enforce_disk_usage_limit(95)  # must not raise
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            self._enforce(95, self._disk(base_used=96))
 
-        client.remove_torrent.assert_not_called()
+        self.assertEqual(self.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+        self.assertIn("no superseded versions are available", logs.output[0])
 
     def test_records_removal_reason_as_disk_pressure(self):
-        torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
-            FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
-        ]
-        client = MagicMock()
-        client.get_torrents.return_value = torrents
+        self._enforce(95, self._disk(base_used=86))
 
-        with (
-            unittest.mock.patch.object(
-                ft.shutil,
-                "disk_usage",
-                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-            ),
-            unittest.mock.patch.object(ft, "Client", return_value=client),
-        ):
-            ft.enforce_disk_usage_limit(95)
-
-        history = ft.load_removed_history(ft.removed_history_file)
         self.assertEqual(
-            history["ubuntu-22.04-desktop-amd64.iso"]["reason"], "disk_pressure"
+            ft.load_removed_history(ft.removed_history_file),
+            {
+                "ubuntu-22.04-desktop-amd64.iso": {
+                    "removed_date": "2026-08-01",
+                    "reason": "disk_pressure",
+                    "ratio": 0.2,
+                }
+            },
         )
-        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]["ratio"], 0.2)
 
 
 if __name__ == "__main__":

@@ -34,12 +34,22 @@ CI runs this same command on every push and PR (`.github/workflows/docker-image.
 ## Why the test setup looks the way it does
 
 `fetch_torrents.py` is written to run inside the container: it imports
-`transmission_rpc` (an apk-only package, not pip-installable) and opens log
-files under `/logs` at import time. `tests/test_fetch_torrents.py` stubs
-`transmission_rpc` via `sys.modules` and points `FETCH_TORRENTS_LOG_DIR` at a
-temp directory before importing the module, so tests run without a container
-or a live Transmission daemon. Follow that pattern for any new test file that
-needs to import `fetch_torrents`.
+`transmission_rpc` (an apk-only package, not pip-installable).
+`tests/test_fetch_torrents.py` stubs `transmission_rpc` via `sys.modules`
+before importing the module, so tests run without a container or a live
+Transmission daemon. Follow that pattern for any new test file that needs to
+import `fetch_torrents`.
+
+Importing the module opens no files: log handlers are only attached by
+`configure_logging()`, which the `__main__` block calls. Tests that need it
+should restore the logger afterwards (see `configure_logging_for_test()`).
+The daily run itself is `run(config, client_factory=..., today=...)` with
+its I/O (Transmission client, clock, disk usage) injected, so it is tested
+directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
+`tests/test_daily_run.py` keeps one runpy test for the `__main__` wiring.
+Env vars are read once by `load_config(env)`, and `tests/helpers.py`
+`isolated_env()` scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*`
+etc. so they can't change test outcomes.
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from

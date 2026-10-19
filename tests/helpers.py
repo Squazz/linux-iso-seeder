@@ -20,8 +20,8 @@ _ISOLATED_PREFIXES = (
     "TRANSMISSION_",
     "FETCH_TORRENTS_",
 )
-# Read at import time to choose where fetch_torrents writes its logs; the
-# test modules set it to a temp dir before importing, so it must survive.
+# Where fetch_torrents' state and log files go; a test that sets it (e.g.
+# for a subprocess or runpy run) must not have it scrubbed.
 _PRESERVED = frozenset({"FETCH_TORRENTS_LOG_DIR"})
 
 
@@ -59,3 +59,45 @@ def make_temp_dir(testcase, prefix):
     path = tempfile.mkdtemp(prefix=prefix)
     testcase.addCleanup(shutil.rmtree, path, ignore_errors=True)
     return path
+
+
+class FakeTransmission:
+    """In-memory stand-in for transmission_rpc.Client: get_torrents()
+    returns what it currently holds, remove_torrent() drops that torrent.
+    `calls` records both, in order, for tests that care about sequencing."""
+
+    def __init__(self, torrents=()):
+        self.torrents = list(torrents)
+        self.calls = []
+
+    def get_torrents(self):
+        self.calls.append("get_torrents")
+        return list(self.torrents)
+
+    def remove_torrent(self, ids, delete_data=False):
+        self.calls.append(("remove_torrent", ids, delete_data))
+        self.torrents = [t for t in self.torrents if t.id != ids]
+
+    @property
+    def names(self):
+        return sorted(t.name for t in self.torrents)
+
+
+class FakeDisk:
+    """shutil.disk_usage() stand-in whose used space is `base_used` plus the
+    size of every torrent `transmission` still holds - so removals free
+    space the way they would for real."""
+
+    def __init__(self, transmission, total, sizes, base_used=0):
+        self.transmission = transmission
+        self.total = total
+        self.sizes = sizes
+        self.base_used = base_used
+        self.paths = []
+
+    def __call__(self, path):
+        self.paths.append(path)
+        used = self.base_used + sum(
+            self.sizes.get(t.id, 0) for t in self.transmission.torrents
+        )
+        return (self.total, used, self.total - used)

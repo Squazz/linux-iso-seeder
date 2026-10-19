@@ -8,6 +8,7 @@ import shutil
 import socket
 import tempfile
 import time
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -17,10 +18,12 @@ from transmission_rpc import Client
 
 import torrent_scrape
 
-# Configure logging
+# State and log file locations. Plain paths only - nothing is opened at
+# import time; configure_logging() creates the log handlers.
 log_dir = os.getenv("FETCH_TORRENTS_LOG_DIR", "/logs")
-log_file = os.path.join(log_dir, "fetch_torrents.log")
-ratio_log_file = os.path.join(log_dir, "fetch_torrents_ratios.log")
+LOG_FILE_NAME = "fetch_torrents.log"
+RATIO_LOG_FILE_NAME = "fetch_torrents_ratios.log"
+ratio_log_file = os.path.join(log_dir, RATIO_LOG_FILE_NAME)
 ratio_history_file = os.path.join(log_dir, "fetch_torrents_ratio_history.json")
 old_release_check_state_file = os.path.join(
     log_dir, "fetch_torrents_old_release_check_state.json"
@@ -28,8 +31,8 @@ old_release_check_state_file = os.path.join(
 removed_history_file = os.path.join(log_dir, "fetch_torrents_removed_history.json")
 
 
-def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
-    value = os.getenv(env_var, "").strip()
+def parse_log_level(env_var: str, default: int = logging.INFO, env=None) -> int:
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return default
     if value.isdigit():
@@ -41,43 +44,21 @@ def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     return logging._nameToLevel.get(level, default)
 
 
-def parse_bool(env_var: str, default: bool = False) -> bool:
-    value = os.getenv(env_var, "").strip().lower()
+def parse_bool(env_var: str, default: bool = False, env=None) -> bool:
+    value = (os.environ if env is None else env).get(env_var, "").strip().lower()
     if not value:
         return default
     return value in ("1", "true", "yes", "on")
 
 
-def parse_int(env_var: str, default: int) -> int:
-    value = os.getenv(env_var, "").strip()
+def parse_int(env_var: str, default: int, env=None) -> int:
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return default
     try:
         return int(value)
     except ValueError:
         return default
-
-
-log_level = parse_log_level(
-    "FETCH_TORRENTS_LOG_LEVEL", parse_log_level("LOG_LEVEL", logging.INFO)
-)
-formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
-# Rotating rather than a plain FileHandler: fetch_torrents.log otherwise
-# grows without bound for the lifetime of a "deploy and forget" container -
-# see FETCH_TORRENTS_LOG_MAX_BYTES/FETCH_TORRENTS_LOG_BACKUP_COUNT in the
-# README. 5MB x 3 backups keeps a generous amount of history bounded to ~20MB.
-log_max_bytes = parse_int("FETCH_TORRENTS_LOG_MAX_BYTES", 5 * 1024 * 1024)
-log_backup_count = parse_int("FETCH_TORRENTS_LOG_BACKUP_COUNT", 3)
-file_handler = logging.handlers.RotatingFileHandler(
-    log_file,
-    maxBytes=log_max_bytes,
-    backupCount=log_backup_count,
-)
-file_handler.setFormatter(formatter)
 
 
 class RatioOnlyFilter(logging.Filter):
@@ -118,36 +99,72 @@ def get_always_log_prefixes():
     ]
 
 
-always_log_enabled = parse_bool("FETCH_TORRENTS_ALWAYS_LOG", True)
-important_prefixes = get_always_log_prefixes() if always_log_enabled else []
-
-stream_handler.setLevel(logging.DEBUG)
-stream_handler.addFilter(NonRatioFilter())
-if always_log_enabled:
-    stream_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
-else:
-    stream_handler.setLevel(log_level)
-
-file_handler.setLevel(logging.DEBUG)
-file_handler.addFilter(NonRatioFilter())
-if always_log_enabled:
-    file_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
-else:
-    file_handler.setLevel(log_level)
-
-ratio_handler = logging.FileHandler(
-    ratio_log_file, mode="w", delay=True, encoding="utf-8"
-)
-ratio_handler.setLevel(logging.INFO)
-ratio_handler.addFilter(RatioOnlyFilter())
-ratio_handler.setFormatter(formatter)
-
 logger = logging.getLogger("fetch_torrents")
-logger.setLevel(logging.DEBUG)
-logger.addHandler(stream_handler)
-logger.addHandler(file_handler)
-logger.addHandler(ratio_handler)
-logger.propagate = False
+# Silent until configure_logging() runs, so importing this module (tests,
+# other scripts) neither writes log files nor falls back to stderr.
+_configured_handlers: list[logging.Handler] = [logging.NullHandler()]
+logger.addHandler(_configured_handlers[0])
+
+
+def configure_logging(log_dir, env=None):
+    """Attach the daily run's handlers to `logger`, replacing the ones a
+    previous call (or the import-time NullHandler) attached:
+    stderr and a rotating fetch_torrents.log (both filtered by log level and
+    FETCH_TORRENTS_ALWAYS_LOG), plus fetch_torrents_ratios.log holding only
+    the "[ratio]" lines. Returns (stream_handler, file_handler, ratio_handler).
+
+    The ratio log is opened with mode="w" but delay=True, so it's only
+    truncated on the first "[ratio]" line of this run - after
+    get_previous_ratios() has already read the previous run's ratios."""
+    log_level = parse_log_level(
+        "FETCH_TORRENTS_LOG_LEVEL",
+        parse_log_level("LOG_LEVEL", logging.INFO, env=env),
+        env=env,
+    )
+    always_log_enabled = parse_bool("FETCH_TORRENTS_ALWAYS_LOG", True, env=env)
+    important_prefixes = get_always_log_prefixes() if always_log_enabled else []
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    # Rotating rather than a plain FileHandler: fetch_torrents.log otherwise
+    # grows without bound for the lifetime of a "deploy and forget" container -
+    # see FETCH_TORRENTS_LOG_MAX_BYTES/FETCH_TORRENTS_LOG_BACKUP_COUNT in the
+    # README. 5MB x 3 backups keeps a generous amount of history bounded to ~20MB.
+    file_handler = logging.handlers.RotatingFileHandler(
+        os.path.join(log_dir, LOG_FILE_NAME),
+        maxBytes=parse_int("FETCH_TORRENTS_LOG_MAX_BYTES", 5 * 1024 * 1024, env=env),
+        backupCount=parse_int("FETCH_TORRENTS_LOG_BACKUP_COUNT", 3, env=env),
+    )
+    for handler in (stream_handler, file_handler):
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG)
+        handler.addFilter(NonRatioFilter())
+        if always_log_enabled:
+            handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
+        else:
+            handler.setLevel(log_level)
+
+    ratio_handler = logging.FileHandler(
+        os.path.join(log_dir, RATIO_LOG_FILE_NAME),
+        mode="w",
+        delay=True,
+        encoding="utf-8",
+    )
+    ratio_handler.setLevel(logging.INFO)
+    ratio_handler.addFilter(RatioOnlyFilter())
+    ratio_handler.setFormatter(formatter)
+
+    while _configured_handlers:
+        handler = _configured_handlers.pop()
+        logger.removeHandler(handler)
+        handler.close()
+    logger.setLevel(logging.DEBUG)
+    for handler in (stream_handler, file_handler, ratio_handler):
+        logger.addHandler(handler)
+        _configured_handlers.append(handler)
+    logger.propagate = False
+    return stream_handler, file_handler, ratio_handler
+
 
 watch_dir = "/watch"
 
@@ -242,8 +259,8 @@ OPT_IN_DISTROS = ("arch", "devuan")
 DEFAULT_DISTROS = tuple(d for d in ALL_DISTROS if d not in OPT_IN_DISTROS)
 
 
-def parse_supported_distros(env_var="FETCH_TORRENTS_DISTROS"):
-    value = os.getenv(env_var, "").strip()
+def parse_supported_distros(env_var="FETCH_TORRENTS_DISTROS", env=None):
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return list(DEFAULT_DISTROS)
 
@@ -393,7 +410,7 @@ def _should_fetch_devuan(name, ratios, removed_history):
     return max(prior_ratios) >= 1.0
 
 
-def should_fetch_torrent(name, ratios, removed_history=None):
+def should_fetch_torrent(name, ratios, removed_history=None, *, skip_ratio_check=False):
     """removed_history (record_removal()'s output) is consulted as a
     fallback for versions ratios doesn't cover: ratios only reflects
     torrents Transmission currently holds (see get_previous_ratios()), so a
@@ -401,8 +418,8 @@ def should_fetch_torrent(name, ratios, removed_history=None):
     out of this check and fall into the "no previous version, fetch" branch
     below - bypassing the ratio gate for exactly the versions cleanup
     already gave up on. Live ratios still take priority when a name somehow
-    appears in both."""
-    if os.getenv("SKIP_RATIO_CHECK", "false").lower() == "true":
+    appears in both. skip_ratio_check (SKIP_RATIO_CHECK) bypasses the gate."""
+    if skip_ratio_check:
         return True
     distro = get_distro(name)
     if not distro:
@@ -1250,16 +1267,12 @@ def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
     return to_remove, to_keep_low_ratio
 
 
-def cleanup_old_versions():
+def cleanup_old_versions(tc, *, today, skip_ratio_check=False, min_ratio=1.0):
     """Space-constrained option (CLEANUP_KEEP_ONLY_LATEST_VERSION=true):
-    remove superseded versions as soon as they clear the ratio floor,
-    regardless of whether anyone's still downloading them."""
-    username, password = get_rpc_credentials()
-    tc = Client(host="localhost", port=9091, username=username, password=password)
+    remove superseded versions as soon as they clear the ratio floor
+    (CLEANUP_MIN_RATIO, unless CLEANUP_SKIP_RATIO_CHECK), regardless of
+    whether anyone's still downloading them. tc is a Transmission client."""
     torrents = tc.get_torrents()
-
-    skip_ratio_check = parse_bool("CLEANUP_SKIP_RATIO_CHECK", False)
-    min_ratio = float(os.getenv("CLEANUP_MIN_RATIO", "1.0"))
 
     to_remove, to_keep_low_ratio = plan_cleanup(torrents, skip_ratio_check, min_ratio)
 
@@ -1272,7 +1285,6 @@ def cleanup_old_versions():
         )
 
     removed_history = load_removed_history(removed_history_file)
-    today = date.today()
     for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
@@ -1304,20 +1316,27 @@ def plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent):
     return candidates
 
 
-def enforce_disk_usage_limit(threshold_percent, download_path="/downloads"):
-    """Runs after the normal cleanup pass. Only connects to Transmission and
-    touches disk usage at all once threshold_percent is actually exceeded,
+def enforce_disk_usage_limit(
+    client_factory,
+    threshold_percent,
+    *,
+    today,
+    disk_usage=shutil.disk_usage,
+    download_path="/downloads",
+):
+    """Runs after the normal cleanup pass. Only checks disk usage at all
+    when enabled (threshold_percent > 0), and only calls client_factory()
+    to connect to Transmission once threshold_percent is actually exceeded,
     so a deployment that never gets close to full pays no extra cost."""
     if threshold_percent <= 0:
         return
 
-    total, used, _free = shutil.disk_usage(download_path)
+    total, used, _free = disk_usage(download_path)
     used_percent = (used / total * 100) if total else 0.0
     if used_percent < threshold_percent:
         return
 
-    username, password = get_rpc_credentials()
-    tc = Client(host="localhost", port=9091, username=username, password=password)
+    tc = client_factory()
     torrents = tc.get_torrents()
     candidates = plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent)
 
@@ -1331,9 +1350,8 @@ def enforce_disk_usage_limit(threshold_percent, download_path="/downloads"):
         return
 
     removed_history = load_removed_history(removed_history_file)
-    today = date.today()
     for torrent in candidates:
-        total, used, _free = shutil.disk_usage(download_path)
+        total, used, _free = disk_usage(download_path)
         used_percent = (used / total * 100) if total else 0.0
         if used_percent < threshold_percent:
             break
@@ -1446,14 +1464,12 @@ def plan_stagnation_cleanup(
     return to_remove, to_keep
 
 
-def cleanup_stagnant_torrents():
-    username, password = get_rpc_credentials()
-    tc = Client(host="localhost", port=9091, username=username, password=password)
+def cleanup_stagnant_torrents(tc, *, today, window_days=30, min_ratio_delta=0.02):
+    """Default cleanup path: records today's ratios in the ratio history,
+    then removes superseded versions whose ratio grew by less than
+    min_ratio_delta over window_days (see plan_stagnation_cleanup()). tc is
+    a Transmission client."""
     torrents = tc.get_torrents()
-
-    window_days = int(os.getenv("CLEANUP_STAGNATION_WINDOW_DAYS", "30"))
-    min_ratio_delta = float(os.getenv("CLEANUP_STAGNATION_MIN_RATIO_DELTA", "0.02"))
-    today = date.today()
 
     history = load_ratio_history(ratio_history_file)
     current_ratios = {t.name: float(getattr(t, "ratio", 0.0) or 0.0) for t in torrents}
@@ -1500,38 +1516,156 @@ def cleanup_stagnant_torrents():
     save_ratio_history(ratio_history_file, history)
 
 
-if __name__ == "__main__":
-    start_time = time.time()
-    logger.info("Starting torrent fetch run.")
+@dataclass(frozen=True)
+class Config:
+    """Every env var the daily run reads, parsed once by load_config().
 
-    ratios = get_previous_ratios(ratio_log_file)
-    removed_history = load_removed_history(removed_history_file)
+    A numeric setting that doesn't parse is None here, with the problem
+    recorded in `invalid`; require() raises it at the point the setting is
+    actually used. So a bad CLEANUP_* or CLEANUP_DISK_USAGE_THRESHOLD_PERCENT
+    value still only skips that step (logged), and a bad
+    FETCH_TORRENTS_OLD_RELEASE_* value still only fails once the old-release
+    check runs - the same as when each was parsed in place."""
 
-    success_count = 0
-    existing_count = 0
-    failure_count = 0
-    not_found_count = 0
+    distros: tuple[str, ...] = DEFAULT_DISTROS
+    include_low_demand: bool = False
+    skip_ratio_check: bool = False
+    check_old_releases: bool = False
+    old_release_min_leechers: int | None = 10
+    old_release_min_leecher_ratio: float | None = 0.1
+    old_release_allow_zero_seeders: bool = False
+    old_release_recheck_days: int | None = 7
+    old_release_skip_removed: bool = True
+    cleanup_keep_only_latest: bool = False
+    cleanup_skip_ratio_check: bool = False
+    cleanup_min_ratio: float | None = 1.0
+    stagnation_window_days: int | None = 30
+    stagnation_min_ratio_delta: float | None = 0.02
+    disk_usage_threshold_percent: float | None = 95.0
+    rpc_username: str | None = None
+    rpc_password: str | None = None
+    invalid: dict[str, str] = field(default_factory=dict)
 
-    distro_funcs = [
-        ("ubuntu", fetch_ubuntu_lts),
-        ("debian", fetch_debian_stable),
-        ("kali", fetch_kali_latest),
-        ("arch", fetch_arch_latest),
-        ("mint", fetch_linuxmint_cinnamon),
-        ("fedora", fetch_fedora_workstation),
-        ("devuan", fetch_devuan_latest),
-    ]
+    def require(self, *fields):
+        for name in fields:
+            if name in self.invalid:
+                raise ValueError(self.invalid[name])
 
-    selected_distros = parse_supported_distros()
-    logger.info("Selected distros for this run: %s", ", ".join(selected_distros))
+    @property
+    def rpc_auth(self):
+        if self.rpc_username and self.rpc_password:
+            return (self.rpc_username, self.rpc_password)
+        return None
 
-    include_low_demand = parse_bool("FETCH_TORRENTS_INCLUDE_LOW_DEMAND", False)
-    logger.info(
-        "Including low-demand image families (arm64/cloud/etc.): %s", include_low_demand
+
+def load_config(env):
+    invalid = {}
+
+    def number(field_name, key, default, convert):
+        raw = env.get(key)
+        if raw is None:
+            return default
+        try:
+            return convert(raw)
+        except ValueError as exc:
+            invalid[field_name] = f"{key}: {exc}"
+            return None
+
+    return Config(
+        distros=tuple(parse_supported_distros(env=env)),
+        include_low_demand=parse_bool("FETCH_TORRENTS_INCLUDE_LOW_DEMAND", False, env),
+        skip_ratio_check=parse_bool("SKIP_RATIO_CHECK", False, env),
+        check_old_releases=parse_bool("FETCH_TORRENTS_CHECK_OLD_RELEASES", False, env),
+        old_release_min_leechers=number(
+            "old_release_min_leechers",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS",
+            10,
+            int,
+        ),
+        old_release_min_leecher_ratio=number(
+            "old_release_min_leecher_ratio",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO",
+            0.1,
+            float,
+        ),
+        old_release_allow_zero_seeders=parse_bool(
+            "FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS", False, env
+        ),
+        old_release_recheck_days=number(
+            "old_release_recheck_days",
+            "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS",
+            7,
+            int,
+        ),
+        old_release_skip_removed=parse_bool(
+            "FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED", True, env
+        ),
+        cleanup_keep_only_latest=parse_bool(
+            "CLEANUP_KEEP_ONLY_LATEST_VERSION", False, env
+        ),
+        cleanup_skip_ratio_check=parse_bool("CLEANUP_SKIP_RATIO_CHECK", False, env),
+        cleanup_min_ratio=number("cleanup_min_ratio", "CLEANUP_MIN_RATIO", 1.0, float),
+        stagnation_window_days=number(
+            "stagnation_window_days", "CLEANUP_STAGNATION_WINDOW_DAYS", 30, int
+        ),
+        stagnation_min_ratio_delta=number(
+            "stagnation_min_ratio_delta",
+            "CLEANUP_STAGNATION_MIN_RATIO_DELTA",
+            0.02,
+            float,
+        ),
+        disk_usage_threshold_percent=number(
+            "disk_usage_threshold_percent",
+            "CLEANUP_DISK_USAGE_THRESHOLD_PERCENT",
+            95.0,
+            float,
+        ),
+        rpc_username=env.get("TRANSMISSION_RPC_USERNAME", "").strip() or None,
+        rpc_password=env.get("TRANSMISSION_RPC_PASSWORD", "").strip() or None,
+        invalid=invalid,
     )
 
-    for distro, func in distro_funcs:
-        if distro not in selected_distros:
+
+def make_client_factory(config):
+    """Connects to the local daemon with the credentials configure_transmission.py
+    configured it with (see get_rpc_credentials() for why that matters)."""
+
+    def connect():
+        return Client(
+            host="localhost",
+            port=9091,
+            username=config.rpc_username,
+            password=config.rpc_password,
+        )
+
+    return connect
+
+
+DEFAULT_FETCHERS = (
+    ("ubuntu", fetch_ubuntu_lts),
+    ("debian", fetch_debian_stable),
+    ("kali", fetch_kali_latest),
+    ("arch", fetch_arch_latest),
+    ("mint", fetch_linuxmint_cinnamon),
+    ("fedora", fetch_fedora_workstation),
+    ("devuan", fetch_devuan_latest),
+)
+
+
+@dataclass
+class RunSummary:
+    elapsed: float = 0.0
+    added: int = 0
+    existing: int = 0
+    not_found: int = 0
+    failed: int = 0
+    old_added: int | None = None
+    old_skipped: int | None = None
+
+
+def _fetch_latest(config, fetchers, ratios, removed_history, summary):
+    for distro, func in fetchers:
+        if distro not in config.distros:
             logger.info(
                 "Skipping distro %s because it is not enabled by FETCH_TORRENTS_DISTROS.",
                 distro,
@@ -1540,79 +1674,121 @@ if __name__ == "__main__":
 
         logger.info(f"Fetching latest {distro} torrents...")
         torrents = func()
-        if torrents:
-            torrents = filter_low_demand(torrents, include_low_demand)
-            for name, url in torrents.items():
-                if should_fetch_torrent(name, ratios, removed_history):
-                    status = download_torrent(name, url)
-                    if status == "added":
-                        success_count += 1
-                    elif status == "existing":
-                        existing_count += 1
-                    elif status == "not_found":
-                        not_found_count += 1
-                    else:
-                        failure_count += 1
-                else:
-                    logger.info(
-                        f"Skipping {name} due to low ratio on previous version."
-                    )
-        else:
-            failure_count += 1
+        if not torrents:
+            summary.failed += 1
+            continue
+        torrents = filter_low_demand(torrents, config.include_low_demand)
+        for name, url in torrents.items():
+            if not should_fetch_torrent(
+                name,
+                ratios,
+                removed_history,
+                skip_ratio_check=config.skip_ratio_check,
+            ):
+                logger.info(f"Skipping {name} due to low ratio on previous version.")
+                continue
+            status = download_torrent(name, url)
+            if status == "added":
+                summary.added += 1
+            elif status == "existing":
+                summary.existing += 1
+            elif status == "not_found":
+                summary.not_found += 1
+            else:
+                summary.failed += 1
 
-    old_added = old_skipped = None
-    check_old_releases = parse_bool("FETCH_TORRENTS_CHECK_OLD_RELEASES", False)
-    if check_old_releases:
-        old_release_min_leechers = int(
-            os.getenv("FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS", "10")
+
+def _check_old_releases(config, today, summary):
+    config.require(
+        "old_release_min_leechers",
+        "old_release_min_leecher_ratio",
+        "old_release_recheck_days",
+    )
+    check_state = load_old_release_check_state(old_release_check_state_file)
+    removed_history = (
+        load_removed_history(removed_history_file)
+        if config.old_release_skip_removed
+        else {}
+    )
+    logger.info(
+        "Checking old releases for unmet demand (min leechers: %d, min leecher/seeder ratio: %.1fx, "
+        "allow zero-seeder swarms: %s, recheck interval: %d days)...",
+        config.old_release_min_leechers,
+        config.old_release_min_leecher_ratio,
+        config.old_release_allow_zero_seeders,
+        config.old_release_recheck_days,
+    )
+    summary.old_added, summary.old_skipped, check_state = check_old_releases_for_demand(
+        list(config.distros),
+        config.include_low_demand,
+        config.old_release_min_leechers,
+        config.old_release_min_leecher_ratio,
+        config.old_release_allow_zero_seeders,
+        check_state,
+        removed_history,
+        today,
+        config.old_release_recheck_days,
+    )
+    save_old_release_check_state(old_release_check_state_file, check_state)
+    logger.info(
+        "Old-release check complete: %d added, %d skipped.",
+        summary.old_added,
+        summary.old_skipped,
+    )
+
+
+def _cleanup(config, client_factory, today):
+    if config.cleanup_keep_only_latest:
+        config.require("cleanup_min_ratio")
+        cleanup_old_versions(
+            client_factory(),
+            today=today,
+            skip_ratio_check=config.cleanup_skip_ratio_check,
+            min_ratio=config.cleanup_min_ratio,
         )
-        old_release_min_leecher_ratio = float(
-            os.getenv("FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO", "0.1")
-        )
-        old_release_allow_zero_seeders = parse_bool(
-            "FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS", False
-        )
-        old_release_recheck_days = int(
-            os.getenv("FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS", "7")
-        )
-        skip_previously_removed = parse_bool(
-            "FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED", True
+    else:
+        config.require("stagnation_window_days", "stagnation_min_ratio_delta")
+        cleanup_stagnant_torrents(
+            client_factory(),
+            today=today,
+            window_days=config.stagnation_window_days,
+            min_ratio_delta=config.stagnation_min_ratio_delta,
         )
 
-        check_state = load_old_release_check_state(old_release_check_state_file)
-        removed_history = (
-            load_removed_history(removed_history_file)
-            if skip_previously_removed
-            else {}
-        )
 
-        logger.info(
-            "Checking old releases for unmet demand (min leechers: %d, min leecher/seeder ratio: %.1fx, "
-            "allow zero-seeder swarms: %s, recheck interval: %d days)...",
-            old_release_min_leechers,
-            old_release_min_leecher_ratio,
-            old_release_allow_zero_seeders,
-            old_release_recheck_days,
-        )
-        old_added, old_skipped, check_state = check_old_releases_for_demand(
-            selected_distros,
-            include_low_demand,
-            old_release_min_leechers,
-            old_release_min_leecher_ratio,
-            old_release_allow_zero_seeders,
-            check_state,
-            removed_history,
-            date.today(),
-            old_release_recheck_days,
-        )
-        save_old_release_check_state(old_release_check_state_file, check_state)
-        logger.info(
-            "Old-release check complete: %d added, %d skipped.", old_added, old_skipped
-        )
+def run(
+    config,
+    *,
+    client_factory,
+    today,
+    now=time.time,
+    fetchers=DEFAULT_FETCHERS,
+    disk_usage=shutil.disk_usage,
+    download_path="/downloads",
+):
+    """The daily run: fetch new releases (ratio-gated on the previous run's
+    ratio log), optionally check old releases for demand, log seed ratios
+    for the next run, clean up, then enforce the disk-usage limit. Each
+    step after fetching logs its own failure and lets the rest carry on."""
+    start_time = now()
+    logger.info("Starting torrent fetch run.")
+    logger.info("Selected distros for this run: %s", ", ".join(config.distros))
+    logger.info(
+        "Including low-demand image families (arm64/cloud/etc.): %s",
+        config.include_low_demand,
+    )
+
+    summary = RunSummary()
+    ratios = get_previous_ratios(ratio_log_file)
+    removed_history = load_removed_history(removed_history_file)
+    _fetch_latest(config, fetchers, ratios, removed_history, summary)
+
+    if config.check_old_releases:
+        _check_old_releases(config, today, summary)
 
     if wait_for_transmission_rpc():
         try:
-            log_seed_ratios_via_http()
+            log_seed_ratios_via_http(auth=config.rpc_auth)
         except Exception as exc:
             logger.error("Could not query Transmission: %s", exc)
     else:
@@ -1621,35 +1797,43 @@ if __name__ == "__main__":
         )
 
     try:
-        if parse_bool("CLEANUP_KEEP_ONLY_LATEST_VERSION", False):
-            cleanup_old_versions()
-        else:
-            cleanup_stagnant_torrents()
+        _cleanup(config, client_factory, today)
     except Exception as exc:
         logger.error("Could not clean up old versions: %s", exc)
 
     try:
-        disk_usage_threshold = float(
-            os.getenv("CLEANUP_DISK_USAGE_THRESHOLD_PERCENT", "95")
+        config.require("disk_usage_threshold_percent")
+        enforce_disk_usage_limit(
+            client_factory,
+            config.disk_usage_threshold_percent,
+            today=today,
+            disk_usage=disk_usage,
+            download_path=download_path,
         )
-        enforce_disk_usage_limit(disk_usage_threshold)
     except Exception as exc:
         logger.error("Could not enforce disk usage limit: %s", exc)
 
-    total, used, free = shutil.disk_usage("/downloads")
+    total, used, _free = disk_usage(download_path)
     logger.info(
         f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total"
     )
 
-    elapsed = time.time() - start_time
+    summary.elapsed = now() - start_time
     logger.info(
         format_run_summary(
-            elapsed,
-            success_count,
-            existing_count,
-            not_found_count,
-            failure_count,
-            old_added,
-            old_skipped,
+            summary.elapsed,
+            summary.added,
+            summary.existing,
+            summary.not_found,
+            summary.failed,
+            summary.old_added,
+            summary.old_skipped,
         )
     )
+    return summary
+
+
+if __name__ == "__main__":
+    configure_logging(log_dir)
+    config = load_config(os.environ)
+    run(config, client_factory=make_client_factory(config), today=date.today())
