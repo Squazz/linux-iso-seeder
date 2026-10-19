@@ -72,6 +72,33 @@ class BdecodeBencodeTests(unittest.TestCase):
         with self.assertRaises(ts.BencodeError):
             ts.bdecode(b"x123")
 
+    def test_bdecode_malformed_input_raises_bencode_error(self):
+        # A truncated .torrent must fail loudly: decoding it silently gives
+        # a wrong info dict, hence a wrong info-hash and a bogus scrape.
+        cases = {
+            b"4:ab": "declares 4 bytes, has 2",
+            b"i12": "integer without terminating e",
+            b"iabce": "non-numeric integer",
+            b"i1_0e": "int() accepts underscores, bencode doesn't",
+            b"i e": "blank integer",
+            b"2x:ab": "non-numeric length",
+            b"12": "length without colon",
+            b"l4:spam": "unterminated list",
+            b"d3:cow3:moo": "unterminated dict",
+        }
+        for data, problem in cases.items():
+            with self.subTest(problem, data=data):
+                with self.assertRaises(ts.BencodeError) as ctx:
+                    ts.bdecode(data)
+                self.assertRegex(str(ctx.exception), r"index \d+")
+
+    def test_bdecode_truncated_string_inside_container_raises(self):
+        with self.assertRaises(ts.BencodeError):
+            ts.bdecode(b"d4:info10:shorte")
+
+    def test_bdecode_string_ending_exactly_at_end_of_data_is_accepted(self):
+        self.assertEqual(ts.bdecode(b"4:spam"), (b"spam", 6))
+
     def test_bencode_roundtrip(self):
         for value in (0, -5, 12345, b"", b"hello", [b"a", b"b"], {b"a": 1, b"b": b"x"}):
             encoded = ts.bencode(value)

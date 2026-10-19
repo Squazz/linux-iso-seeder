@@ -15,6 +15,7 @@ move on to the torrent's next tracker.
 import hashlib
 import ipaddress
 import os
+import re
 import socket
 import struct
 from urllib.parse import quote_from_bytes, urlsplit, urlunsplit
@@ -33,25 +34,44 @@ class UdpTrackerError(ValueError):
     failure and move on to the next tracker."""
 
 
+# Stricter than int(), which also accepts whitespace, '+' and underscores.
+_BENCODE_INT = re.compile(rb"-?\d+")
+
 
 def bdecode(data, index=0):
     """Decode a single bencoded value starting at index. Returns (value,
     next_index). Byte strings decode to bytes, dict keys must be byte
     strings (per spec) and dicts decode with keys as bytes."""
     if index >= len(data):
-        raise BencodeError("Unexpected end of data")
+        raise BencodeError(f"Unexpected end of data at index {index}")
 
     prefix = data[index : index + 1]
 
     if prefix == b"i":
-        end = data.index(b"e", index)
-        return int(data[index + 1 : end]), end + 1
+        end = data.find(b"e", index)
+        if end == -1:
+            raise BencodeError(f"Unterminated integer at index {index}")
+        digits = data[index + 1 : end]
+        if not _BENCODE_INT.fullmatch(digits):
+            raise BencodeError(f"Invalid integer {digits!r} at index {index}")
+        return int(digits), end + 1
 
     if prefix.isdigit():
-        colon = data.index(b":", index)
-        length = int(data[index:colon])
+        colon = data.find(b":", index)
+        if colon == -1:
+            raise BencodeError(f"Byte string length without ':' at index {index}")
+        digits = data[index:colon]
+        if not digits.isdigit():
+            raise BencodeError(
+                f"Invalid byte string length {digits!r} at index {index}"
+            )
         start = colon + 1
-        end = start + length
+        end = start + int(digits)
+        if end > len(data):
+            raise BencodeError(
+                f"Byte string at index {index} declares {int(digits)} bytes, "
+                f"only {len(data) - start} remain"
+            )
         return data[start:end], end
 
     if prefix == b"l":
