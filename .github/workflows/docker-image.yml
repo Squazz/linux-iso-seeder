@@ -45,6 +45,20 @@ jobs:
     - name: Run tests
       run: python -m unittest discover -s tests -v
 
+    # Same suite again with env vars exported that would flip outcomes if any
+    # test leaked the developer's shell environment into production code.
+    - name: Run tests with a hostile environment
+      run: python -m unittest discover -s tests
+      env:
+        SKIP_RATIO_CHECK: "true"
+        CLEANUP_MIN_RATIO: "5"
+        CLEANUP_SKIP_RATIO_CHECK: "true"
+        TRANSMISSION_RPC_USERNAME: x
+        TRANSMISSION_RPC_PASSWORD: y
+        FETCH_TORRENTS_DISTROS: arch
+        FETCH_TORRENTS_LOG_MAX_BYTES: "7"
+        FETCH_TORRENTS_ALWAYS_LOG: "false"
+
   build:
     needs: test
     runs-on: ubuntu-latest

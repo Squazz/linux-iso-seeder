@@ -400,7 +400,8 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
             unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
             unittest.mock.patch.object(
                 ts.os, "urandom", return_value=b"\x00\x00\x00\x01"
-            ),self.assertRaises(ts.UdpTrackerError)
+            ),
+            self.assertRaises(ts.UdpTrackerError),
         ):
             ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
 
@@ -498,6 +499,7 @@ class ScrapeTorrentTests(unittest.TestCase):
             + b"e"
         )
         fd, path = tempfile.mkstemp(suffix=".torrent")
+        self.addCleanup(os.remove, path)
         with os.fdopen(fd, "wb") as f:
             f.write(torrent_bytes)
         return path

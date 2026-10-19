@@ -11,6 +11,7 @@ Run with: python -m unittest discover -s tests
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -25,15 +26,35 @@ if "transmission_rpc" not in sys.modules:
     stub.Client = MagicMock()
     sys.modules["transmission_rpc"] = stub
 
-os.environ.setdefault(
-    "FETCH_TORRENTS_LOG_DIR", tempfile.mkdtemp(prefix="fetch_torrents_test_logs_")
-)
+_TEST_LOG_DIR = tempfile.mkdtemp(prefix="fetch_torrents_test_logs_")
+os.environ.setdefault("FETCH_TORRENTS_LOG_DIR", _TEST_LOG_DIR)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+import helpers
+
 import fetch_torrents as ft
+
+
+def setUpModule():
+    # Baseline for every test here: the developer's exported
+    # SKIP_RATIO_CHECK/CLEANUP_*/TRANSMISSION_*/FETCH_TORRENTS_* can't leak in
+    # (including into the subprocess tests, which copy os.environ).
+    patcher = helpers.isolated_env()
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
+def tearDownModule():
+    # The import-time log dir can only be removed once ft's handlers have
+    # released their files (Windows refuses to delete open files).
+    for handler in (ft.file_handler, ft.ratio_handler):
+        ft.logger.removeHandler(handler)
+        handler.close()
+    if os.environ.get("FETCH_TORRENTS_LOG_DIR") == _TEST_LOG_DIR:
+        shutil.rmtree(_TEST_LOG_DIR, ignore_errors=True)
 
 
 class FakeTorrent:
@@ -45,6 +66,17 @@ class FakeTorrent:
 
     def __repr__(self):
         return f"FakeTorrent({self.name!r}, ratio={self.ratio})"
+
+
+def fixed_date(today):
+    """A drop-in for fetch_torrents' `date` whose today() is pinned."""
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return today
+
+    return FixedDate
 
 
 def names_of(torrents):
@@ -462,7 +494,7 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
     about what happens between import and the first get_previous_ratios() call."""
 
     def test_previous_ratios_are_readable_after_a_fresh_start(self):
-        log_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_restart_")
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_restart_")
         ratio_log_path = os.path.join(log_dir, "fetch_torrents_ratios.log")
         with open(ratio_log_path, "w", encoding="utf-8") as f:
             f.write(
@@ -510,7 +542,7 @@ class LogFileRotationTests(unittest.TestCase):
     was in effect during test collection)."""
 
     def _run(self, extra_env=None):
-        log_dir = tempfile.mkdtemp(prefix="fetch_torrents_log_rotation_")
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_log_rotation_")
         script = (
             "import os, sys, types\n"
             "from unittest.mock import MagicMock\n"
@@ -766,8 +798,7 @@ class ParseSupportedDistrosTests(unittest.TestCase):
     fetched just because FETCH_TORRENTS_DISTROS is unset."""
 
     def test_default_excludes_opt_in_distros(self):
-        with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("FETCH_TORRENTS_DISTROS", None)
+        with helpers.isolated_env():
             result = ft.parse_supported_distros()
         self.assertNotIn("arch", result)
         self.assertNotIn("devuan", result)
@@ -892,7 +923,7 @@ class DownloadTorrent404Tests(unittest.TestCase):
     same way as a genuine download failure."""
 
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -986,7 +1017,7 @@ class SafeWatchPathTests(unittest.TestCase):
 
 class DownloadTorrentUnsafeNameTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -1000,10 +1031,20 @@ class DownloadTorrentUnsafeNameTests(unittest.TestCase):
         self.assertEqual(os.listdir(self.tmp_watch_dir), [])
 
     def test_remove_watch_file_refuses_unsafe_name_without_touching_disk(self):
-        with unittest.mock.patch.object(ft.os, "remove") as mock_remove:
+        # Asserted on disk rather than by patching os.remove: that patch is
+        # process-wide, so a log rotation triggered by the warning would
+        # trip it too.
+        parent = helpers.make_temp_dir(self, "fetch_torrents_test_escape_")
+        watch_dir = os.path.join(parent, "watch")
+        os.mkdir(watch_dir)
+        outside = os.path.join(parent, "evil.torrent")
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write("must survive")
+
+        with unittest.mock.patch.object(ft, "watch_dir", watch_dir):
             ft._remove_watch_file("../evil")
 
-        mock_remove.assert_not_called()
+        self.assertTrue(os.path.exists(outside))
 
 
 class UpdateRatioHistoryTests(unittest.TestCase):
@@ -1201,7 +1242,7 @@ class RatioHistoryPersistenceTests(unittest.TestCase):
     tolerate a missing or corrupt file rather than crashing a run."""
 
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
         path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
         history = {
             "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]
@@ -1213,13 +1254,13 @@ class RatioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, history)
 
     def test_missing_file_returns_empty_history(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
         path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_ratio_history(path), {})
 
     def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
         path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write("{not valid json")
@@ -1602,7 +1643,7 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
 
 class CheckOldReleasesForDemandTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -1833,7 +1874,7 @@ class ShouldRecheckOldReleaseTests(unittest.TestCase):
 
 class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
         path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
         state = {"x": {"last_checked": "2026-01-08", "leechers": 0}}
 
@@ -1843,13 +1884,13 @@ class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, state)
 
     def test_missing_file_returns_empty_state(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
         path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_old_release_check_state(path), {})
 
     def test_corrupt_file_returns_empty_state_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
         path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write("{not valid json")
@@ -1877,7 +1918,7 @@ class RecordRemovalTests(unittest.TestCase):
 
 class RemovedHistoryPersistenceTests(unittest.TestCase):
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
         path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
         history = {"x": {"removed_date": "2026-02-01", "reason": "stagnant"}}
 
@@ -1887,13 +1928,13 @@ class RemovedHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, history)
 
     def test_missing_file_returns_empty_history(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
         path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_removed_history(path), {})
 
     def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
         path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write("{not valid json")
@@ -1908,7 +1949,7 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
     network, and must record a fresh check for anything it does evaluate."""
 
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -2049,7 +2090,7 @@ class CleanupRpcAuthTests(unittest.TestCase):
     failure is only logged, never surfaced."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_cleanup_auth_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_auth_")
         for attr, filename in (
             ("removed_history_file", "removed_history.json"),
             ("ratio_history_file", "ratio_history.json"),
@@ -2085,13 +2126,13 @@ class CleanupRpcAuthTests(unittest.TestCase):
         )
 
     def test_cleanup_old_versions_passes_no_credentials_when_unset(self):
-        with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("TRANSMISSION_RPC_USERNAME", None)
-            os.environ.pop("TRANSMISSION_RPC_PASSWORD", None)
-            with unittest.mock.patch.object(
+        with (
+            helpers.isolated_env(),
+            unittest.mock.patch.object(
                 ft, "Client", return_value=self._mock_client()
-            ) as mock_client_cls:
-                ft.cleanup_old_versions()
+            ) as mock_client_cls,
+        ):
+            ft.cleanup_old_versions()
 
         mock_client_cls.assert_called_once_with(
             host="localhost", port=9091, username=None, password=None
@@ -2168,18 +2209,18 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         self.assertEqual(second_call_kwargs.get("auth"), ("alice", "hunter2"))
 
     def test_no_auth_when_credentials_unset(self):
-        with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("TRANSMISSION_RPC_USERNAME", None)
-            os.environ.pop("TRANSMISSION_RPC_PASSWORD", None)
-            with unittest.mock.patch.object(
+        with (
+            helpers.isolated_env(),
+            unittest.mock.patch.object(
                 ft.requests,
                 "post",
                 side_effect=[
                     self.FakeSessionIdResponse(),
                     self.FakeTorrentGetResponse(),
                 ],
-            ) as mock_post:
-                ft.log_seed_ratios_via_http()
+            ) as mock_post,
+        ):
+            ft.log_seed_ratios_via_http()
 
         second_call_kwargs = mock_post.call_args_list[1].kwargs
         self.assertIsNone(second_call_kwargs.get("auth"))
@@ -2215,7 +2256,7 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
     by default) ever cleans them up."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_cleanup_watchfile_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_watchfile_")
         for attr, filename in (
             ("removed_history_file", "removed_history.json"),
             ("ratio_history_file", "ratio_history.json"),
@@ -2226,7 +2267,7 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -2292,14 +2333,19 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         # history - before plan_stagnation_cleanup() ever sees it. Ratio
         # unchanged since then, so plan_stagnation_cleanup() must select this
         # torrent for removal.
-        anchor_date = (date.today() - timedelta(days=32)).isoformat()
+        # The clock is pinned so a run crossing midnight can't shift the offset.
+        today = date(2026, 8, 1)
+        anchor_date = (today - timedelta(days=32)).isoformat()
         history = {
             "ubuntu-23.10-desktop-amd64.iso": [{"date": anchor_date, "ratio": 2.0}]
         }
         with open(ft.ratio_history_file, "w", encoding="utf-8") as f:
             json.dump(history, f)
 
-        with unittest.mock.patch.object(ft, "Client", return_value=client):
+        with (
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+            unittest.mock.patch.object(ft, "date", fixed_date(today)),
+        ):
             ft.cleanup_stagnant_torrents()
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
@@ -2382,7 +2428,7 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
     torrent holds."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_disk_pressure_")
+        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_disk_pressure_")
         for attr, filename in (
             ("removed_history_file", "removed_history.json"),
             ("ratio_history_file", "ratio_history.json"),
@@ -2393,7 +2439,7 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
         patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
