@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Bencode parsing and BitTorrent tracker "scrape" support.
 
 Scrape is a separate endpoint from announce: it returns aggregate
