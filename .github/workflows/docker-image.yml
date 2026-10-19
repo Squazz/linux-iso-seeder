@@ -83,6 +83,19 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # The test job uses pip packages on Ubuntu; this reruns the suite on the
+    # apk versions the container actually ships (Dockerfile `test` stage).
+    - name: Run unit tests inside the image
+      run: docker build --target test .
+
+    - name: Build image for smoke test
+      run: docker build -t linux-iso-seeder:smoke .
+
+    # Starts the image (root and RUN_AS_NON_ROOT) and checks it comes up;
+    # nothing below pushes unless this passes.
+    - name: Smoke-test the image
+      run: sh scripts/smoke_test.sh linux-iso-seeder:smoke
+
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v4
       with:

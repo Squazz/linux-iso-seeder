@@ -22,6 +22,23 @@ When making changes to the fetch logic or features:
 - Verify regex patterns match all intended torrent names (e.g., Ubuntu variants)
 - Ratio checking is per ISO type (e.g., `installer-amd64`) rather than per distro
 
+## Testing the image
+
+CI checks the built image before anything is pushed. To run the same checks
+locally (Docker required):
+
+```sh
+docker build --target test .                 # unit suite on the image's apk packages
+docker build -t linux-iso-seeder:smoke .
+sh scripts/smoke_test.sh linux-iso-seeder:smoke
+```
+
+The smoke test starts the image with `--network none`, both as root and
+with `RUN_AS_NON_ROOT=true`, and checks that `configure_transmission.py`
+applied its overrides, that `transmission-daemon` is running, and that every
+module imports. When `alpine:latest` moves to a new `py3-transmission-rpc`,
+bump the `transmission-rpc` pin in `requirements-test.txt` to match.
+
 ## Mutation testing
 
 Mutation testing checks that the tests actually pin behavior, not just

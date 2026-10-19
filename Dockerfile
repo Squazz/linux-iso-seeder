@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM alpine:latest AS runtime
 ARG VERSION=latest
 LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
 LABEL org.opencontainers.image.version=$VERSION
@@ -37,3 +37,14 @@ RUN mkdir -p /config /downloads /watch /logs
 VOLUME ["/config", "/downloads", "/watch", "/logs"]
 
 ENTRYPOINT ["/entrypoint.sh"]
+
+# Unit suite against the image's own apk package versions (CI builds this
+# with --target test). BuildKit skips this stage for a normal build, and the
+# final stage below is the runtime image unchanged - tests/ never ships.
+FROM runtime AS test
+WORKDIR /src
+COPY fetch_torrents.py torrent_scrape.py configure_transmission.py ./
+COPY tests ./tests
+RUN python3 -m unittest discover -s tests
+
+FROM runtime
