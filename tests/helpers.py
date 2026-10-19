@@ -25,6 +25,7 @@ import shutil
 import socket
 import sys
 import tempfile
+import types
 import unittest
 import unittest.mock
 from datetime import date
@@ -32,6 +33,7 @@ from urllib.parse import urldefrag
 
 import requests
 import transmission_rpc
+import transmission_rpc.constants
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -98,6 +100,17 @@ def fixed_date(today):
 
 def names_of(torrents):
     return sorted(t.name for t in torrents)
+
+
+def removed(name, ratio=None, *, on="2026-01-01"):
+    """A removed-history entry for `name`, as record_removal() writes it
+    ({name: {...}}; merge several with {**a, **b}). Only the ratio matters
+    to the ratio gate, and only the date to the old-release log line; no
+    ratio makes a legacy entry from before ratios were recorded."""
+    entry = {"removed_date": on, "reason": "stagnant"}
+    if ratio is not None:
+        entry["ratio"] = ratio
+    return {name: entry}
 
 
 def make_temp_dir(testcase, prefix):
@@ -207,6 +220,99 @@ class FakeDisk:
         on_disk = self.transmission.torrents + self.transmission.data_left_on_disk
         used = self.base_used + sum(self.sizes.get(t.id, 0) for t in on_disk)
         return (self.total, used, self.total - used)
+
+
+class FakeTransmissionRpc:
+    """requests.post stand-in for transmission-daemon's HTTP RPC, as strict
+    as the daemon: a request without the session id it handed out is
+    refused with a 409 carrying that id. A torrent-get with it records its
+    auth in `auths` and lists `transmission`'s torrents, with just the
+    requested fields. A method or field the pinned transmission_rpc doesn't
+    know raises ValueError. `calls` records every post, as mock.call()s."""
+
+    URL = "http://localhost:9091/transmission/rpc"
+    SESSION_ID = "sid"
+
+    def __init__(self, transmission):
+        self.transmission = transmission
+        self.calls = []
+        self.auths = []
+
+    def post(self, url, **kwargs):
+        self.calls.append(unittest.mock.call(url, **kwargs))
+        if url != self.URL:
+            return fake_response(b"not found", status=404, url=url)
+        headers = kwargs.get("headers") or {}
+        if headers.get("X-Transmission-Session-Id") != self.SESSION_ID:
+            return fake_response(
+                status=409,
+                url=url,
+                headers={"X-Transmission-Session-Id": self.SESSION_ID},
+            )
+        payload = kwargs.get("json") or {}
+        method = payload.get("method")
+        RpcMethod = transmission_rpc.constants.RpcMethod
+        if method not in {m.value for m in RpcMethod}:
+            raise ValueError(f"the pinned transmission_rpc has no method {method!r}")
+        if method != RpcMethod.TorrentGet.value:
+            raise ValueError(f"method {method!r}: only torrent-get is faked")
+        fields = payload["arguments"]["fields"]
+        unknown = set(fields) - set(transmission_rpc.constants.TORRENT_GET_ARGS)
+        if unknown:
+            raise ValueError(
+                f"torrent-get fields the pinned transmission_rpc lacks: {unknown}"
+            )
+        self.auths.append(kwargs.get("auth"))
+        torrents = [
+            {field: t.fields[field] for field in fields}
+            for t in self.transmission.torrents
+        ]
+        return fake_response(
+            json.dumps({"arguments": {"torrents": torrents}, "result": "success"}),
+            url=url,
+        )
+
+
+def use_watch_dir(testcase):
+    """Points fetch_torrents.watch_dir at a fresh temp dir for the rest of
+    `testcase`; returns that dir."""
+    import fetch_torrents
+
+    path = make_temp_dir(testcase, "fetch_torrents_test_watch_")
+    _patch_for_test(testcase, fetch_torrents, "watch_dir", path)
+    return path
+
+
+# fetch_torrents' state file globals and the file each is named after.
+STATE_FILES = {
+    "ratio_log_file": "fetch_torrents_ratios.log",
+    "ratio_history_file": "fetch_torrents_ratio_history.json",
+    "removed_history_file": "fetch_torrents_removed_history.json",
+    "old_release_check_state_file": "fetch_torrents_old_release_check_state.json",
+}
+
+
+def use_state_files(testcase):
+    """Points every fetch_torrents state file global (STATE_FILES) at a
+    not-yet-existing file in a fresh temp dir for the rest of `testcase`.
+    Returns a namespace holding `dir` and each patched path, by the
+    global's name (e.g. `.removed_history_file`)."""
+    import fetch_torrents
+
+    state = types.SimpleNamespace(
+        dir=make_temp_dir(testcase, "fetch_torrents_test_state_")
+    )
+    for attr, filename in STATE_FILES.items():
+        path = os.path.join(state.dir, filename)
+        setattr(state, attr, path)
+        _patch_for_test(testcase, fetch_torrents, attr, path)
+    return state
+
+
+def _patch_for_test(testcase, target, attr, value):
+    patcher = unittest.mock.patch.object(target, attr, value)
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
 
 
 def disk_full_open(module):

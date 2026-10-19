@@ -66,16 +66,22 @@ def torrent(name, id_, ratio):
 
 
 class FakeWorld:
-    """HTTP routes, a Transmission daemon and a disk, all in memory."""
+    """HTTP routes, a Transmission daemon (its HTTP RPC is `rpc`) and a disk,
+    all in memory. State files and torrents go to `state_dir` and
+    `watch_dir`: fresh temp dirs unless given."""
 
-    def __init__(self, testcase):
-        self.state_dir = helpers.make_temp_dir(testcase, "daily_run_state_")
-        self.watch_dir = helpers.make_temp_dir(testcase, "daily_run_watch_")
+    def __init__(self, testcase, state_dir=None, watch_dir=None):
+        self.state_dir = state_dir or helpers.make_temp_dir(
+            testcase, "daily_run_state_"
+        )
+        self.watch_dir = watch_dir or helpers.make_temp_dir(
+            testcase, "daily_run_watch_"
+        )
         self.routes = {}
         self.requested = []
         self.events = []
         self.transmission = helpers.FakeTransmission()
-        self.rpc_auths = []
+        self.rpc = helpers.FakeTransmissionRpc(self.transmission)
         self.rpc_up = True
         self.disk_used_percent = 10
         self.disk_paths = []
@@ -89,20 +95,13 @@ class FakeWorld:
             raise route
         return route
 
-    def post(self, url, **kwargs):
-        """Transmission's RPC: a request without the session id is refused
-        with a 409 carrying it; a torrent-get with it records its auth and
-        lists what `transmission` holds."""
-        headers = kwargs.get("headers") or {}
-        if headers.get("X-Transmission-Session-Id") != "sid":
-            return helpers.fake_response(
-                status=409, headers={"X-Transmission-Session-Id": "sid"}
-            )
-        self.rpc_auths.append(kwargs.get("auth"))
-        torrents = [
-            {"name": t.name, "uploadRatio": t.ratio} for t in self.transmission.torrents
+    def hold_current_and_superseded_ubuntu(self, superseded_ratio=2.0):
+        """Transmission holds Ubuntu 24.04 (ratio 2.0) and the 23.10 it
+        superseded."""
+        self.transmission.torrents = [
+            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
+            torrent("ubuntu-23.10-desktop-amd64.iso", 2, superseded_ratio),
         ]
-        return helpers.fake_response(json.dumps({"arguments": {"torrents": torrents}}))
 
     def wait_for_rpc(self):
         return self.rpc_up
@@ -247,25 +246,13 @@ class RunTestCase(unittest.TestCase):
     """Base for tests of ft.run() inside a FakeWorld; defines no tests."""
 
     def setUp(self):
-        self.world = FakeWorld(self)
-        patches = [
-            unittest.mock.patch.object(ft.requests, "get", self.world.get),
-            unittest.mock.patch.object(ft.requests, "post", self.world.post),
-            unittest.mock.patch.object(ft, "watch_dir", self.world.watch_dir),
-        ]
-        for attr, filename in (
-            ("ratio_log_file", "fetch_torrents_ratios.log"),
-            ("ratio_history_file", "fetch_torrents_ratio_history.json"),
-            ("removed_history_file", "fetch_torrents_removed_history.json"),
-            (
-                "old_release_check_state_file",
-                "fetch_torrents_old_release_check_state.json",
-            ),
-        ):
-            patches.append(
-                unittest.mock.patch.object(ft, attr, self.world.state_path(filename))
-            )
-        for patcher in patches:
+        self.world = FakeWorld(
+            self,
+            state_dir=helpers.use_state_files(self).dir,
+            watch_dir=helpers.use_watch_dir(self),
+        )
+        for name, fake in (("get", self.world.get), ("post", self.world.rpc.post)):
+            patcher = unittest.mock.patch.object(ft.requests, name, fake)
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -381,10 +368,7 @@ class RunTests(RunTestCase):
         self.assertEqual(summary.not_found, 1)
 
     def test_keep_only_latest_selects_the_old_version_cleanup(self):
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
+        self.world.hold_current_and_superseded_ubuntu()
 
         self._run(
             FETCH_TORRENTS_DISTROS="arch", CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
@@ -395,10 +379,7 @@ class RunTests(RunTestCase):
         )
 
     def test_keep_only_latest_honors_min_ratio(self):
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
+        self.world.hold_current_and_superseded_ubuntu()
 
         self._run(
             FETCH_TORRENTS_DISTROS="arch",
@@ -411,10 +392,7 @@ class RunTests(RunTestCase):
     def test_default_cleanup_is_stagnation_based(self):
         # No ratio history yet, so the stagnation cleanup can't judge the old
         # version and keeps it - unlike keep-only-latest, which removes it.
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
+        self.world.hold_current_and_superseded_ubuntu()
 
         self._run(FETCH_TORRENTS_DISTROS="arch")
 
@@ -432,10 +410,7 @@ class RunTests(RunTestCase):
         )
 
     def test_invalid_cleanup_setting_skips_cleanup_and_continues(self):
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
+        self.world.hold_current_and_superseded_ubuntu()
 
         _summary, messages = self._run(
             FETCH_TORRENTS_DISTROS="arch",
@@ -451,10 +426,7 @@ class RunTests(RunTestCase):
         self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
 
     def test_disk_usage_limit_runs_after_cleanup(self):
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 0.1),
-        ]
+        self.world.hold_current_and_superseded_ubuntu(superseded_ratio=0.1)
         self.world.disk_used_percent = 99
 
         self._run(
@@ -483,10 +455,7 @@ class RunTests(RunTestCase):
 
     def test_rpc_unavailable_skips_ratio_logging_but_still_cleans_up(self):
         self.world.rpc_up = False
-        self.world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
+        self.world.hold_current_and_superseded_ubuntu()
         _summary, messages = self._run(
             FETCH_TORRENTS_DISTROS="arch", CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
         )
@@ -522,12 +491,12 @@ class RunTests(RunTestCase):
             TRANSMISSION_RPC_PASSWORD="hunter2",
         )
 
-        self.assertEqual(self.world.rpc_auths, [("alice", "hunter2")])
+        self.assertEqual(self.world.rpc.auths, [("alice", "hunter2")])
 
     def test_ratio_logging_sends_no_credentials_when_none_are_configured(self):
         self._run(FETCH_TORRENTS_DISTROS="arch")
 
-        self.assertEqual(self.world.rpc_auths, [None])
+        self.assertEqual(self.world.rpc.auths, [None])
 
     def test_every_download_outcome_is_counted_each_time(self):
         # Two of each outcome (four failures: two downloads, two fetchers
@@ -549,16 +518,7 @@ class RunTests(RunTestCase):
             "w",
             encoding="utf-8",
         ) as f:
-            json.dump(
-                {
-                    "archlinux-2026.08.01": {
-                        "removed_date": "2026-08-20",
-                        "reason": "stagnant",
-                        "ratio": 0.4,
-                    }
-                },
-                f,
-            )
+            json.dump(helpers.removed("archlinux-2026.08.01", 0.4), f)
 
         def found(*names):
             return lambda: {name: url(name) for name in names}
@@ -739,7 +699,7 @@ class OldReleaseRunTests(RunTestCase):
         )
         self._write_state(
             "fetch_torrents_removed_history.json",
-            {removed[0]: {"removed_date": "2026-08-01", "reason": "stagnant"}},
+            helpers.removed(removed[0]),
         )
 
         summary, messages = self._check(
@@ -781,7 +741,7 @@ class OldReleaseRunTests(RunTestCase):
         removed = self._candidate(1, "live", 50, 1)
         self._write_state(
             "fetch_torrents_removed_history.json",
-            {removed[0]: {"removed_date": "2026-08-01", "reason": "stagnant"}},
+            helpers.removed(removed[0]),
         )
 
         summary, _ = self._check(
@@ -811,11 +771,8 @@ class MainWiringTests(unittest.TestCase):
 
     def test_running_the_script_performs_a_daily_run(self):
         world = FakeWorld(self)
-        world.transmission.torrents = [
-            torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
-            torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
-        ]
-        log_dir = helpers.make_temp_dir(self, "daily_run_main_logs_")
+        world.hold_current_and_superseded_ubuntu()
+        world.route_arch()
         logger = logging.getLogger("fetch_torrents")
         handlers_before = list(logger.handlers)
 
@@ -826,7 +783,8 @@ class MainWiringTests(unittest.TestCase):
         with contextlib.ExitStack() as stack:
             stack.enter_context(
                 helpers.isolated_env(
-                    FETCH_TORRENTS_LOG_DIR=log_dir,
+                    FETCH_TORRENTS_LOG_DIR=world.state_dir,
+                    FETCH_TORRENTS_WATCH_DIR=world.watch_dir,
                     FETCH_TORRENTS_DISTROS="arch",
                     CLEANUP_KEEP_ONLY_LATEST_VERSION="true",
                     TRANSMISSION_RPC_USERNAME="alice",
@@ -834,7 +792,7 @@ class MainWiringTests(unittest.TestCase):
                 )
             )
             stack.enter_context(unittest.mock.patch("requests.get", world.get))
-            stack.enter_context(unittest.mock.patch("requests.post", world.post))
+            stack.enter_context(unittest.mock.patch("requests.post", world.rpc.post))
             client_cls = stack.enter_context(
                 unittest.mock.patch.object(
                     sys.modules["transmission_rpc"],
@@ -864,21 +822,23 @@ class MainWiringTests(unittest.TestCase):
         self.assertIn("Selected distros for this run: arch", messages)
         self.assertRegex(
             messages[-1],
-            r"\ARun complete in \d+\.\d\d seconds\. 0 added, 0 existing, "
-            r"0 not found upstream, 1 failed\.\Z",
+            r"\ARun complete in \d+\.\d\d seconds\. 1 added, 0 existing, "
+            r"0 not found upstream, 0 failed\.\Z",
         )
+        self.assertEqual(os.listdir(world.watch_dir), ["archlinux-2026.09.01.torrent"])
         client_cls.assert_called_with(
             host="localhost", port=9091, username="alice", password="hunter2"
         )
+        self.assertEqual(world.rpc.auths, [("alice", "hunter2")])
         self.assertEqual(world.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
         self.assertEqual(
-            ft.get_previous_ratios(os.path.join(log_dir, "fetch_torrents_ratios.log")),
+            ft.get_previous_ratios(world.state_path("fetch_torrents_ratios.log")),
             {
                 "ubuntu-24.04-desktop-amd64.iso": 2.0,
                 "ubuntu-23.10-desktop-amd64.iso": 2.0,
             },
         )
-        self.assertTrue(os.path.exists(os.path.join(log_dir, "fetch_torrents.log")))
+        self.assertTrue(os.path.exists(world.state_path("fetch_torrents.log")))
 
 
 if __name__ == "__main__":

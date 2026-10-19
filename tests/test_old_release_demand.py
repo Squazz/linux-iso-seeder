@@ -19,6 +19,19 @@ def setUpModule():
     helpers.isolate_module()
 
 
+def demand(scrape, **overrides):
+    """has_unmet_demand(scrape) with the daily run's default thresholds
+    (10 leechers, 0.1 leechers per seeder, zero-seeder swarms excluded),
+    each overridable by keyword."""
+    thresholds = {
+        "min_leechers": 10,
+        "min_leecher_ratio": 0.1,
+        "allow_zero_seeders": False,
+        **overrides,
+    }
+    return ft.has_unmet_demand(scrape, **thresholds)
+
+
 class HasUnmetDemandTests(unittest.TestCase):
     """Demand requires an absolute floor (enough leechers to be worth the
     disk/bandwidth), a relative one (leechers reach some fraction of the
@@ -29,17 +42,13 @@ class HasUnmetDemandTests(unittest.TestCase):
     served) shouldn't either."""
 
     def test_none_scrape_result_is_no_demand(self):
-        self.assertFalse(
-            ft.has_unmet_demand(
-                None, min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False
-            )
-        )
+        self.assertFalse(demand(None, min_leechers=1, min_leecher_ratio=1.2))
 
     def test_missing_counts_mean_zero(self):
         # A tracker's scrape can omit a count; missing must read as 0, not
         # as some peer.
         self.assertIs(
-            ft.has_unmet_demand(
+            demand(
                 {"seeders": 0},
                 min_leechers=1,
                 min_leecher_ratio=0.0,
@@ -47,68 +56,31 @@ class HasUnmetDemandTests(unittest.TestCase):
             ),
             False,
         )
-        self.assertIs(
-            ft.has_unmet_demand(
-                {"leechers": 5},
-                min_leechers=1,
-                min_leecher_ratio=0.1,
-                allow_zero_seeders=False,
-            ),
-            False,
-        )
+        self.assertIs(demand({"leechers": 5}, min_leechers=1), False)
 
     def test_below_absolute_threshold_is_no_demand(self):
         # Seeded swarm and no ratio requirement, so only the leecher floor
         # can turn this down.
         self.assertFalse(
-            ft.has_unmet_demand(
-                {"leechers": 0, "seeders": 5},
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-            )
+            demand({"leechers": 0, "seeders": 5}, min_leechers=1, min_leecher_ratio=0.0)
         )
 
     def test_single_leecher_on_huge_swarm_is_no_demand(self):
         self.assertFalse(
-            ft.has_unmet_demand(
-                {"leechers": 1, "seeders": 1000},
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
+            demand(
+                {"leechers": 1, "seeders": 1000}, min_leechers=1, min_leecher_ratio=1.2
             )
         )
 
     def test_meets_absolute_but_not_ratio_is_no_demand(self):
         # 11 leechers clears a min_leechers=10 floor, but 11 < 1.2x the 10 seeders.
-        self.assertFalse(
-            ft.has_unmet_demand(
-                {"leechers": 11, "seeders": 10},
-                min_leechers=10,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertFalse(demand({"leechers": 11, "seeders": 10}, min_leecher_ratio=1.2))
 
     def test_meets_both_absolute_and_ratio_thresholds_is_demand(self):
-        self.assertTrue(
-            ft.has_unmet_demand(
-                {"leechers": 25, "seeders": 10},
-                min_leechers=10,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertTrue(demand({"leechers": 25, "seeders": 10}, min_leecher_ratio=1.2))
 
     def test_exactly_at_ratio_threshold_is_demand(self):
-        self.assertTrue(
-            ft.has_unmet_demand(
-                {"leechers": 12, "seeders": 10},
-                min_leechers=10,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertTrue(demand({"leechers": 12, "seeders": 10}, min_leecher_ratio=1.2))
 
     def test_zero_seeders_is_excluded_by_default(self):
         # A scrape can't tell us whether the leechers collectively hold every
@@ -116,20 +88,12 @@ class HasUnmetDemandTests(unittest.TestCase):
         # swarm at all, so we could end up leeching something we can never
         # finish and therefore never seed back. Excluded unless the operator
         # opts into the gamble via allow_zero_seeders.
-        self.assertFalse(
-            ft.has_unmet_demand(
-                {"leechers": 10, "seeders": 0},
-                min_leechers=10,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertFalse(demand({"leechers": 10, "seeders": 0}, min_leecher_ratio=1.2))
 
     def test_zero_seeders_counts_as_demand_when_explicitly_allowed(self):
         self.assertTrue(
-            ft.has_unmet_demand(
+            demand(
                 {"leechers": 10, "seeders": 0},
-                min_leechers=10,
                 min_leecher_ratio=1.2,
                 allow_zero_seeders=True,
             )
@@ -137,9 +101,8 @@ class HasUnmetDemandTests(unittest.TestCase):
 
     def test_zero_seeders_still_needs_the_absolute_floor_when_allowed(self):
         self.assertFalse(
-            ft.has_unmet_demand(
+            demand(
                 {"leechers": 5, "seeders": 0},
-                min_leechers=10,
                 min_leecher_ratio=1.2,
                 allow_zero_seeders=True,
             )
@@ -153,35 +116,14 @@ class HasUnmetDemandTests(unittest.TestCase):
         # capacity or are bandwidth-limited, so leechers don't need to
         # approach or outnumber seeders to represent real demand - 10:100
         # and 100:1000 both clearly indicate room for another seeder.
-        self.assertTrue(
-            ft.has_unmet_demand(
-                {"leechers": 10, "seeders": 100},
-                min_leechers=1,
-                min_leecher_ratio=0.1,
-                allow_zero_seeders=False,
-            )
-        )
-        self.assertTrue(
-            ft.has_unmet_demand(
-                {"leechers": 100, "seeders": 1000},
-                min_leechers=1,
-                min_leecher_ratio=0.1,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertTrue(demand({"leechers": 10, "seeders": 100}, min_leechers=1))
+        self.assertTrue(demand({"leechers": 100, "seeders": 1000}, min_leechers=1))
 
     def test_extreme_oversupply_still_fails_at_default_ratio(self):
         # 3 leechers on 673 seeders (an actual old Kali release scraped
         # during development) is still not demand, even at the more
         # permissive 0.1 default - it needs at least 67.3 leechers.
-        self.assertFalse(
-            ft.has_unmet_demand(
-                {"leechers": 3, "seeders": 673},
-                min_leechers=1,
-                min_leecher_ratio=0.1,
-                allow_zero_seeders=False,
-            )
-        )
+        self.assertFalse(demand({"leechers": 3, "seeders": 673}, min_leechers=1))
 
 
 class EvaluateOldReleaseDemandTests(unittest.TestCase):
@@ -311,10 +253,7 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
 
 class CheckOldReleasesForDemandTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def test_adds_only_torrents_with_unmet_demand(self):
         # Neither name matches LOW_DEMAND_PATTERN - that filtering is
@@ -505,10 +444,7 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
     network, and must record a fresh check for anything it does evaluate."""
 
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def test_recently_checked_candidate_is_skipped_without_network_call(self):
         name = "kali-linux-2026.1-installer-amd64.iso"
@@ -542,7 +478,7 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
     def test_previously_removed_candidate_is_skipped_without_network_call(self):
         name = "kali-linux-2026.1-installer-amd64.iso"
         candidates = {name: "https://example.invalid/x.torrent"}
-        removed_history = {name: {"removed_date": "2026-01-01", "reason": "stagnant"}}
+        removed_history = helpers.removed(name)
 
         with (
             unittest.mock.patch.dict(
@@ -675,10 +611,7 @@ class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
     NAME = "kali-linux-2026.1-installer-amd64.iso"
 
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def _check(self):
         candidates = {self.NAME: "https://example.invalid/x.torrent"}
@@ -897,10 +830,7 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
     TRACKER = "udp://tracker.example:6969"
 
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
         self.tracker = OldReleaseTracker()
         self.tracker.patch(self)
 
@@ -947,8 +877,8 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
             f.write(b"already seeding")
         check_state = {recent: {"last_checked": "2026-01-05", "leechers": 0}}
         removed_history = {
-            name: {"removed_date": "2025-12-01", "reason": "stagnant"}
-            for name in (removed_a, removed_b)
+            **helpers.removed(removed_a, on="2025-12-01"),
+            **helpers.removed(removed_b, on="2025-12-01"),
         }
 
         with self.assertLogs(ft.logger, level="DEBUG") as logs:

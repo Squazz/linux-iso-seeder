@@ -166,20 +166,25 @@ def configure_logging(log_dir, env=None):
     return stream_handler, file_handler, ratio_handler
 
 
-watch_dir = "/watch"
+# Where transmission-daemon picks up new .torrent files; read once, like
+# log_dir.
+watch_dir = os.getenv("FETCH_TORRENTS_WATCH_DIR", "/watch")
 
 
-def get_rpc_credentials():
-    """TRANSMISSION_RPC_USERNAME/PASSWORD, read here so this script's own
-    RPC calls (cleanup, ratio logging) authenticate the same way
+def _rpc_credentials(env):
+    """Config's rpc_username/rpc_password from TRANSMISSION_RPC_USERNAME/
+    PASSWORD (blank counts as unset), read so this script's own RPC calls
+    (cleanup, ratio logging) authenticate the same way
     configure_transmission.py configured the daemon. Without this, setting
     rpc-authentication-required (as the README instructs whenever
     TRANSMISSION_RPC_WHITELIST is widened beyond localhost) makes every one
     of this script's own localhost RPC calls fail with 401 - silently, since
-    callers only log the failure - permanently disabling cleanup."""
-    username = os.getenv("TRANSMISSION_RPC_USERNAME", "").strip()
-    password = os.getenv("TRANSMISSION_RPC_PASSWORD", "").strip()
-    return username or None, password or None
+    callers only log the failure - permanently disabling cleanup.
+    Config.rpc_auth decides whether they are complete enough to send."""
+    return {
+        "rpc_username": env.get("TRANSMISSION_RPC_USERNAME", "").strip() or None,
+        "rpc_password": env.get("TRANSMISSION_RPC_PASSWORD", "").strip() or None,
+    }
 
 
 def wait_for_transmission_rpc(
@@ -1188,8 +1193,7 @@ def log_seed_ratios_via_http(
     rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None
 ):
     if auth is None:
-        username, password = get_rpc_credentials()
-        auth = (username, password) if username and password else None
+        auth = Config(**_rpc_credentials(os.environ)).rpc_auth
 
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url, timeout=15)
@@ -1661,15 +1665,14 @@ def load_config(env):
             95.0,
             float,
         ),
-        rpc_username=env.get("TRANSMISSION_RPC_USERNAME", "").strip() or None,
-        rpc_password=env.get("TRANSMISSION_RPC_PASSWORD", "").strip() or None,
+        **_rpc_credentials(env),
         invalid=invalid,
     )
 
 
 def make_client_factory(config):
     """Connects to the local daemon with the credentials configure_transmission.py
-    configured it with (see get_rpc_credentials() for why that matters)."""
+    configured it with (see _rpc_credentials() for why that matters)."""
 
     def connect():
         return Client(

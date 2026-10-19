@@ -49,7 +49,14 @@ The daily run itself is `run(config, client_factory=..., today=...)` with
 its I/O (Transmission client, clock, disk usage) injected, so it is tested
 directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
 `tests/test_daily_run.py` keeps one runpy test for the `__main__` wiring.
-Env vars are read once by `load_config(env)`.
+Env vars are read once by `load_config(env)`. Transmission's HTTP RPC (the
+ratio log) is faked with `helpers.FakeTransmissionRpc` as `requests.post`:
+409 plus session id first, like the daemon, recording each call's auth.
+The file locations are module globals read at import
+(`FETCH_TORRENTS_LOG_DIR`, `FETCH_TORRENTS_WATCH_DIR`); in-process tests
+point them at temp dirs with `helpers.use_watch_dir(self)` and
+`helpers.use_state_files(self)`, which return the paths, instead of
+patching them by hand.
 
 Every test module starts with `import helpers` (which also puts the repo
 root on `sys.path`) and a `setUpModule()` calling `helpers.isolate_module()`:

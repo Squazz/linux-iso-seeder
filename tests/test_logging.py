@@ -6,7 +6,6 @@ Run with: python -m unittest discover -s tests
 """
 
 import io
-import json
 import logging
 import logging.handlers
 import os
@@ -16,7 +15,6 @@ import unittest
 import unittest.mock
 
 import helpers
-import transmission_rpc.constants
 
 import fetch_torrents as ft
 
@@ -268,71 +266,45 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
     credentials configure_transmission.py configured the daemon with when
     the caller doesn't explicitly override auth."""
 
-    @staticmethod
-    def session_id_response():
-        return helpers.fake_response(
-            status=409, headers={"X-Transmission-Session-Id": "abc"}
-        )
-
-    @staticmethod
-    def torrent_get_response(torrents=()):
-        return helpers.fake_response(
-            json.dumps({"arguments": {"torrents": list(torrents)}})
-        )
+    def setUp(self):
+        self.transmission = helpers.FakeTransmission()
+        self.rpc = helpers.FakeTransmissionRpc(self.transmission)
+        patcher = unittest.mock.patch.object(ft.requests, "post", self.rpc.post)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_requests_follow_the_transmission_rpc_protocol(self):
-        # The pinned transmission_rpc's own tables of methods and torrent-get
-        # fields stand in for the RPC spec, so a renamed field fails here.
-        with unittest.mock.patch.object(
-            ft.requests,
-            "post",
-            side_effect=[self.session_id_response(), self.torrent_get_response()],
-        ) as mock_post:
-            ft.log_seed_ratios_via_http(auth=("alice", "hunter2"))
+        # FakeTransmissionRpc checks the method and torrent-get fields
+        # against the pinned transmission_rpc's own tables, which stand in
+        # for the RPC spec, so a renamed field fails here.
+        ft.log_seed_ratios_via_http(auth=("alice", "hunter2"))
 
-        session_call, get_call = mock_post.call_args_list
         self.assertEqual(
-            session_call,
-            unittest.mock.call("http://localhost:9091/transmission/rpc", timeout=15),
-        )
-        self.assertEqual(
-            get_call,
-            unittest.mock.call(
-                "http://localhost:9091/transmission/rpc",
-                json={
-                    "method": "torrent-get",
-                    "arguments": {"fields": ["name", "uploadRatio"]},
-                },
-                headers={"X-Transmission-Session-Id": "abc"},
-                auth=("alice", "hunter2"),
-                timeout=15,
-            ),
-        )
-        payload = get_call.kwargs["json"]
-        self.assertEqual(
-            payload["method"], transmission_rpc.constants.RpcMethod.TorrentGet.value
-        )
-        self.assertLessEqual(
-            set(payload["arguments"]["fields"]),
-            set(transmission_rpc.constants.TORRENT_GET_ARGS),
+            self.rpc.calls,
+            [
+                unittest.mock.call(
+                    "http://localhost:9091/transmission/rpc", timeout=15
+                ),
+                unittest.mock.call(
+                    "http://localhost:9091/transmission/rpc",
+                    json={
+                        "method": "torrent-get",
+                        "arguments": {"fields": ["name", "uploadRatio"]},
+                    },
+                    headers={"X-Transmission-Session-Id": "sid"},
+                    auth=("alice", "hunter2"),
+                    timeout=15,
+                ),
+            ],
         )
 
     def test_logs_ratios_highest_first_with_none_as_zero(self):
-        response = self.torrent_get_response(
-            [
-                {"name": "low.iso", "uploadRatio": 0.5},
-                {"name": "unset.iso", "uploadRatio": None},
-                {"name": "high.iso", "uploadRatio": 2.25},
-            ]
-        )
-        with (
-            unittest.mock.patch.object(
-                ft.requests,
-                "post",
-                side_effect=[self.session_id_response(), response],
-            ),
-            self.assertLogs(ft.logger, level="INFO") as logs,
-        ):
+        self.transmission.torrents = [
+            helpers.FakeTorrent("low.iso", 1, ratio=0.5),
+            helpers.FakeTorrent("unset.iso", 2, ratio=None),
+            helpers.FakeTorrent("high.iso", 3, ratio=2.25),
+        ]
+        with self.assertLogs(ft.logger, level="INFO") as logs:
             ft.log_seed_ratios_via_http(auth=None)
 
         ratio_lines = [
@@ -350,67 +322,34 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         )
 
     def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
-        with (
-            unittest.mock.patch.dict(
-                os.environ,
-                {
-                    "TRANSMISSION_RPC_USERNAME": "alice",
-                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
-                },
-            ),
-            unittest.mock.patch.object(
-                ft.requests,
-                "post",
-                side_effect=[
-                    self.session_id_response(),
-                    self.torrent_get_response(),
-                ],
-            ) as mock_post,
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "TRANSMISSION_RPC_USERNAME": "alice",
+                "TRANSMISSION_RPC_PASSWORD": "hunter2",
+            },
         ):
             ft.log_seed_ratios_via_http()
 
-        second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertEqual(second_call_kwargs.get("auth"), ("alice", "hunter2"))
+        self.assertEqual(self.rpc.auths, [("alice", "hunter2")])
 
     def test_no_auth_when_credentials_unset(self):
-        with (
-            helpers.isolated_env(),
-            unittest.mock.patch.object(
-                ft.requests,
-                "post",
-                side_effect=[
-                    self.session_id_response(),
-                    self.torrent_get_response(),
-                ],
-            ) as mock_post,
-        ):
+        with helpers.isolated_env():
             ft.log_seed_ratios_via_http()
 
-        second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertIsNone(second_call_kwargs.get("auth"))
+        self.assertEqual(self.rpc.auths, [None])
 
     def test_explicit_auth_argument_still_wins(self):
-        with (
-            unittest.mock.patch.dict(
-                os.environ,
-                {
-                    "TRANSMISSION_RPC_USERNAME": "alice",
-                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
-                },
-            ),
-            unittest.mock.patch.object(
-                ft.requests,
-                "post",
-                side_effect=[
-                    self.session_id_response(),
-                    self.torrent_get_response(),
-                ],
-            ) as mock_post,
+        with unittest.mock.patch.dict(
+            os.environ,
+            {
+                "TRANSMISSION_RPC_USERNAME": "alice",
+                "TRANSMISSION_RPC_PASSWORD": "hunter2",
+            },
         ):
             ft.log_seed_ratios_via_http(auth=("bob", "other"))
 
-        second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertEqual(second_call_kwargs.get("auth"), ("bob", "other"))
+        self.assertEqual(self.rpc.auths, [("bob", "other")])
 
 
 class RpcCredentialFallbackTests(unittest.TestCase):
@@ -418,24 +357,35 @@ class RpcCredentialFallbackTests(unittest.TestCase):
     only when both TRANSMISSION_RPC_USERNAME and _PASSWORD are set."""
 
     def _auth_sent(self, **env):
-        session = helpers.fake_response(
-            status=409, headers={"X-Transmission-Session-Id": "sid"}
-        )
-        torrents = helpers.fake_response('{"arguments": {"torrents": []}}')
+        rpc = helpers.FakeTransmissionRpc(helpers.FakeTransmission())
         with (
             helpers.isolated_env(**env),
-            unittest.mock.patch.object(
-                ft.requests, "post", side_effect=[session, torrents]
-            ) as mock_post,
+            unittest.mock.patch.object(ft.requests, "post", rpc.post),
         ):
             ft.log_seed_ratios_via_http()
-        return mock_post.call_args_list[1].kwargs["auth"]
+        (auth,) = rpc.auths
+        return auth
 
     def test_username_without_password_sends_no_auth(self):
         self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_USERNAME="alice"))
 
     def test_password_without_username_sends_no_auth(self):
         self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_PASSWORD="hunter2"))
+
+    def test_fallback_applies_the_config_credential_rule(self):
+        # One rule for which credentials count: Config.rpc_auth, the same
+        # one run() passes in explicitly.
+        with unittest.mock.patch.object(
+            ft.Config,
+            "rpc_auth",
+            new_callable=unittest.mock.PropertyMock,
+            return_value=("from", "config"),
+        ):
+            auth = self._auth_sent(
+                TRANSMISSION_RPC_USERNAME="alice", TRANSMISSION_RPC_PASSWORD="hunter2"
+            )
+
+        self.assertEqual(auth, ("from", "config"))
 
 
 if __name__ == "__main__":

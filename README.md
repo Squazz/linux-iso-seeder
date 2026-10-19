@@ -69,7 +69,7 @@ by default:
 |---|---|
 | `/config` | Transmission configuration files |
 | `/downloads` | Downloaded ISO files (seeding storage) |
-| `/watch` | Torrent watch folder. `.torrent` files are written as a hidden `.<name>.torrent.part` first and renamed into place, so Transmission never picks up a half-written file. A leftover `.part` file is safe to delete. |
+| `/watch` | Torrent watch folder. `.torrent` files are written as a hidden `.<name>.torrent.part` first and renamed into place, so Transmission never picks up a half-written file. A leftover `.part` file is safe to delete. The fetch script's side of this path is `FETCH_TORRENTS_WATCH_DIR`; leave it at its default here. |
 | `/logs` | Persistent logs for fetch script runs, plus `fetch_torrents_ratio_history.json` - a small, bounded per-torrent ratio history used to detect stagnant (no-traction) torrents. Deleting it just resets stagnation tracking; it's not required for anything else. `fetch_torrents.log` itself is size-bounded (rotated, see `FETCH_TORRENTS_LOG_MAX_BYTES`/`FETCH_TORRENTS_LOG_BACKUP_COUNT`), so this volume won't grow without limit even if left running indefinitely. |
 
 ---
@@ -156,6 +156,7 @@ below), remember to remove that forwarding rule too.
 | `TRANSMISSION_PORT_FORWARDING` | *(unset, defaults to `false` on first run only)* | Controls Transmission's own `port-forwarding-enabled` (UPnP/NAT-PMP) - see [Peer port forwarding](#-peer-port-forwarding-optional). Only applied the first time the container starts (before `settings.json` exists); afterwards it's left alone - so it won't fight a value you or Transmission's web UI later change. Set explicitly to force it either way on every start. |
 | `FETCH_TORRENTS_LOG_MAX_BYTES` | `5242880` (5 MB) | Maximum size of `fetch_torrents.log` before it's rotated. |
 | `FETCH_TORRENTS_LOG_BACKUP_COUNT` | `3` | Number of rotated `fetch_torrents.log.N` backups kept before the oldest is deleted. |
+| `FETCH_TORRENTS_WATCH_DIR` | `/watch` | Folder the fetch script writes `.torrent` files to. Leave it unset in the container: transmission-daemon always watches `/watch` (see `entrypoint.sh`), so this is only for running `fetch_torrents.py` outside the container, against a daemon watching that folder. |
 
 ---
 

@@ -112,6 +112,77 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     actually reports (which include the arch suffix and .iso extension),
     for all supported distros."""
 
+    # (previous version as Transmission reports it, its ratio, candidate,
+    # whether the candidate is fetched). A low ratio blocks only if the
+    # previous version is found; a high one shows the floor is applied, not
+    # just any ratio.
+    CASES = (
+        (
+            "ubuntu-23.10-desktop-amd64.iso",
+            0.5,
+            "ubuntu-24.04-desktop-amd64.iso",
+            False,
+        ),
+        ("ubuntu-23.10-desktop-amd64.iso", 1.5, "ubuntu-24.04-desktop-amd64.iso", True),
+        ("debian-12.4.0-amd64-DVD-1.iso", 0.5, "debian-12.5.0-amd64-DVD-1.iso", False),
+        ("debian-12.4.0-amd64-DVD-1.iso", 1.5, "debian-12.5.0-amd64-DVD-1.iso", True),
+        (
+            "kali-linux-2023.4-installer-amd64.iso",
+            0.3,
+            "kali-linux-2024.1-installer-amd64.iso",
+            False,
+        ),
+        (
+            "kali-linux-2023.4-installer-amd64.iso",
+            1.5,
+            "kali-linux-2024.1-installer-amd64.iso",
+            True,
+        ),
+        (
+            "archlinux-2024.04.01-x86_64.iso",
+            0.2,
+            "archlinux-2024.05.01-x86_64.iso",
+            False,
+        ),
+        (
+            "archlinux-2024.04.01-x86_64.iso",
+            1.5,
+            "archlinux-2024.05.01-x86_64.iso",
+            True,
+        ),
+        (
+            "linuxmint-22.2-cinnamon-64bit.iso",
+            0.4,
+            "linuxmint-22.3-cinnamon-64bit.iso",
+            False,
+        ),
+        (
+            "linuxmint-22.2-cinnamon-64bit.iso",
+            1.5,
+            "linuxmint-22.3-cinnamon-64bit.iso",
+            True,
+        ),
+        (
+            "Fedora-Workstation-Live-x86_64-43",
+            0.4,
+            "Fedora-Workstation-Live-x86_64-44",
+            False,
+        ),
+        (
+            "Fedora-Workstation-Live-x86_64-43",
+            1.5,
+            "Fedora-Workstation-Live-x86_64-44",
+            True,
+        ),
+    )
+
+    def test_previous_version_is_found_and_its_ratio_gates_the_candidate(self):
+        for previous, ratio, candidate, fetched in self.CASES:
+            with self.subTest(candidate=candidate, previous_ratio=ratio):
+                self.assertIs(
+                    ft.should_fetch_torrent(candidate, {previous: ratio}), fetched
+                )
+
     def test_lubuntu_is_ratio_gated_on_its_own_previous_release(self):
         ratios = {
             "lubuntu-23.10-desktop-amd64.iso": 0.2,
@@ -119,66 +190,6 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
         }
         self.assertFalse(
             ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
-        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}
-        self.assertFalse(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_debian(self):
-        ratios = {"debian-12.4.0-amd64-DVD-1.iso": 0.5}
-        self.assertFalse(
-            ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_kali(self):
-        ratios = {"kali-linux-2023.4-installer-amd64.iso": 0.3}
-        self.assertFalse(
-            ft.should_fetch_torrent("kali-linux-2024.1-installer-amd64.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_arch(self):
-        ratios = {"archlinux-2024.04.01-x86_64.iso": 0.2}
-        self.assertFalse(
-            ft.should_fetch_torrent("archlinux-2024.05.01-x86_64.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_allows_high_ratio_ubuntu(self):
-        ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.5}
-        self.assertTrue(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_allows_high_ratio_debian(self):
-        ratios = {"debian-12.4.0-amd64-DVD-1.iso": 1.5}
-        self.assertTrue(
-            ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_mint(self):
-        ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 0.4}
-        self.assertFalse(
-            ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_allows_high_ratio_mint(self):
-        ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 1.5}
-        self.assertTrue(
-            ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios)
-        )
-
-    def test_finds_previous_version_and_honors_low_ratio_fedora(self):
-        ratios = {"Fedora-Workstation-Live-x86_64-43": 0.4}
-        self.assertFalse(
-            ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios)
-        )
-
-    def test_finds_previous_version_and_allows_high_ratio_fedora(self):
-        ratios = {"Fedora-Workstation-Live-x86_64-43": 1.5}
-        self.assertTrue(
-            ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios)
         )
 
 
@@ -191,13 +202,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
     removed_history (record_removal()'s output) is the fallback source."""
 
     def test_falls_back_to_removed_history_ratio_when_not_live(self):
-        removed_history = {
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.4,
-            },
-        }
+        removed_history = helpers.removed("ubuntu-23.10-desktop-amd64.iso", 0.4)
         self.assertFalse(
             ft.should_fetch_torrent(
                 "ubuntu-24.04-desktop-amd64.iso",
@@ -207,13 +212,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         )
 
     def test_removed_history_ratio_above_floor_allows_fetch(self):
-        removed_history = {
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "keep_only_latest",
-                "ratio": 1.5,
-            },
-        }
+        removed_history = helpers.removed("ubuntu-23.10-desktop-amd64.iso", 1.5)
         self.assertTrue(
             ft.should_fetch_torrent(
                 "ubuntu-24.04-desktop-amd64.iso",
@@ -226,13 +225,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         # Same name in both is not expected in practice (a torrent Transmission
         # still reports hasn't been removed), but live data winning if it ever
         # happens is the safer default.
-        removed_history = {
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.1,
-            },
-        }
+        removed_history = helpers.removed("ubuntu-23.10-desktop-amd64.iso", 0.1)
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.5}
         self.assertTrue(
             ft.should_fetch_torrent(
@@ -243,13 +236,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         )
 
     def test_low_live_ratio_is_not_overridden_by_high_removed_history(self):
-        removed_history = {
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 1.5,
-            }
-        }
+        removed_history = helpers.removed("ubuntu-23.10-desktop-amd64.iso", 1.5)
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.4}
         self.assertFalse(
             ft.should_fetch_torrent(
@@ -262,12 +249,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
     def test_removed_history_entry_without_ratio_is_ignored(self):
         # Legacy entries recorded before this field existed have no 'ratio'
         # key - must not crash, and must not count as a usable prior version.
-        removed_history = {
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-            },
-        }
+        removed_history = helpers.removed("ubuntu-23.10-desktop-amd64.iso")
         # Skipped up front, not by tripping over the missing key and logging
         # a parse-error warning.
         with self.assertNoLogs(ft.logger, level="WARNING"):
@@ -280,15 +262,8 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
 
     def test_skipped_removed_history_entry_does_not_hide_later_ones(self):
         removed_history = {
-            "ubuntu-23.04-desktop-amd64.iso": {
-                "removed_date": "2025-06-01",
-                "reason": "stagnant",
-            },
-            "ubuntu-23.10-desktop-amd64.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.4,
-            },
+            **helpers.removed("ubuntu-23.04-desktop-amd64.iso"),
+            **helpers.removed("ubuntu-23.10-desktop-amd64.iso", 0.4),
         }
         self.assertFalse(
             ft.should_fetch_torrent(
@@ -299,13 +274,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         )
 
     def test_removed_history_from_a_different_distro_is_not_consulted(self):
-        removed_history = {
-            "debian-12.4.0-amd64-DVD-1.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.1,
-            },
-        }
+        removed_history = helpers.removed("debian-12.4.0-amd64-DVD-1.iso", 0.1)
         self.assertTrue(
             ft.should_fetch_torrent(
                 "ubuntu-24.04-desktop-amd64.iso",
@@ -339,13 +308,7 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
         self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios))
 
     def test_falls_back_to_removed_history_when_no_live_ratio(self):
-        removed_history = {
-            "devuan_daedalus": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.4,
-            },
-        }
+        removed_history = helpers.removed("devuan_daedalus", 0.4)
         self.assertFalse(
             ft.should_fetch_torrent(
                 "devuan_excalibur", ratios={}, removed_history=removed_history
@@ -353,13 +316,7 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
         )
 
     def test_other_distros_removed_history_not_consulted_for_devuan(self):
-        removed_history = {
-            "debian-12.4.0-amd64-DVD-1.iso": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.1,
-            },
-        }
+        removed_history = helpers.removed("debian-12.4.0-amd64-DVD-1.iso", 0.1)
         self.assertTrue(
             ft.should_fetch_torrent(
                 "devuan_excalibur", ratios={}, removed_history=removed_history
@@ -427,13 +384,7 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
         self.assertFalse(ft.should_fetch_torrent("devuan_excalibur", ratios))
 
     def test_devuan_removed_history_for_the_same_release_is_not_a_predecessor(self):
-        removed_history = {
-            "devuan_excalibur": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.1,
-            }
-        }
+        removed_history = helpers.removed("devuan_excalibur", 0.1)
         self.assertTrue(
             ft.should_fetch_torrent(
                 "devuan_excalibur", ratios={}, removed_history=removed_history
@@ -441,13 +392,7 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
         )
 
     def test_devuan_live_ratio_beats_removed_history(self):
-        removed_history = {
-            "devuan_chimaera": {
-                "removed_date": "2026-01-01",
-                "reason": "stagnant",
-                "ratio": 0.1,
-            }
-        }
+        removed_history = helpers.removed("devuan_chimaera", 0.1)
         self.assertTrue(
             ft.should_fetch_torrent(
                 "devuan_excalibur",

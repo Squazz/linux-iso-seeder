@@ -9,6 +9,8 @@ Run with: python -m unittest discover -s tests
 import contextlib
 import io
 import os
+import subprocess
+import sys
 import unittest
 from typing import ClassVar
 
@@ -155,8 +157,34 @@ class StateFileLocationTests(unittest.TestCase):
             ),
         )
 
-    def test_torrents_are_written_to_the_watch_volume(self):
-        self.assertEqual(ft.watch_dir, "/watch")
+    def _watch_dir_on_import(self, **env):
+        """ft.watch_dir as a fresh interpreter importing the module under
+        `env` sees it (this process imported it long ago)."""
+        script = (
+            "import sys\n"
+            f"sys.path.insert(0, {helpers.REPO_ROOT!r})\n"
+            "import fetch_torrents as ft\n"
+            "print(ft.watch_dir)\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-W", "ignore", "-c", script],
+            check=False,
+            env=helpers.scrubbed_environ(**env),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.rstrip("\n")
+
+    def test_torrents_are_written_to_the_watch_volume_by_default(self):
+        self.assertEqual(self._watch_dir_on_import(), "/watch")
+
+    def test_fetch_torrents_watch_dir_moves_the_watch_dir(self):
+        self.assertEqual(
+            self._watch_dir_on_import(FETCH_TORRENTS_WATCH_DIR="/srv/torrents"),
+            "/srv/torrents",
+        )
 
 
 class StateFileFormatTests(unittest.TestCase):

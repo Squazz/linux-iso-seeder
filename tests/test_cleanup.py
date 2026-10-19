@@ -778,21 +778,8 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
     by default) ever cleans them up."""
 
     def setUp(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_")
-        for attr, filename in (
-            ("removed_history_file", "removed_history.json"),
-            ("ratio_history_file", "ratio_history.json"),
-        ):
-            patcher = unittest.mock.patch.object(
-                ft, attr, os.path.join(tmp_dir, filename)
-            )
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        helpers.use_state_files(self)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def _touch_watch_file(self, name):
         path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
@@ -1156,21 +1143,8 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
     holds."""
 
     def setUp(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_cleanup_")
-        for attr, filename in (
-            ("removed_history_file", "removed_history.json"),
-            ("ratio_history_file", "ratio_history.json"),
-        ):
-            patcher = unittest.mock.patch.object(
-                ft, attr, os.path.join(tmp_dir, filename)
-            )
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        helpers.use_state_files(self)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
         self.transmission = helpers.FakeTransmission(
             [
@@ -1374,16 +1348,8 @@ class CleanupOldVersionsDefaultsTests(unittest.TestCase):
     """cleanup_old_versions() called the way the daily run calls it."""
 
     def setUp(self):
-        self.history_path = os.path.join(
-            helpers.make_temp_dir(self, "fetch_torrents_cleanup_"), "removed.json"
-        )
-        for attr, value in (
-            ("removed_history_file", self.history_path),
-            ("watch_dir", helpers.make_temp_dir(self, "fetch_torrents_test_watch_")),
-        ):
-            patcher = unittest.mock.patch.object(ft, attr, value)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        self.history_path = helpers.use_state_files(self).removed_history_file
+        helpers.use_watch_dir(self)
 
     def _transmission(self, old_ratio):
         return helpers.FakeTransmission(

@@ -403,10 +403,7 @@ class DownloadTorrent404Tests(unittest.TestCase):
     same way as a genuine download failure."""
 
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def test_404_response_is_not_found_not_failed(self):
         response = helpers.fake_response(status=404)
@@ -457,10 +454,7 @@ class DownloadTorrentAtomicWriteTests(unittest.TestCase):
     NAME = "ubuntu-24.04-desktop-amd64.iso"
 
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def _download(self):
         response = helpers.fake_response(b"d8:announce3:urle" * 64)
@@ -511,14 +505,12 @@ class SafeWatchPathTests(unittest.TestCase):
     upstream content into a path escape."""
 
     def setUp(self):
-        patcher = unittest.mock.patch.object(ft, "watch_dir", "/watch")
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.watch_dir = helpers.use_watch_dir(self)
 
     def test_normal_name_resolves_under_watch_dir(self):
         self.assertEqual(
             ft._safe_watch_path("ubuntu-24.04-desktop-amd64.iso"),
-            os.path.join("/watch", "ubuntu-24.04-desktop-amd64.iso.torrent"),
+            os.path.join(self.watch_dir, "ubuntu-24.04-desktop-amd64.iso.torrent"),
         )
 
     def test_rejects_path_separators(self):
@@ -535,10 +527,7 @@ class SafeWatchPathTests(unittest.TestCase):
 
 class DownloadTorrentUnsafeNameTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
-        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
 
     def test_download_torrent_refuses_unsafe_name_without_any_request(self):
         with unittest.mock.patch.object(ft.requests, "get") as mock_get:
@@ -571,7 +560,7 @@ class FetcherRequestTimeoutTests(unittest.TestCase):
     site can hang the daily run."""
 
     def test_every_fetcher_and_the_download_pass_a_30_second_timeout(self):
-        watch = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
+        helpers.use_watch_dir(self)
         calls = {
             **{name: fetcher for name, fetcher in ft.DEFAULT_FETCHERS},
             "kali-old": ft.fetch_kali_old_versions,
@@ -590,7 +579,6 @@ class FetcherRequestTimeoutTests(unittest.TestCase):
 
                 with (
                     unittest.mock.patch.object(ft.requests, "get", get),
-                    unittest.mock.patch.object(ft, "watch_dir", watch),
                     self.assertNoLogs(ft.logger, level="CRITICAL"),
                 ):
                     call()
