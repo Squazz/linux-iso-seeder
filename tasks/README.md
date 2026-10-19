@@ -172,7 +172,10 @@ hides real gaps (tasks 40 and 41).
 | 47 | [Consolidate tests: oversized scenarios, conditional logic, HTTP fakes](47-test-consolidation.md) | P3 | NO_REFACTOR | 43 | open |
 | 48 | [CI leftovers: drift-job Python pin, actionlint](48-ci-leftovers.md) | P3 | CI | — | open |
 | 49 | [Offline tests for `record_fixtures.py` / `transmission_roundtrip.py`](49-offline-tests-for-fixture-scripts.md) | P3 | REFACTOR_REQUIRED | — | open |
-| 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49 | open |
+| 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49, 51 | open |
+| 51 | [A failing old-release check must not abort the daily run](51-guard-old-release-step.md) | P2 (bug) | NO_REFACTOR | — | open |
 
-Suggested order: 39 (untested bits reach users), then 40 and 41 (a hidden scrape gap
+Task 51 came from a review of this branch's production changes, not from the test-health report.
+
+Suggested order: 39 (untested bits reach users), then 51 (a bad setting silently disables cleanup), then 40 and 41 (a hidden scrape gap
 and the rule that hid it), 42, 43 then 44 and 47, 45, 46, 49 and 48, and finally 50.
