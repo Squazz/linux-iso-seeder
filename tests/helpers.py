@@ -16,6 +16,7 @@ A typical test module:
         helpers.isolate_module()
 """
 
+import errno
 import glob
 import inspect
 import json
@@ -208,6 +209,34 @@ class FakeDisk:
         on_disk = self.transmission.torrents + self.transmission.data_left_on_disk
         used = self.base_used + sum(self.sizes.get(t.id, 0) for t in on_disk)
         return (self.total, used, self.total - used)
+
+
+def disk_full_open(module):
+    """Patch `module`'s own `open` so a binary write keeps half its bytes and
+    then fails with ENOSPC, as when the disk fills mid-write. Scoped to the
+    module (not builtins) so logging's own file writes are unaffected."""
+    real_open = open
+
+    class HalfWritingFile:
+        def __init__(self, f):
+            self.f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.f.close()
+            return False
+
+        def write(self, data):
+            self.f.write(data[: len(data) // 2])
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+    def fake_open(path, mode="r", *args, **kwargs):
+        f = real_open(path, mode, *args, **kwargs)
+        return HalfWritingFile(f) if "wb" in mode else f
+
+    return unittest.mock.patch.object(module, "open", fake_open, create=True)
 
 
 PAGES_DIR = os.path.join(

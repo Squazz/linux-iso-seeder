@@ -69,7 +69,7 @@ by default:
 |---|---|
 | `/config` | Transmission configuration files |
 | `/downloads` | Downloaded ISO files (seeding storage) |
-| `/watch` | Torrent watch folder |
+| `/watch` | Torrent watch folder. `.torrent` files are written as a hidden `.<name>.torrent.part` first and renamed into place, so Transmission never picks up a half-written file. A leftover `.part` file is safe to delete. |
 | `/logs` | Persistent logs for fetch script runs, plus `fetch_torrents_ratio_history.json` - a small, bounded per-torrent ratio history used to detect stagnant (no-traction) torrents. Deleting it just resets stagnation tracking; it's not required for anything else. `fetch_torrents.log` itself is size-bounded (rotated, see `FETCH_TORRENTS_LOG_MAX_BYTES`/`FETCH_TORRENTS_LOG_BACKUP_COUNT`), so this volume won't grow without limit even if left running indefinitely. |
 
 ---

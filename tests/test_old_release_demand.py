@@ -631,6 +631,66 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
         self.assertEqual(new_state[name], {"last_checked": "2026-01-08", "leechers": 0})
 
 
+class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
+    """An old release whose .torrent can't be written in full must leave no
+    <name>.torrent behind (it would count as present forever) and must not
+    be recorded as checked, so the next run tries it again."""
+
+    NAME = "kali-linux-2026.1-installer-amd64.iso"
+
+    def setUp(self):
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _check(self):
+        candidates = {self.NAME: "https://example.invalid/x.torrent"}
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft,
+                "evaluate_old_release_demand",
+                return_value=(
+                    True,
+                    b"torrent bytes" * 32,
+                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
+                ),
+            ),
+        ):
+            return ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state={},
+                removed_history={},
+                today=date(2026, 1, 8),
+            )
+
+    def test_failed_write_leaves_no_file_and_is_not_recorded(self):
+        with helpers.disk_full_open(ft):
+            added, skipped, state = self._check()
+
+        self.assertEqual((added, skipped), (0, 1))
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [])
+        self.assertNotIn(self.NAME, state)
+
+    def test_next_run_adds_it_after_a_failed_write(self):
+        with helpers.disk_full_open(ft):
+            self._check()
+
+        added, _, _ = self._check()
+
+        self.assertEqual(added, 1)
+        with open(os.path.join(self.tmp_watch_dir, f"{self.NAME}.torrent"), "rb") as f:
+            self.assertEqual(f.read(), b"torrent bytes" * 32)
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
+
+
 class OldReleaseTracker:
     """Plays both network boundaries of the old-release check: requests.get
     for the candidate's .torrent (`routes`: url -> response, or an exception

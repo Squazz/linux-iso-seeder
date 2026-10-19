@@ -511,6 +511,25 @@ def _safe_watch_path(name):
     return os.path.join(watch_dir, f"{name}.torrent")
 
 
+def _write_watch_file(dest, data):
+    """Write data to dest atomically: into a dot-prefixed .part file beside
+    it, then os.replace() into place. transmission-daemon watches *.torrent
+    and download_torrent() treats an existing dest as already fetched, so a
+    write that dies part-way (disk full, process killed) must never leave a
+    partial file under dest's name."""
+    tmp_path = os.path.join(os.path.dirname(dest), f".{os.path.basename(dest)}.part")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, dest)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def download_torrent(name, url):
     dest = _safe_watch_path(name)
     if dest is None:
@@ -531,8 +550,7 @@ def download_torrent(name, url):
             logger.info("%s not found upstream (404) – likely no longer hosted.", url)
             return "not_found"
         r.raise_for_status()
-        with open(dest, "wb") as f:
-            f.write(r.content)
+        _write_watch_file(dest, r.content)
         logger.info(f"Saved {dest}")
         return "added"
     except Exception as e:
@@ -1112,8 +1130,14 @@ def check_old_releases_for_demand(
             }
 
             if keep:
-                with open(dest, "wb") as f:
-                    f.write(torrent_bytes)
+                try:
+                    _write_watch_file(dest, torrent_bytes)
+                except OSError as e:
+                    logger.error("Failed to save old release %s: %s", name, e)
+                    # Not recorded as checked, so the next run retries it.
+                    del check_state[name]
+                    skipped += 1
+                    continue
                 logger.info(
                     "Found unmet demand on old release %s (%d leechers via %s) - added.",
                     name,

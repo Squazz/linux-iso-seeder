@@ -458,6 +458,60 @@ class DownloadTorrent404Tests(unittest.TestCase):
             self.assertEqual(f.read(), b"fake torrent bytes")
 
 
+class DownloadTorrentAtomicWriteTests(unittest.TestCase):
+    """transmission-daemon watches *.torrent, and download_torrent() treats
+    an existing <name>.torrent as already fetched - so a write that dies
+    part-way must never leave a partial file under that name."""
+
+    NAME = "ubuntu-24.04-desktop-amd64.iso"
+
+    def setUp(self):
+        self.tmp_watch_dir = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _download(self):
+        response = helpers.fake_response(b"d8:announce3:urle" * 64)
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
+            return ft.download_torrent(self.NAME, "https://example.invalid/x.torrent")
+
+    def test_write_failing_part_way_leaves_no_file_behind(self):
+        with helpers.disk_full_open(ft):
+            status = self._download()
+
+        self.assertEqual(status, "failed")
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [])
+
+    def test_next_run_downloads_again_after_a_failed_write(self):
+        with helpers.disk_full_open(ft):
+            self._download()
+
+        status = self._download()
+
+        self.assertEqual(status, "added")
+        dest = os.path.join(self.tmp_watch_dir, f"{self.NAME}.torrent")
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), b"d8:announce3:urle" * 64)
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
+
+    def test_partial_file_is_never_named_like_a_torrent(self):
+        # Whatever exists mid-write must not match transmission's *.torrent
+        # watch glob.
+        seen = []
+        real_replace = os.replace
+
+        def spy_replace(src, dst):
+            seen.extend(os.listdir(self.tmp_watch_dir))
+            real_replace(src, dst)
+
+        with unittest.mock.patch.object(ft.os, "replace", spy_replace):
+            self.assertEqual(self._download(), "added")
+
+        self.assertEqual(len(seen), 1)
+        self.assertFalse(seen[0].endswith(".torrent"), seen[0])
+
+
 class SafeWatchPathTests(unittest.TestCase):
     """_safe_watch_path() is the shared guard download_torrent(),
     _remove_watch_file(), and check_old_releases_for_demand() all rely on to
