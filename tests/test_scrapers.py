@@ -11,13 +11,8 @@ Run with: python -m unittest discover -s tests
 """
 
 import os
-import sys
 import unittest
 import unittest.mock
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 import helpers
 import requests
@@ -26,10 +21,7 @@ import fetch_torrents as ft
 
 
 def setUpModule():
-    unittest.addModuleCleanup(helpers.block_network())
-    patcher = helpers.isolated_env()
-    patcher.start()
-    unittest.addModuleCleanup(patcher.stop)
+    helpers.isolate_module()
 
 
 UBUNTU_SUPPORTED = (  # newest first, as fetch_ubuntu_lts() orders them

@@ -2,7 +2,18 @@
 
 Not a test module itself (doesn't match the test*.py discovery pattern);
 `unittest discover -s tests` puts tests/ on sys.path, so test modules import
-this as `import helpers`.
+this as `import helpers`. Importing it also puts the repo root on sys.path,
+so `import fetch_torrents` etc. work after it.
+
+A typical test module:
+
+    import helpers
+
+    import fetch_torrents as ft
+
+
+    def setUpModule():
+        helpers.isolate_module()
 """
 
 import glob
@@ -11,12 +22,19 @@ import json
 import os
 import shutil
 import socket
+import sys
 import tempfile
+import unittest
 import unittest.mock
+from datetime import date
 from urllib.parse import urldefrag
 
 import requests
 import transmission_rpc
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
 
 # Env vars production code reads at call time. A developer who happens to
 # have any of these exported (e.g. SKIP_RATIO_CHECK=true) must not be able
@@ -62,6 +80,32 @@ def use_isolated_env(testcase, **overrides):
     testcase.addCleanup(patcher.stop)
 
 
+def isolate_module():
+    """The baseline for a test module (call from setUpModule): the
+    developer's exported SKIP_RATIO_CHECK/CLEANUP_*/TRANSMISSION_*/
+    FETCH_TORRENTS_* can't leak in (including into subprocesses, which copy
+    os.environ), and no real network connection can be opened."""
+    patcher = isolated_env()
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+    unittest.addModuleCleanup(block_network())
+
+
+def fixed_date(today):
+    """A drop-in for fetch_torrents' `date` whose today() is pinned."""
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return today
+
+    return FixedDate
+
+
+def names_of(torrents):
+    return sorted(t.name for t in torrents)
+
+
 def make_temp_dir(testcase, prefix):
     """mkdtemp() that is removed again when the test finishes."""
     path = tempfile.mkdtemp(prefix=prefix)
@@ -86,6 +130,21 @@ def FakeTorrent(name, id_, ratio=0.0, added_date=0):
 # Captured at import: a test may patch transmission_rpc.Client itself (e.g.
 # to hand a FakeTransmission to a runpy'd script).
 _REAL_CLIENT = transmission_rpc.Client
+
+
+class DuckTorrent:
+    """A torrent-shaped object a real transmission_rpc.Torrent can't be -
+    ratio None, or added_date None/a float/a datetime - only for exercising
+    the defensive getattr()/`or 0.0` branches in production code."""
+
+    def __init__(self, name, id_, ratio=0.0, added_date=None):
+        self.name = name
+        self.id = id_
+        self.ratio = ratio
+        self.added_date = added_date
+
+    def __repr__(self):
+        return f"DuckTorrent({self.name!r}, ratio={self.ratio})"
 
 
 def _bind_to_client(method_name, args, kwargs):

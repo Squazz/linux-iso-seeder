@@ -8,13 +8,8 @@ import io
 import json
 import os
 import runpy
-import sys
 import unittest
 import unittest.mock
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 import helpers
 
@@ -22,7 +17,7 @@ import configure_transmission as ct
 
 
 def setUpModule():
-    unittest.addModuleCleanup(helpers.block_network())
+    helpers.isolate_module()
 
 
 class BuildRpcOverridesTests(unittest.TestCase):

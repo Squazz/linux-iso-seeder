@@ -49,9 +49,18 @@ The daily run itself is `run(config, client_factory=..., today=...)` with
 its I/O (Transmission client, clock, disk usage) injected, so it is tested
 directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
 `tests/test_daily_run.py` keeps one runpy test for the `__main__` wiring.
-Env vars are read once by `load_config(env)`, and `tests/helpers.py`
-`isolated_env()` scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*`
-etc. so they can't change test outcomes.
+Env vars are read once by `load_config(env)`.
+
+Every test module starts with `import helpers` (which also puts the repo
+root on `sys.path`) and a `setUpModule()` calling `helpers.isolate_module()`:
+that scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*` etc. so they
+can't change test outcomes, and refuses any real network connection. HTTP is
+faked with `helpers.fake_response()` (a real `requests.Response`) or
+`helpers.RecordedPages` (pages captured by `scripts/record_fixtures.py`).
+`fetch_torrents` tests are split by concern: `test_ratio_gate.py`,
+`test_fetchers.py`, `test_scrapers.py`, `test_cleanup.py`,
+`test_persistence.py`, `test_logging.py`, `test_old_release_demand.py` and
+`test_daily_run.py` (config, `run()`, `__main__`).
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from

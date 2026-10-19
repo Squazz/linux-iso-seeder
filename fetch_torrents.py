@@ -1213,7 +1213,7 @@ def _devuan_sort_key(torrent):
 # (should_fetch_torrent() only knows to skip a fetch once a *previous*
 # version's ratio is on record). Kept separate from the cleanup_*()
 # functions so the selection logic can be unit tested without a live
-# Transmission RPC connection (see tests/test_fetch_torrents.py).
+# Transmission RPC connection (see tests/test_cleanup.py).
 def _old_version_candidates(torrents):
     groups = {}
     for torrent in torrents:

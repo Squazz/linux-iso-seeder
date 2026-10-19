@@ -10,14 +10,9 @@ import hashlib
 import os
 import socket
 import struct
-import sys
 import tempfile
 import unittest
 import unittest.mock
-
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if REPO_ROOT not in sys.path:
-    sys.path.insert(0, REPO_ROOT)
 
 import helpers
 
@@ -25,7 +20,7 @@ import torrent_scrape as ts
 
 
 def setUpModule():
-    unittest.addModuleCleanup(helpers.block_network())
+    helpers.isolate_module()
 
 
 def bstr(s):

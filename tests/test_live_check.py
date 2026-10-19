@@ -8,17 +8,15 @@ import os
 import sys
 import unittest
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for path in (REPO_ROOT, os.path.join(REPO_ROOT, "scripts")):
-    if path not in sys.path:
-        sys.path.insert(0, path)
-
 import helpers
+
+sys.path.insert(0, os.path.join(helpers.REPO_ROOT, "scripts"))
+
 import live_check
 
 
 def setUpModule():
-    unittest.addModuleCleanup(helpers.block_network())
+    helpers.isolate_module()
 
 
 class ProblemsTests(unittest.TestCase):
