@@ -6,12 +6,18 @@
 #
 # Usage: scripts/smoke_test.sh <image>
 #
-# --network none keeps it deterministic: the daily fetch inside the
-# container logs network errors, which is expected - only startup is checked.
+# By default it runs with --network none and SKIP_PACKAGE_UPDATES=true, which
+# keeps it deterministic: the daily fetch inside the container logs network
+# errors, which is expected - only startup is checked. The weekly drift job
+# (.github/workflows/drift.yml) runs the published image as deployed instead:
+#   SMOKE_NETWORK=bridge SMOKE_SKIP_PACKAGE_UPDATES=false \
+#   SMOKE_TIMEOUT_SECONDS=300 scripts/smoke_test.sh <image>
 set -eu
 
 IMAGE=$1
 TIMEOUT_SECONDS=${SMOKE_TIMEOUT_SECONDS:-30}
+NETWORK=${SMOKE_NETWORK:-none}
+SKIP_PACKAGE_UPDATES=${SMOKE_SKIP_PACKAGE_UPDATES:-true}
 # Git Bash on Windows would otherwise rewrite /config etc. into Windows paths.
 export MSYS_NO_PATHCONV=1
 
@@ -34,8 +40,8 @@ fail() {
 
 # Usage: start_container <extra docker run args...>; prints the container id.
 start_container() {
-    docker run -d --network none \
-        -e SKIP_PACKAGE_UPDATES=true \
+    docker run -d --network "$NETWORK" \
+        -e SKIP_PACKAGE_UPDATES="$SKIP_PACKAGE_UPDATES" \
         -e TRANSMISSION_PEER_LIMIT_GLOBAL=123 \
         "$@" "$IMAGE"
 }

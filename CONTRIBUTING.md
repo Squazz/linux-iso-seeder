@@ -39,6 +39,21 @@ applied its overrides, that `transmission-daemon` is running, and that every
 module imports. When `alpine:latest` moves to a new `py3-transmission-rpc`,
 bump the `transmission-rpc` pin in `requirements-test.txt` to match.
 
+## Upstream drift
+
+The merge check never touches the network. `.github/workflows/drift.yml`
+runs weekly (or by hand from the Actions tab) against the live distro sites,
+a live tracker, a real `transmission-daemon` and the published image, and
+opens or comments on an issue labelled `drift` when something has moved. To
+fix scraper drift, re-record the pages and update the expected results in
+`tests/test_scrapers.py` to the new snapshot:
+
+```sh
+python scripts/live_check.py scrapers     # what the weekly job checks
+python scripts/record_fixtures.py [distro ...]
+git diff tests/fixtures/pages
+```
+
 ## Mutation testing
 
 Mutation testing checks that the tests actually pin behavior, not just
