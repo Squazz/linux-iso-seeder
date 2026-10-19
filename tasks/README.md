@@ -102,9 +102,28 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 | 33 | [`scrape_torrent` fall-through branches and SSRF edges](33-scrape-torrent-branches-and-ssrf.md) | P2 | NO_REFACTOR | — | done |
 | 34 | [Mechanical test tidy-up](34-mechanical-test-tidy-up.md) | P3 | NO_REFACTOR | — | open |
 | 35 | [Consolidate fixtures and the path-global seam](35-fixture-consolidation.md) | P3 | NO_REFACTOR → REFACTOR_REQUIRED | 34 | open |
-| 36 | [Remaining `fetch_torrents.py` mutation survivors](36-remaining-mutation-survivors.md) | P3 | NO_REFACTOR | — | open |
+| 36 | [Remaining `fetch_torrents.py` mutation survivors](36-remaining-mutation-survivors.md) | P3 | NO_REFACTOR | — | done |
 | 37 | [Toolchain: smoke test, shellcheck/hadolint, ruff S, pins](37-toolchain-and-q4.md) | P2 | CI | — | done |
 | 38 | [Re-measure, raise the coverage ratchet, record the baseline](38-remeasure-and-ratchet.md) | P3 | — | 28–37 | open |
+
+### Accepted equivalent mutants (task 36)
+
+These `fetch_torrents.py` survivors can't change behaviour, so they're accepted
+rather than tested. A mutmut run that leaves only these (plus string-literal
+mutants) counts as clean:
+- `.get("seeders", 0)` defaults in the old-release logging: a scrape result
+  always carries `seeders`.
+- `logger.propagate = False` → `None`: logging treats `None` as false.
+- `getattr(torrent, "ratio", 0.0)` defaults in cleanup and disk pressure: a
+  real `transmission_rpc.Torrent` always has `.ratio`.
+- `break` → `continue` once `enforce_disk_usage_limit` is under the
+  threshold: every later candidate fails the same check, so the only
+  difference is extra disk-usage reads.
+
+Task 36 removed three other equivalents by simplifying the code, so mutmut
+no longer generates them: Arch's `max(..., key=...)` became `max()`, Fedora's
+two parsers share one de-duplicating `_fedora_workstation_torrents()`, and the
+duplicated zero-size-disk guard moved into `_used_percent()`.
 
 Suggested order: 32 (a real bug), then 28, 30 and 33 (resilience and drift-job trust),
 then 37, then 36, then the clean-up tasks 29, 31, 34 and 35, and finally 38.

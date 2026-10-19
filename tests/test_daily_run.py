@@ -14,6 +14,7 @@ Run with: python -m unittest discover -s tests
 """
 
 import contextlib
+import dataclasses
 import io
 import json
 import logging
@@ -1111,6 +1112,48 @@ class MakeClientFactoryTests(unittest.TestCase):
 
         client_cls.assert_not_called()
         self.assertTrue(callable(factory))
+
+
+class ParseBoolTests(unittest.TestCase):
+    def test_unset_is_false_by_default(self):
+        self.assertIs(ft.parse_bool("X", env={}), False)
+
+    def test_unset_or_blank_uses_the_given_default(self):
+        for value in ({}, {"X": "  "}):
+            with self.subTest(env=value):
+                self.assertIs(ft.parse_bool("X", default=True, env=value), True)
+
+    def test_truthy_and_falsy_spellings(self):
+        for value in ("1", "true", "YES", " On "):
+            with self.subTest(value=value):
+                self.assertIs(ft.parse_bool("X", env={"X": value}), True)
+        for value in ("0", "false", "no", "off", "maybe"):
+            with self.subTest(value=value):
+                self.assertIs(ft.parse_bool("X", default=True, env={"X": value}), False)
+
+
+class RunValueTypesTests(unittest.TestCase):
+    def test_run_summary_starts_at_zero_with_no_old_release_counts(self):
+        self.assertEqual(
+            ft.RunSummary(),
+            ft.RunSummary(
+                elapsed=0.0,
+                added=0,
+                existing=0,
+                not_found=0,
+                failed=0,
+                old_added=None,
+                old_skipped=None,
+            ),
+        )
+
+    def test_config_is_immutable(self):
+        # run() and its steps share one Config; none may change it for the
+        # steps after it.
+        config = ft.Config()
+
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            config.skip_ratio_check = True  # type: ignore[misc]
 
 
 if __name__ == "__main__":

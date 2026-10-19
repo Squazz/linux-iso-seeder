@@ -422,5 +422,30 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         self.assertEqual(second_call_kwargs.get("auth"), ("bob", "other"))
 
 
+class RpcCredentialFallbackTests(unittest.TestCase):
+    """Without an explicit auth, log_seed_ratios_via_http() authenticates
+    only when both TRANSMISSION_RPC_USERNAME and _PASSWORD are set."""
+
+    def _auth_sent(self, **env):
+        session = helpers.fake_response(
+            status=409, headers={"X-Transmission-Session-Id": "sid"}
+        )
+        torrents = helpers.fake_response('{"arguments": {"torrents": []}}')
+        with (
+            helpers.isolated_env(**env),
+            unittest.mock.patch.object(
+                ft.requests, "post", side_effect=[session, torrents]
+            ) as mock_post,
+        ):
+            ft.log_seed_ratios_via_http()
+        return mock_post.call_args_list[1].kwargs["auth"]
+
+    def test_username_without_password_sends_no_auth(self):
+        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_USERNAME="alice"))
+
+    def test_password_without_username_sends_no_auth(self):
+        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_PASSWORD="hunter2"))
+
+
 if __name__ == "__main__":
     unittest.main()

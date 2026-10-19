@@ -132,5 +132,55 @@ class SettingsFilePersistenceTests(JsonStoreContract, unittest.TestCase):
         return data, stderr.getvalue().strip()
 
 
+class StateFileLocationTests(unittest.TestCase):
+    """Every test patches these paths, so their real values are pinned
+    here: state lives under the log dir, torrents go to /watch."""
+
+    def test_state_files_live_in_the_log_dir(self):
+        self.assertEqual(
+            (
+                ft.ratio_log_file,
+                ft.ratio_history_file,
+                ft.removed_history_file,
+                ft.old_release_check_state_file,
+            ),
+            tuple(
+                os.path.join(ft.log_dir, name)
+                for name in (
+                    "fetch_torrents_ratios.log",
+                    "fetch_torrents_ratio_history.json",
+                    "fetch_torrents_removed_history.json",
+                    "fetch_torrents_old_release_check_state.json",
+                )
+            ),
+        )
+
+    def test_torrents_are_written_to_the_watch_volume(self):
+        self.assertEqual(ft.watch_dir, "/watch")
+
+
+class StateFileFormatTests(unittest.TestCase):
+    """The state files sit in the /logs volume for people to read and diff,
+    so they are written indented, with keys sorted."""
+
+    def test_state_files_are_indented_with_sorted_keys(self):
+        directory = helpers.make_temp_dir(self, "persistence_")
+        for save in (
+            ft.save_ratio_history,
+            ft.save_removed_history,
+            ft.save_old_release_check_state,
+        ):
+            with self.subTest(save.__name__):
+                path = os.path.join(directory, f"{save.__name__}.json")
+
+                save(path, {"b.iso": {"y": 1, "x": 2}, "a.iso": []})
+
+                with open(path, encoding="utf-8") as f:
+                    self.assertEqual(
+                        f.read(),
+                        '{\n  "a.iso": [],\n  "b.iso": {\n    "x": 2,\n    "y": 1\n  }\n}',
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

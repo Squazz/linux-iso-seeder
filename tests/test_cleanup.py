@@ -1350,6 +1350,68 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         )
 
 
+class CleanupOldVersionsDefaultsTests(unittest.TestCase):
+    """cleanup_old_versions() called the way the daily run calls it."""
+
+    def setUp(self):
+        self.history_path = os.path.join(
+            helpers.make_temp_dir(self, "fetch_torrents_cleanup_"), "removed.json"
+        )
+        for attr, value in (
+            ("removed_history_file", self.history_path),
+            ("watch_dir", helpers.make_temp_dir(self, "fetch_torrents_test_watch_")),
+        ):
+            patcher = unittest.mock.patch.object(ft, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _transmission(self, old_ratio):
+        return helpers.FakeTransmission(
+            [
+                helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                helpers.FakeTorrent(
+                    "ubuntu-23.10-desktop-amd64.iso", 2, ratio=old_ratio
+                ),
+            ]
+        )
+
+    def test_default_min_ratio_is_one(self):
+        for old_ratio, kept in ((1.5, False), (0.99, True)):
+            with self.subTest(old_ratio=old_ratio):
+                transmission = self._transmission(old_ratio)
+
+                ft.cleanup_old_versions(transmission, today=date(2026, 8, 1))
+
+                self.assertEqual(
+                    "ubuntu-23.10-desktop-amd64.iso" in transmission.names, kept
+                )
+
+    def test_a_zero_ratio_removal_is_recorded_as_zero(self):
+        transmission = self._transmission(0.0)
+
+        ft.cleanup_old_versions(
+            transmission, today=date(2026, 8, 1), skip_ratio_check=True
+        )
+
+        self.assertEqual(
+            ft.load_removed_history(self.history_path),
+            {
+                "ubuntu-23.10-desktop-amd64.iso": {
+                    "removed_date": "2026-08-01",
+                    "reason": "keep_only_latest",
+                    "ratio": 0.0,
+                }
+            },
+        )
+
+
+class RecordRemovalRatioTests(unittest.TestCase):
+    def test_ratio_is_rounded_to_three_decimals(self):
+        history = ft.record_removal({}, "x.iso", date(2026, 8, 1), "stagnant", 0.12345)
+
+        self.assertEqual(history["x.iso"]["ratio"], 0.123)
+
+
 if __name__ == "__main__":
     unittest.main()
 

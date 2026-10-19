@@ -756,7 +756,7 @@ def fetch_arch_latest():
             return False
 
         # Version strings are YYYY.MM.DD, so lexicographic order == chronological order.
-        version, href = max(candidates, key=lambda entry: entry[0])
+        version, href = max(candidates)
         logger.debug(f"Arch Linux {version}: {base_url}{href}")
         return {f"archlinux-{version}": base_url + href}
     except Exception as exc:
@@ -815,31 +815,44 @@ def fetch_linuxmint_cinnamon():
         return False
 
 
-def fetch_fedora_workstation():
-    url = "https://torrent.fedoraproject.org/torrents/"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
+FEDORA_TORRENTS_URL = "https://torrent.fedoraproject.org/torrents/"
+FEDORA_WORKSTATION_PATTERN = re.compile(
+    r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$"
+)
 
-        pattern = re.compile(
-            r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$"
-        )
-        latest = {}
-        for link in soup.find_all("a", href=True):
-            match = pattern.match(link["href"])
-            if not match:
-                continue
+
+def _fedora_workstation_torrents():
+    """{arch: [href, ...]} for every Fedora Workstation Live torrent the
+    listing links, each href once, newest version first."""
+    r = requests.get(FEDORA_TORRENTS_URL, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    by_arch: dict[str, set[tuple[int, str]]] = {}
+    for link in soup.find_all("a", href=True):
+        match = FEDORA_WORKSTATION_PATTERN.match(link["href"])
+        if match:
             arch, version = match.group(1), int(match.group(2))
-            if arch not in latest or version > latest[arch][0]:
-                latest[arch] = (version, link["href"])
+            by_arch.setdefault(arch, set()).add((version, link["href"]))
+    return {
+        arch: [href for _version, href in sorted(entries, reverse=True)]
+        for arch, entries in by_arch.items()
+    }
+
+
+def fetch_fedora_workstation():
+    url = FEDORA_TORRENTS_URL
+    try:
+        latest = {
+            arch: hrefs[0] for arch, hrefs in _fedora_workstation_torrents().items()
+        }
 
         if not latest:
             logger.warning("No Fedora Workstation torrents found on %s", url)
             return False
 
         results = {}
-        for arch, (version, href) in latest.items():
+        for href in latest.values():
             torrent_url = url + href
             # The torrent's own "name" field (and Transmission's later
             # torrent.name) has no .iso extension for Fedora, unlike Ubuntu/
@@ -857,29 +870,11 @@ def fetch_fedora_workstation_old_versions():
     """Non-latest Fedora Workstation Live torrents per arch, from the same
     listing fetch_fedora_workstation() already scrapes - for the
     old-release demand check (FETCH_TORRENTS_CHECK_OLD_RELEASES)."""
-    url = "https://torrent.fedoraproject.org/torrents/"
+    url = FEDORA_TORRENTS_URL
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        pattern = re.compile(
-            r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$"
-        )
-        by_arch = {}
-        for link in soup.find_all("a", href=True):
-            match = pattern.match(link["href"])
-            if not match:
-                continue
-            arch, version = match.group(1), int(match.group(2))
-            by_arch.setdefault(arch, []).append((version, link["href"]))
-
         results = {}
-        for versions in by_arch.values():
-            versions.sort(key=lambda entry: entry[0], reverse=True)
-            for _version, href in versions[
-                1:
-            ]:  # newest is fetch_fedora_workstation()'s job
+        for hrefs in _fedora_workstation_torrents().values():
+            for href in hrefs[1:]:  # newest is fetch_fedora_workstation()'s job
                 name = href.replace(".torrent", "")
                 results[name] = url + href
         return results
@@ -1358,6 +1353,12 @@ def plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent):
     return candidates
 
 
+def _used_percent(disk_usage, path):
+    """How full path's filesystem is, 0-100; 0.0 for a zero-size one."""
+    total, used, _free = disk_usage(path)
+    return (used / total * 100) if total else 0.0
+
+
 def enforce_disk_usage_limit(
     client_factory,
     threshold_percent,
@@ -1373,8 +1374,7 @@ def enforce_disk_usage_limit(
     if threshold_percent <= 0:
         return
 
-    total, used, _free = disk_usage(download_path)
-    used_percent = (used / total * 100) if total else 0.0
+    used_percent = _used_percent(disk_usage, download_path)
     if used_percent < threshold_percent:
         return
 
@@ -1393,8 +1393,7 @@ def enforce_disk_usage_limit(
 
     removed_history = load_removed_history(removed_history_file)
     for torrent in candidates:
-        total, used, _free = disk_usage(download_path)
-        used_percent = (used / total * 100) if total else 0.0
+        used_percent = _used_percent(disk_usage, download_path)
         if used_percent < threshold_percent:
             break
         ratio = float(getattr(torrent, "ratio", 0.0) or 0.0)

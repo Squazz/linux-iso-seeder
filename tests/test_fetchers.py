@@ -574,5 +574,167 @@ class DownloadTorrentUnsafeNameTests(unittest.TestCase):
         self.assertTrue(os.path.exists(outside))
 
 
+class FetcherRequestTimeoutTests(unittest.TestCase):
+    """Every upstream request has a timeout, so no slow or stalled distro
+    site can hang the daily run."""
+
+    def test_every_fetcher_and_the_download_pass_a_30_second_timeout(self):
+        watch = helpers.make_temp_dir(self, "fetch_torrents_test_watch_")
+        calls = {
+            **{name: fetcher for name, fetcher in ft.DEFAULT_FETCHERS},
+            "kali-old": ft.fetch_kali_old_versions,
+            "fedora-old": ft.fetch_fedora_workstation_old_versions,
+            "download": lambda: ft.download_torrent(
+                "x.iso", "https://example.invalid/x"
+            ),
+        }
+        for name, call in calls.items():
+            with self.subTest(name):
+                timeouts = []
+
+                def get(url, timeouts=timeouts, **kwargs):
+                    timeouts.append(kwargs)
+                    return helpers.fake_response("<html></html>")
+
+                with (
+                    unittest.mock.patch.object(ft.requests, "get", get),
+                    unittest.mock.patch.object(ft, "watch_dir", watch),
+                    self.assertNoLogs(ft.logger, level="CRITICAL"),
+                ):
+                    call()
+
+                self.assertTrue(timeouts)
+                self.assertEqual(timeouts, [{"timeout": 30}] * len(timeouts))
+
+
+def _get_page(html):
+    return unittest.mock.patch.object(
+        ft.requests, "get", return_value=helpers.fake_response(html)
+    )
+
+
+class FetchArchLatestSelectionTests(unittest.TestCase):
+    def test_unavailable_row_before_an_available_one_is_skipped(self):
+        html = (
+            "<html><body><table id='release-table'>"
+            "<tr><td class='available-no'></td>"
+            "<td><a href='/releng/releases/2026.10.01/torrent/'>t</a></td></tr>"
+            "<tr><td class='available-yes'></td>"
+            "<td><a href='/releng/releases/2026.09.01/torrent/'>t</a></td></tr>"
+            "</table></body></html>"
+        )
+
+        with _get_page(html):
+            results = ft.fetch_arch_latest()
+
+        self.assertEqual(
+            results,
+            {
+                "archlinux-2026.09.01": "https://archlinux.org/releng/releases/2026.09.01/torrent/"
+            },
+        )
+
+    def test_row_without_a_torrent_link_is_skipped(self):
+        html = (
+            "<html><body><table id='release-table'>"
+            "<tr><td class='available-yes'></td><td>no link</td></tr>"
+            "<tr><td class='available-yes'></td>"
+            "<td><a href='/releng/releases/2026.09.01/torrent/'>t</a></td></tr>"
+            "</table></body></html>"
+        )
+
+        with _get_page(html):
+            results = ft.fetch_arch_latest()
+
+        self.assertEqual(list(results), ["archlinux-2026.09.01"])
+
+
+class FetchKaliSelectionTests(unittest.TestCase):
+    def test_page_without_a_release_number_returns_false(self):
+        with _get_page("<html><body>no installers here</body></html>"):
+            self.assertIs(ft.fetch_kali_latest(), False)
+
+    def test_old_versions_are_every_version_but_the_newest(self):
+        html = "".join(
+            f'<a href="kali-{v}/">kali-{v}</a>'
+            for v in ("2025.4", "2026.2", "2025.10", "2026.1")
+        )
+
+        with _get_page(f"<html><body>{html}</body></html>"):
+            results = ft.fetch_kali_old_versions()
+
+        expected = {}
+        for version in ("2025.4", "2025.10", "2026.1"):
+            for url in ft._kali_torrent_urls(version):
+                expected[os.path.basename(url).removesuffix(".torrent")] = url
+        self.assertEqual(results, expected)
+
+
+class FetchFedoraSelectionTests(unittest.TestCase):
+    BASE = "https://torrent.fedoraproject.org/torrents/"
+
+    def _page(self, *versions, arch="x86_64"):
+        links = "".join(
+            f'<a href="Fedora-Workstation-Live-{arch}-{v}.torrent">t</a>'
+            for v in versions
+        )
+        return _get_page(f"<html><body>{links}</body></html>")
+
+    def _entry(self, version, arch="x86_64"):
+        name = f"Fedora-Workstation-Live-{arch}-{version}"
+        return name, f"{self.BASE}{name}.torrent"
+
+    def test_latest_compares_versions_numerically(self):
+        with self._page(100, 99, 98):
+            results = ft.fetch_fedora_workstation()
+
+        self.assertEqual(results, dict([self._entry(100)]))
+
+    def test_old_versions_compare_numerically_and_skip_only_the_newest(self):
+        with self._page(99, 100, 98):
+            results = ft.fetch_fedora_workstation_old_versions()
+
+        self.assertEqual(results, dict([self._entry(99), self._entry(98)]))
+
+    def test_same_version_listed_twice_is_one_candidate(self):
+        with self._page(44, 44, 43):
+            latest = ft.fetch_fedora_workstation()
+        with self._page(44, 44, 43):
+            old = ft.fetch_fedora_workstation_old_versions()
+
+        self.assertEqual(latest, dict([self._entry(44)]))
+        self.assertEqual(old, dict([self._entry(43)]))
+
+
+class ParseSupportedDistrosWarningTests(unittest.TestCase):
+    def test_unknown_entries_are_named_in_the_warning(self):
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            result = ft.parse_supported_distros(
+                env={"FETCH_TORRENTS_DISTROS": "Ubuntu, gentoo,arch,slackware"}
+            )
+
+        self.assertEqual(result, ["ubuntu", "arch"])
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                "FETCH_TORRENTS_DISTROS contains unknown distributions: gentoo, "
+                "slackware. Valid values: " + ", ".join(ft.ALL_DISTROS)
+            ],
+        )
+
+    def test_all_unknown_warns_twice_and_falls_back(self):
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            result = ft.parse_supported_distros(
+                env={"FETCH_TORRENTS_DISTROS": "gentoo"}
+            )
+
+        self.assertEqual(result, list(ft.DEFAULT_DISTROS))
+        self.assertEqual(
+            [r.getMessage() for r in logs.records][1],
+            "FETCH_TORRENTS_DISTROS did not specify any valid distros. "
+            "Falling back to defaults: " + ", ".join(ft.DEFAULT_DISTROS),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
