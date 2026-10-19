@@ -92,6 +92,18 @@ class BdecodeBencodeTests(unittest.TestCase):
                     ts.bdecode(data)
                 self.assertRegex(str(ctx.exception), r"index \d+")
 
+    def test_bdecode_truncated_string_reports_declared_and_remaining_bytes(self):
+        with self.assertRaisesRegex(
+            ts.BencodeError, r"index 0 declares 4 bytes, only 2 remain"
+        ):
+            ts.bdecode(b"4:ab")
+
+    def test_bdecode_unterminated_list_reports_end_of_data(self):
+        with self.assertRaisesRegex(
+            ts.BencodeError, r"Unexpected end of data at index 7"
+        ):
+            ts.bdecode(b"l4:spam")
+
     def test_bdecode_truncated_string_inside_container_raises(self):
         with self.assertRaises(ts.BencodeError):
             ts.bdecode(b"d4:info10:shorte")

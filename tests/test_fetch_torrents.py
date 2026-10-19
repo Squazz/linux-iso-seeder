@@ -33,9 +33,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import fetch_torrents as ft
-
 import helpers
+
+import fetch_torrents as ft
 
 
 def setUpModule():
@@ -433,7 +433,29 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
                 "reason": "stagnant",
             },
         }
-        self.assertTrue(
+        # Skipped up front, not by tripping over the missing key and logging
+        # a parse-error warning.
+        with self.assertNoLogs(ft.logger, level="WARNING"):
+            result = ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
+        self.assertTrue(result)
+
+    def test_skipped_removed_history_entry_does_not_hide_later_ones(self):
+        removed_history = {
+            "ubuntu-23.04-desktop-amd64.iso": {
+                "removed_date": "2025-06-01",
+                "reason": "stagnant",
+            },
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.4,
+            },
+        }
+        self.assertFalse(
             ft.should_fetch_torrent(
                 "ubuntu-24.04-desktop-amd64.iso",
                 ratios={},
@@ -698,7 +720,9 @@ class GetPreviousRatiosTests(unittest.TestCase):
             "fetch_torrents_ratios.log",
         )
         with open(path, "w", encoding="utf-8") as f:
-            f.writelines(f"2026-08-01 00:00:00,000 INFO: {message}\n" for message in messages)
+            f.writelines(
+                f"2026-08-01 00:00:00,000 INFO: {message}\n" for message in messages
+            )
         return path
 
     def test_missing_file_returns_empty(self):
