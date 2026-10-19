@@ -69,7 +69,9 @@ class FakeWorld:
         self.requested = []
         self.events = []
         self.transmission = helpers.FakeTransmission()
+        self.rpc_auths = []
         self.disk_used_percent = 10
+        self.disk_paths = []
 
     def get(self, url, timeout=None):
         self.requested.append(url)
@@ -81,8 +83,15 @@ class FakeWorld:
         return route
 
     def post(self, url, **kwargs):
-        if kwargs.get("json") is None:  # the session-id handshake
-            return helpers.fake_response(headers={"X-Transmission-Session-Id": "sid"})
+        """Transmission's RPC: a request without the session id is refused
+        with a 409 carrying it; a torrent-get with it records its auth and
+        lists what `transmission` holds."""
+        headers = kwargs.get("headers") or {}
+        if headers.get("X-Transmission-Session-Id") != "sid":
+            return helpers.fake_response(
+                status=409, headers={"X-Transmission-Session-Id": "sid"}
+            )
+        self.rpc_auths.append(kwargs.get("auth"))
         torrents = [
             {"name": t.name, "uploadRatio": t.ratio} for t in self.transmission.torrents
         ]
@@ -94,6 +103,7 @@ class FakeWorld:
 
     def disk_usage(self, path):
         self.events.append("disk_usage")
+        self.disk_paths.append(path)
         total = 100 * 2**30
         used = total * self.disk_used_percent // 100
         return (total, used, total - used)
@@ -186,14 +196,14 @@ class RunTestCase(unittest.TestCase):
     def _rpc_port_open(*args, **kwargs):
         yield MagicMock()
 
-    def _run(self, fetchers=ft.DEFAULT_FETCHERS, **env):
+    def _run(self, fetchers=ft.DEFAULT_FETCHERS, now=lambda: 1000.0, **env):
         """Runs ft.run() with load_config(env); returns (summary, messages)."""
         with self.assertLogs(ft.logger, level="DEBUG") as logs:
             summary = ft.run(
                 ft.load_config(env),
                 client_factory=self.world.connect,
                 today=date(2026, 9, 2),
-                now=lambda: 1000.0,
+                now=now,
                 fetchers=fetchers,
                 disk_usage=self.world.disk_usage,
             )
@@ -437,14 +447,129 @@ class RunTests(RunTestCase):
         )
 
     def test_rpc_credentials_from_config_are_used_for_ratio_logging(self):
-        with unittest.mock.patch.object(ft, "log_seed_ratios_via_http") as log_ratios:
-            self._run(
-                FETCH_TORRENTS_DISTROS="arch",
-                TRANSMISSION_RPC_USERNAME="alice",
-                TRANSMISSION_RPC_PASSWORD="hunter2",
+        self._run(
+            FETCH_TORRENTS_DISTROS="arch",
+            TRANSMISSION_RPC_USERNAME="alice",
+            TRANSMISSION_RPC_PASSWORD="hunter2",
+        )
+
+        self.assertEqual(self.world.rpc_auths, [("alice", "hunter2")])
+
+    def test_ratio_logging_sends_no_credentials_when_none_are_configured(self):
+        self._run(FETCH_TORRENTS_DISTROS="arch")
+
+        self.assertEqual(self.world.rpc_auths, [None])
+
+    def test_every_download_outcome_is_counted_each_time(self):
+        # Two of each outcome (four failures: two downloads, two fetchers
+        # that found nothing), so no counter can get away with "= 1". The
+        # first candidate is ratio-blocked via the removed history, and must
+        # not stop the rest of its fetcher's candidates.
+        def url(name):
+            return f"https://mirror.example/{name}.torrent"
+
+        for name in ("release-a.iso", "release-b.iso"):
+            self.world.routes[url(name)] = helpers.fake_response(b"torrent")
+        for name in ("broken-a.iso", "broken-b.iso"):
+            self.world.routes[url(name)] = helpers.fake_response(status=500)
+        for name in ("present-a.iso", "present-b.iso"):
+            with open(os.path.join(self.world.watch_dir, f"{name}.torrent"), "wb") as f:
+                f.write(b"already here")
+        with open(
+            self.world.state_path("fetch_torrents_removed_history.json"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            json.dump(
+                {
+                    "archlinux-2026.08.01": {
+                        "removed_date": "2026-08-20",
+                        "reason": "stagnant",
+                        "ratio": 0.4,
+                    }
+                },
+                f,
             )
 
-        log_ratios.assert_called_once_with(auth=("alice", "hunter2"))
+        def found(*names):
+            return lambda: {name: url(name) for name in names}
+
+        summary, messages = self._run(
+            fetchers=(
+                (
+                    "arch",
+                    found(
+                        "archlinux-2026.09.01",
+                        "release-a.iso",
+                        "present-a.iso",
+                        "missing-a.iso",
+                        "broken-a.iso",
+                    ),
+                ),
+                ("arch", dict),
+                (
+                    "arch",
+                    found(
+                        "release-b.iso",
+                        "present-b.iso",
+                        "missing-b.iso",
+                        "broken-b.iso",
+                    ),
+                ),
+                ("arch", lambda: False),
+            ),
+            FETCH_TORRENTS_DISTROS="arch",
+        )
+
+        self.assertEqual(
+            summary,
+            ft.RunSummary(elapsed=0.0, added=2, existing=2, not_found=2, failed=4),
+        )
+        self.assertNotIn(url("archlinux-2026.09.01"), self.world.requested)
+        self.assertIn(
+            "Skipping archlinux-2026.09.01 due to low ratio on previous version.",
+            messages,
+        )
+
+    def test_low_demand_images_are_skipped_by_default(self):
+        netinst = "kali-linux-2026.3-installer-netinst-amd64.iso"
+        fetchers = (("kali", lambda: {netinst: "https://mirror.example/n.torrent"}),)
+
+        self._run(fetchers=fetchers, FETCH_TORRENTS_DISTROS="kali")
+
+        self.assertEqual(self.world.requested, [])
+
+    def test_include_low_demand_fetches_low_demand_images(self):
+        netinst = "kali-linux-2026.3-installer-netinst-amd64.iso"
+        fetchers = (("kali", lambda: {netinst: "https://mirror.example/n.torrent"}),)
+
+        self._run(
+            fetchers=fetchers,
+            FETCH_TORRENTS_DISTROS="kali",
+            FETCH_TORRENTS_INCLUDE_LOW_DEMAND="true",
+        )
+
+        self.assertEqual(self.world.requested, ["https://mirror.example/n.torrent"])
+
+    def test_elapsed_time_is_measured_from_start_to_finish(self):
+        clock = iter([1000.0, 1012.5])
+
+        summary, messages = self._run(
+            fetchers=(), now=clock.__next__, FETCH_TORRENTS_DISTROS="arch"
+        )
+
+        self.assertEqual(summary.elapsed, 12.5)
+        self.assertTrue(
+            messages[-1].startswith("Run complete in 12.50 seconds."), messages[-1]
+        )
+
+    def test_reports_downloads_folder_usage_in_whole_gigabytes(self):
+        self.world.disk_used_percent = 37
+
+        _summary, messages = self._run(fetchers=(), FETCH_TORRENTS_DISTROS="arch")
+
+        self.assertIn("Downloads folder usage: 37 GB used / 100 GB total", messages)
+        self.assertEqual(set(self.world.disk_paths), {"/downloads"})
 
     def test_old_release_check_is_off_by_default(self):
         discovered = []
