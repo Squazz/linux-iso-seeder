@@ -205,6 +205,87 @@ class PlanCleanupTests(unittest.TestCase):
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep_low_ratio, [])
 
+    def test_ratio_exactly_at_min_ratio_is_removed(self):
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.0),
+        ]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents, min_ratio=1.0)
+
+        self.assertEqual(names_of(to_remove), ["ubuntu-23.10-desktop-amd64.iso"])
+        self.assertEqual(to_keep_low_ratio, [])
+
+    def test_ratio_just_below_min_ratio_is_kept(self):
+        older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.999)
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0), older]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents, min_ratio=1.0)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(to_keep_low_ratio, [(older, 0.999)])
+
+    def test_default_min_ratio_is_one(self):
+        older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5)
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0), older]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
+
+        self.assertEqual(to_remove, [older])
+        self.assertEqual(to_keep_low_ratio, [])
+
+    def test_missing_or_none_ratio_counts_as_zero(self):
+        no_attr = types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=2)
+        none_ratio = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None)
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            no_attr,
+            none_ratio,
+        ]
+
+        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents, min_ratio=1.0)
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(
+            sorted(to_keep_low_ratio, key=lambda entry: entry[0].name),
+            [(no_attr, 0.0), (none_ratio, 0.0)],
+        )
+
+    def test_skipped_torrents_listed_first_do_not_stop_planning(self):
+        # Each kind of torrent _old_version_candidates() skips (or routes
+        # elsewhere) is placed *before* a valid pair, so a 'continue' that
+        # became 'break' would drop the pair.
+        leading = {
+            "devuan": FakeTorrent("devuan_excalibur", 10, ratio=2.0, added_date=1),
+            "unknown distro": FakeTorrent("slackware-15.0-install-dvd.iso", 11),
+            "unparseable": FakeTorrent("ubuntu-noble-desktop-amd64.iso", 12),
+        }
+        for kind, first in leading.items():
+            with self.subTest(kind):
+                older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0)
+                torrents = [
+                    first,
+                    FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                    older,
+                ]
+
+                with self.assertNoLogs(ft.logger, level="ERROR"):
+                    to_remove, _ = ft.plan_cleanup(torrents)
+
+                self.assertEqual(to_remove, [older])
+
+    def test_unparseable_name_is_skipped_with_a_warning(self):
+        torrents = [
+            FakeTorrent("ubuntu-noble-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-mantic-desktop-amd64.iso", 2, ratio=2.0),
+        ]
+
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
+
+        self.assertEqual((to_remove, to_keep_low_ratio), ([], []))
+        self.assertEqual(len(logs.records), 2)
+
 
 class PlanCleanupDevuanGroupingTests(unittest.TestCase):
     """Devuan releases (e.g. "devuan_excalibur") carry no dotted version to
@@ -271,6 +352,40 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
         to_remove, _ = ft.plan_cleanup(torrents)
 
         self.assertEqual(len(to_remove), 1)
+
+    def test_release_without_added_date_sorts_as_oldest(self):
+        undated = FakeTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None)
+        torrents = [
+            undated,
+            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=0.5),
+        ]
+
+        to_remove, _ = ft.plan_cleanup(torrents)
+
+        self.assertEqual(to_remove, [undated])
+
+    def test_datetime_added_dates_are_ordered_by_timestamp(self):
+        from datetime import datetime, timezone
+
+        older = FakeTorrent(
+            "devuan_daedalus",
+            1,
+            ratio=2.0,
+            added_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        torrents = [
+            FakeTorrent(
+                "devuan_excalibur",
+                2,
+                ratio=2.0,
+                added_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+            ),
+            older,
+        ]
+
+        to_remove, _ = ft.plan_cleanup(torrents)
+
+        self.assertEqual(to_remove, [older])
 
 
 class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
@@ -1416,6 +1531,59 @@ class UpdateRatioHistoryTests(unittest.TestCase):
 
         self.assertEqual(updated, {})
 
+    def _days_ago(self, today, days):
+        return (today - timedelta(days=days)).isoformat()
+
+    def test_sample_exactly_one_interval_old_triggers_a_new_sample(self):
+        today = date(2026, 8, 29)
+        history = {"a.iso": [{"date": self._days_ago(today, 7), "ratio": 1.0}]}
+
+        updated = ft.update_ratio_history(
+            history, {"a.iso": 1.2}, today, sample_interval_days=7, window_days=30
+        )
+
+        self.assertEqual(
+            updated["a.iso"],
+            [
+                {"date": self._days_ago(today, 7), "ratio": 1.0},
+                {"date": today.isoformat(), "ratio": 1.2},
+            ],
+        )
+
+    def test_sample_just_under_one_interval_old_adds_nothing(self):
+        today = date(2026, 8, 29)
+        history = {"a.iso": [{"date": self._days_ago(today, 6), "ratio": 1.0}]}
+
+        updated = ft.update_ratio_history(
+            history, {"a.iso": 1.2}, today, sample_interval_days=7, window_days=30
+        )
+
+        self.assertEqual(
+            updated["a.iso"], [{"date": self._days_ago(today, 6), "ratio": 1.0}]
+        )
+
+    def test_prune_horizon_defaults_to_window_plus_interval(self):
+        # Defaults: window 30 + interval 7 = 37 days. A sample exactly 37
+        # days old is kept; 38 days old is pruned.
+        today = date(2026, 8, 29)
+        history = {
+            "a.iso": [
+                {"date": self._days_ago(today, 38), "ratio": 0.5},
+                {"date": self._days_ago(today, 37), "ratio": 0.6},
+                {"date": self._days_ago(today, 1), "ratio": 0.9},
+            ]
+        }
+
+        updated = ft.update_ratio_history(history, {"a.iso": 1.0}, today)
+
+        self.assertEqual(
+            updated["a.iso"],
+            [
+                {"date": self._days_ago(today, 37), "ratio": 0.6},
+                {"date": self._days_ago(today, 1), "ratio": 0.9},
+            ],
+        )
+
 
 class PlanStagnationCleanupTests(unittest.TestCase):
     """plan_stagnation_cleanup() removes only superseded (non-latest)
@@ -1522,6 +1690,137 @@ class PlanStagnationCleanupTests(unittest.TestCase):
 
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep, [])
+
+    def _pair(self, older_ratio):
+        older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=older_ratio)
+        return older, [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1), older]
+
+    def _history(self, today, *samples):
+        return {
+            "ubuntu-23.10-desktop-amd64.iso": [
+                {"date": (today - timedelta(days=days)).isoformat(), "ratio": ratio}
+                for days, ratio in samples
+            ]
+        }
+
+    def test_anchor_exactly_window_days_old_is_used(self):
+        today = date(2026, 8, 29)
+        older, torrents = self._pair(1.0)
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (30, 1.0)), today, 30, 0.02
+        )
+
+        self.assertEqual((to_remove, to_keep), ([older], []))
+
+    def test_anchor_one_day_short_of_window_is_too_new_to_judge(self):
+        today = date(2026, 8, 29)
+        older, torrents = self._pair(1.0)
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (29, 1.0)), today, 30, 0.02
+        )
+
+        self.assertEqual((to_remove, to_keep), ([], [(older, None)]))
+
+    def test_oldest_qualifying_sample_is_the_anchor(self):
+        # Listed newest-first, so picking the first old-enough sample
+        # instead of the oldest would give a different delta.
+        today = date(2026, 8, 29)
+        older, torrents = self._pair(1.0)
+        history = self._history(today, (35, 0.99), (45, 0.5))
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, 30, 0.02
+        )
+
+        self.assertEqual((to_remove, to_keep), ([], [(older, 0.5)]))
+
+    def test_delta_exactly_at_min_ratio_delta_is_kept(self):
+        today = date(2026, 8, 29)
+        older, torrents = self._pair(1.5)
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (40, 1.0)), today, 30, 0.5
+        )
+
+        self.assertEqual((to_remove, to_keep), ([], [(older, 0.5)]))
+
+    def test_delta_just_below_min_ratio_delta_is_removed(self):
+        today = date(2026, 8, 29)
+        older, torrents = self._pair(1.25)
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (40, 1.0)), today, 30, 0.5
+        )
+
+        self.assertEqual((to_remove, to_keep), ([older], []))
+
+    def test_defaults_are_a_30_day_window_and_0_02_delta(self):
+        today = date(2026, 8, 29)
+        growing, torrents = self._pair(1.5)
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (30, 1.0)), today
+        )
+
+        self.assertEqual((to_remove, to_keep), ([], [(growing, 0.5)]))
+
+        stagnant, torrents = self._pair(1.01)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, self._history(today, (30, 1.0)), today
+        )
+
+        self.assertEqual((to_remove, to_keep), ([stagnant], []))
+
+    def test_missing_or_none_ratio_counts_as_zero(self):
+        today = date(2026, 8, 29)
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
+            types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=2),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None),
+        ]
+        history = {
+            name: [{"date": (today - timedelta(days=40)).isoformat(), "ratio": -0.5}]
+            for name in (
+                "ubuntu-23.04-desktop-amd64.iso",
+                "ubuntu-23.10-desktop-amd64.iso",
+            )
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, 30, 0.02
+        )
+
+        self.assertEqual(to_remove, [])
+        self.assertEqual(
+            sorted((t.name, delta) for t, delta in to_keep),
+            [
+                ("ubuntu-23.04-desktop-amd64.iso", 0.5),
+                ("ubuntu-23.10-desktop-amd64.iso", 0.5),
+            ],
+        )
+
+    def test_candidate_without_anchor_does_not_stop_later_ones(self):
+        today = date(2026, 8, 29)
+        no_history = FakeTorrent("ubuntu-23.04-desktop-amd64.iso", 3, ratio=1.0)
+        stagnant = FakeTorrent("ubuntu-22.10-desktop-amd64.iso", 4, ratio=1.0)
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
+            no_history,
+            stagnant,
+        ]
+        history = {
+            "ubuntu-22.10-desktop-amd64.iso": [
+                {"date": (today - timedelta(days=40)).isoformat(), "ratio": 1.0}
+            ]
+        }
+
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, 30, 0.02
+        )
+
+        self.assertEqual((to_remove, to_keep), ([stagnant], [(no_history, None)]))
 
 
 class RatioHistoryPersistenceTests(unittest.TestCase):
@@ -2705,6 +3004,49 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
                 torrents, used_percent=99.0, threshold_percent=95.0
             ),
             [],
+        )
+
+    def test_any_positive_threshold_is_enabled(self):
+        older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1)
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1), older]
+
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=50.0, threshold_percent=1
+            ),
+            [older],
+        )
+
+    def test_usage_exactly_at_threshold_triggers_cleanup(self):
+        older = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1)
+        torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1), older]
+
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=95.0, threshold_percent=95.0
+            ),
+            [older],
+        )
+
+    def test_missing_or_none_ratio_sorts_as_zero(self):
+        half = FakeTorrent("ubuntu-22.10-desktop-amd64.iso", 2, ratio=0.5)
+        no_attr = types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=3)
+        none_ratio = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 4, ratio=None)
+        torrents = [
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
+            half,
+            no_attr,
+            none_ratio,
+        ]
+
+        planned = ft.plan_disk_pressure_cleanup(
+            torrents, used_percent=99.0, threshold_percent=95.0
+        )
+
+        self.assertEqual(planned[-1], half)
+        self.assertEqual(
+            sorted(t.name for t in planned[:2]),
+            ["ubuntu-23.04-desktop-amd64.iso", "ubuntu-23.10-desktop-amd64.iso"],
         )
 
 
