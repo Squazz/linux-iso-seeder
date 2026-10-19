@@ -148,3 +148,31 @@ duplicated zero-size-disk guard moved into `_used_percent()`.
 
 Suggested order: 32 (a real bug), then 28, 30 and 33 (resilience and drift-job trust),
 then 37, then 36, then the clean-up tasks 29, 31, 34 and 35, and finally 38.
+
+## Round 3 (from the second 2026-10-19 test-health review)
+
+Source: `.dev-team-reports/test-health-2026-10-19-r2.md`, plus the updated
+`cd-test-architecture-linux-iso-seeder.md` and `test-design-2026-10-19-r2.md`
+(local, gitignored). At 01b77ce: 493 tests green, 99.1% branch coverage, Farley 8.33,
+and no flakiness across repeated, per-module and 8 shuffled-order runs. Re-running
+mutmut on `torrent_scrape.py` and `configure_transmission.py` reproduced the
+task 38 scores. It also showed that excluding *every* string-literal survivor
+hides real gaps (tasks 40 and 41).
+
+| # | Task | Priority | Class | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| 39 | [Push the image that was tested, not a rebuild](39-ship-the-tested-image.md) | P1 | CI | — | open |
+| 40 | [https scrape URLs and non-UTF-8 tracker failure reasons](40-https-scrape-and-non-utf8-failures.md) | P2 | NO_REFACTOR | — | open |
+| 41 | [Only exclude message-text literals from the mutation score](41-narrow-literal-exclusion-rule.md) | P3 | docs | 40 | open |
+| 42 | [Network guard refuses UDP and DNS; stop the stderr leak](42-seal-the-network-guard.md) | P2 | NO_REFACTOR | — | open |
+| 43 | [Remove first-party doubling; drop the LOW_VALUE test](43-remove-first-party-doubling.md) | P2 | NO_REFACTOR | — | open |
+| 44 | [Make `log_seed_ratios_via_http`'s `auth` required](44-require-rpc-auth.md) | P3 | REFACTOR_REQUIRED | 43 | open |
+| 45 | [`scrape_torrent` seams for resolution and UDP scrape](45-scrape-torrent-seams.md) | P3 | REFACTOR_REQUIRED | 42 | open |
+| 46 | [The last untested error paths; raise the ratchet](46-remaining-error-paths.md) | P3 | NO_REFACTOR | — | open |
+| 47 | [Consolidate tests: oversized scenarios, conditional logic, HTTP fakes](47-test-consolidation.md) | P3 | NO_REFACTOR | 43 | open |
+| 48 | [CI leftovers: drift-job Python pin, actionlint](48-ci-leftovers.md) | P3 | CI | — | open |
+| 49 | [Offline tests for `record_fixtures.py` / `transmission_roundtrip.py`](49-offline-tests-for-fixture-scripts.md) | P3 | REFACTOR_REQUIRED | — | open |
+| 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49 | open |
+
+Suggested order: 39 (untested bits reach users), then 40 and 41 (a hidden scrape gap
+and the rule that hid it), 42, 43 then 44 and 47, 45, 46, 49 and 48, and finally 50.
