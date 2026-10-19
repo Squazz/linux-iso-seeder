@@ -5,12 +5,17 @@ Not a test module itself (doesn't match the test*.py discovery pattern);
 this as `import helpers`.
 """
 
+import glob
 import inspect
+import json
 import os
 import shutil
+import socket
 import tempfile
 import unittest.mock
+from urllib.parse import urldefrag
 
+import requests
 import transmission_rpc
 
 # Env vars production code reads at call time. A developer who happens to
@@ -139,3 +144,83 @@ class FakeDisk:
             self.sizes.get(t.id, 0) for t in self.transmission.torrents
         )
         return (self.total, used, self.total - used)
+
+
+PAGES_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "pages"
+)
+
+
+def fake_response(body=b"", status=200, url="", headers=None):
+    """A real requests.Response with the given body (str or bytes), so
+    .text, .content, .json() and raise_for_status() behave as for real."""
+    response = requests.Response()
+    response.status_code = status
+    response.reason = {200: "OK", 404: "Not Found", 500: "Internal Server Error"}.get(
+        status, ""
+    )
+    response._content = body.encode("utf-8") if isinstance(body, str) else body
+    response.encoding = "utf-8"
+    response.url = url
+    response.headers.update(headers or {})
+    return response
+
+
+class RecordedPages:
+    """A requests.get stand-in serving tests/fixtures/pages (captured by
+    scripts/record_fixtures.py), keyed by the URL in each .meta.json.
+
+    `overrides` maps a URL to a response, or to an exception to raise.
+    Any other URL is recorded in `unexpected` and answered with a 404, so a
+    test can assert the scraper asked for nothing it wasn't expected to."""
+
+    def __init__(self, overrides=None):
+        self.pages = {}
+        for meta_path in glob.glob(os.path.join(PAGES_DIR, "*", "*.meta.json")):
+            with open(meta_path, encoding="utf-8") as f:
+                url = json.load(f)["url"]
+            stem = meta_path[: -len(".meta.json")]
+            (body_path,) = (
+                path for path in glob.glob(stem + ".*") if path != meta_path
+            )
+            self.pages[url] = body_path
+        self.overrides = dict(overrides or {})
+        self.requested = []
+        self.unexpected = []
+
+    def get(self, url, timeout=None, **kwargs):
+        # A fragment never reaches the server, so match without it.
+        url = urldefrag(url).url
+        self.requested.append(url)
+        if url in self.overrides:
+            override = self.overrides[url]
+            if isinstance(override, BaseException):
+                raise override
+            return override
+        if url in self.pages:
+            with open(self.pages[url], "rb") as f:
+                return fake_response(f.read(), url=url)
+        self.unexpected.append(url)
+        return fake_response(b"not recorded", status=404, url=url)
+
+
+def _refuse_network(*args, **kwargs):
+    raise RuntimeError("tests must not open network connections")
+
+
+def block_network():
+    """Makes every real socket connection fail for the rest of the module
+    (call from setUpModule; returns the function that undoes it, for
+    unittest.addModuleCleanup). Mocked sockets are unaffected."""
+    patchers = [
+        unittest.mock.patch.object(socket.socket, "connect", _refuse_network),
+        unittest.mock.patch.object(socket.socket, "connect_ex", _refuse_network),
+    ]
+    for patcher in patchers:
+        patcher.start()
+
+    def stop():
+        for patcher in reversed(patchers):
+            patcher.stop()
+
+    return stop

@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html>
+  <head>
+      <meta charset="utf-8">
+    <title>Get Devuan | Devuan GNU+Linux Free Operating System</title><!-- Always force latest IE rendering engine or request Chrome Frame -->
+    <meta content="IE=edge" http-equiv="X-UA-Compatible">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/x-icon" href="/ui/img/favicon.ico">
+    <link href="/ui/css/devuan.css" rel="stylesheet">
+    <link rel="payment" href="/os/donate">
+    <meta property="og:title" content="Get Devuan | Devuan GNU+Linux Free Operating System">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://www.devuan.org">
+    <meta property="og:image" content="/ui/img/devuan-og-banner.jpg">
+    <meta property="og:site_name" content="Devuan GNU+Linux">
+    <meta property="og:description" content="Free GNU+Linux base OS. Devuan is a fork of Debian without systemd. Devuan provides a safe upgrade path from Debian, to ensure the right to Init Freedom and avoid entanglement.">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@DevuanOrg">
+    <meta name="twitter:title" content="Get Devuan | Devuan GNU+Linux Free Operating System">
+    <meta name="twitter:description" content="Free GNU+Linux base OS. Devuan is a fork of Debian without systemd. Devuan provides a safe upgrade path from Debian, to ensure the right to Init Freedom and avoid entanglement.">
+    <meta name="twitter:image" content="/ui/img/devuan-og-banner.jpg">
+    <meta name="keywords" content="debian, jessie, ascii, beowulf, chimaera, daedalus, excalibur, fork, devuan, sysvinit, openrc, systemd, freedom, init freedom, sysadmin, gnu, linux, distribution, open source, free software, compatibility, portable, embedded, minimal, compact">
+  </head>
+  <body class="get-devuan">
+    <nav>
+      <a href="#read" title="skip to content">#read</a>
+    </nav>
+    <div class="row" id="about">
+      <p>Devuan GNU+Linux is a free software operating system for your computer. Free software means <em>you are free</em> to use, copy and distribute, study, change the software, and share your modifications with the community.</p>
+    </div>
+    <section class="row" id="sticky-bar">
+      <h2>Featured</h2>
+      <nav class="u-pull-left">
+        <p><a href="/os/install" title="Install"><span class="icon icon-devuan"></span><span>Install</span></a> <span class="separator">|</span> <a href="/os/packages" title="Packages"><span class="icon icon-cog"></span><span>Packages</span></a> <span class="separator">|</span> <a href="/os/development" title="Development"><span class="icon icon-flask"></span><span>Development</span></a> <span class="separator">|</span> <a href="/os/community" title="Community"><span class="icon icon-devuan-talk"></span><span>Community</span></a> <span class="separator">|</span> <a href="/os/explore" title="Explore"><span class="icon icon-share"></span><span>Explore</span></a></p>
+      </nav>
+      <nav class="b-pull-right">
+        <nav class="u-pull-right">
+          <a title="Please support Devuan development" class="button button-primary" href="/os/donate"><span class="icon icon-heart"></span>donate now!</a>
+        </nav>
+        <nav class="u-pull-right">
+          <a title="Download Devuan" class="button button-dl" href="/get-devuan"><span class="icon icon-download"></span>download</a>
+        </nav>
+      </nav>
+    </section>
+    <section id="page-header">
+      <div id="logo">
+        <a href="/"><img src="/ui/img/devuan-logo.png" alt=" DEVUAN "></a>
+      </div>
+      <p>software freedom, your way</p>
+    </section>
+    <hr>
+    <main id="read" class="container">
+      <article>
+        <h1 id="download-devuan-from-mirrors"><img src="/ui/img/rounded-square.png" style="display: inline-block; margin: 0 1rem -0.7rem 0" alt=" ">Download Devuan From Mirrors</h1>
+        <h2 id="iso-guide-for-amd64">ISO Guide for <strong>amd64</strong></h2>
+        <p><em><strong>desktop-live</strong></em>: Explore the default Xfce desktop before installing. Then install easily and quickly from the live session using the <code>refractainstaller</code>. Firmware is installed but can easily be removed.</p>
+        <p><em><strong>netinstall</strong></em>: Preferred by more experienced users to create servers, minimal systems but also includes choice of several Desktop Environments (DEs). Not to be used for offline install. Internet connection and available bandwidth needed because all but the core components are downloaded during the installation process. The “expert install” allows user to opt out of firmware installation and a choice of alternate bootloader. A default install will provide firmware.</p>
+<!-- release -->
+        <p><em><strong>server</strong></em>: CD1 of a 5 CD set that allows for a complete off-line server/minimal installation. The remaining CDs offer several desktop choices and a limited selection of additional software.</p>
+        <ul>
+            <li>CD2: Additional server packages.</li>
+            <li>CD3: Basic desktop packages and Openbox window manager.</li>
+            <li>CD4: MATE and XFCE desktop.</li>
+            <li>CD5: LXDE and LXQt desktops.</li>
+        </ul>
+        <p><em><strong>desktop</strong></em>: Use this DVD if there is no network available and/or a need for multiple offline installations. The image contains several desktop choices and additional software options. LXQt and KDE are only available on DVD.</p>
+        <p><em><strong>minimal-live</strong></em>: A full-featured, console-based recovery tool with a focus on accessibility for visually-impaired and blind users. Uses the <code>refractainstaller</code>.</p>
+        <p>Note that these Devuan installation ISOs are signed with the key of the developer in charge of them. All developers keys are listed on the <a href="/os/team">Team</a> page.</p>
+        <h2 id="installation-media-for-amd64-arm64-armel-armhf-and-ppc64el">Installation Media for <strong>amd64</strong>, <strong>arm64</strong>, <strong>armel</strong>, <strong>armhf</strong>, and <strong>ppc64el</strong></h2>
+<!-- release -->
+        <p><em><strong>netboot</strong></em>: Files for PXE install, mini.isos and installer disk images for some specific boards can be found in the appropriate directory for your $ARCH at <code>https://pkgmaster.devuan.org/devuan/dists/excalibur/main/installer-$ARCH/current/images/</code></p>
+        <p id="https-mirrors"><em><strong>embedded</strong></em>: The Devuan community provides <a target="_blank" rel="nofollow" href="https://dev1galaxy.org/viewtopic.php?id=3351">discussion and information about available ARM images</a> and <a href="https://arm-files.devuan.org/">download locations</a>.</p>
+        <div class="mirror-list">
+          <div class="mirror-list-protocol">
+            <h4>HTTPS mirrors</h4>
+            <!-- NOTE: Append new entries to bottom of list -->
+            <ul>
+              <li>
+                <a href="https://mirror.leaseweb.com/devuan/"><span class="icon-download"></span> mirror.leaseweb.com/devuan/</a>
+              </li>
+              <li>
+                <a href="https://ftp.nluug.nl/pub/os/Linux/distr/devuan/"><span class="icon-download"></span> ftp.nluug.nl/pub/os/Linux/distr/devuan/</a>
+              </li>
+<!-- Invalid security certificate ...
+              <li>
+                <a href="https://devuan.ksx4system.net"><span class="icon-download"></span> devuan.ksx4system.net</a>
+              </li>
+-->
+              <li>
+                <a href="https://devuan.c3l.lu"><span class="icon-download"></span> devuan.c3l.lu</a>
+              </li>
+<!-- Invalid security certificate ...
+              <li>
+                <a href="https://devuan.4isp.it"><span class="icon-download"></span> devuan.4isp.it</a>
+              </li>
+-->
+              <li>
+                <a href="https://mirror.math.princeton.edu/pub/devuan/"><span class="icon-download"></span> mirror.math.princeton.edu/pub/devuan/</a>
+              </li>
+              <li>
+                <a href="https://mirror.alpix.eu/devuan/"><span class="icon-download"></span> mirror.alpix.eu/devuan/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="https://devuan.smallinnovations.nl"><span class="icon-download"></span> devuan.smallinnovations.nl</a>
+              </li>
+-->
+              <li>
+                <a href="https://ftp.fau.de/devuan-cd/"><span class="icon-download"></span> ftp.fau.de/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://mirror.belltower.us/devuan/"><span class="icon-download"></span> mirror.belltower.us/devuan/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="https://devuan.contrast.network"><span class="icon-download"></span> devuan.contrast.network</a>
+              </li>
+-->
+              <li>
+                <a href="https://mirror.ungleich.ch/mirror/devuan/"><span class="icon-download"></span> mirror.ungleich.ch/mirror/devuan/</a>
+              </li>
+              <li>
+                <a href="https://merlin.fit.vut.cz/mirrors/devuan-cd/"><span class="icon-download"></span> merlin.fit.vut.cz/mirrors/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://sledjhamr.org/devuan-cd/"><span class="icon-download"></span> sledjhamr.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://mirrors.dotsrc.org/devuan-cd/"><span class="icon-download"></span> mirrors.dotsrc.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://devuan.ipacct.com/devuan-cd/"><span class="icon-download"></span> devuan.ipacct.com/devuan-cd/</a>
+              </li>
+<!-- Not up-to-date: mirrors only jessie and ascii ...
+              <li>
+                <a href="https://mirror.checkdomain.de/devuan-archive/"><span class="icon-download"></span> mirror.checkdomain.de/devuan-archive/</a>
+              </li>
+-->
+<!-- Currently down ...
+              <li>
+                <a href="https://mirror.operationtulip.com/devuan/"><span class="icon-download"></span> mirror.operationtulip.com/devuan/</a>
+              </li>
+-->
+              <li>
+                <a href="https://files.devuan.rosset.eu.org/"><span class="icon-download"></span> files.devuan.rosset.eu.org/</a>
+              </li>
+              <li>
+                <a href="https://mirrors.ocf.berkeley.edu/devuan-cd/"><span class="icon-download"></span> mirrors.ocf.berkeley.edu/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://mirror.serverion.com/devuan/"><span class="icon-download"></span> mirror.serverion.com/devuan/</a>
+              </li>
+              <li>
+                <a href="https://ftpmirror1.infania.net/mirror/devuan/"><span class="icon-download"></span> ftpmirror1.infania.net/mirror/devuan/</a>
+              </li>
+              <li>
+                <a href="https://repo.ifca.es/devuan-cd/"><span class="icon-download"></span> repo.ifca.es/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://tw1.mirror.blendbyte.net/devuan-cd/"><span class="icon-download"></span> tw1.mirror.blendbyte.net/devuan-cd/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="https://devuan.bardia.tech/"><span class="icon-download"></span> devuan.bardia.tech/</a>
+              </li>
+-->
+              <li>
+                <a href="https://devuan-cd.sedf.de"><span class="icon-download"></span> devuan-cd.sedf.de</a>
+              </li>
+              <li>
+                <a href="https://devuan.sakamoto.pl"><span class="icon-download"></span> devuan.sakamoto.pl</a>
+              </li>
+              <li>
+                <a href="https://repo.jing.rocks/devuan-cd/"><span class="icon-download"></span> repo.jing.rocks/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://mirror.akardam.net/devuan-cd/"><span class="icon-download"></span> mirror.akardam.net/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="https://dev1iso.registrationsplus.net/"><span class="icon-download"></span> dev1iso.registrationsplus.net/</a>
+              </li>
+              <li>
+                <a href="https://devuan.c3sl.ufpr.br/devuan/"><span class="icon-download"></span> devuan.c3sl.ufpr.br/devuan/</a>
+              </li>
+              <li>
+                <a href="https://mirror.dogged.ca/devuan-cd/"><span class="icon-download"></span> mirror.dogged.ca/devuan-cd/</a>
+              </li>
+              <li>
+                  <a href="https://devuan.tuxmirrors.xyz/"><span class="icon-download"></span> devuan.tuxmirrors.xyz/</a>
+              </li>
+            </ul>
+          </div>
+          <div class="mirror-list-protocol">
+            <h4>HTTP mirrors</h4>
+            <!-- NOTE: Append new entries to bottom of list -->
+            <ul>
+<!-- Currently down ...
+              <li>
+                <a href="http://devuan.ksx4system.net"><span class="icon-download"></span> devuan.ksx4system.net</a>
+              </li>
+-->
+              <li>
+                <a href="http://tux.rainside.sk/devuan/"><span class="icon-download"></span> tux.rainside.sk/devuan/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="http://neo900.files.dev-1.org/files.devuan.org/"><span class="icon-download"></span> neo900.files.dev-1.org/files.devuan.org/</a>
+              </li>
+-->
+<!-- Currently down ...
+              <li>
+                <a href="http://devuan.mirror.k0nsl.org"><span class="icon-download"></span> devuan.mirror.k0nsl.org</a>
+              </li>
+-->
+              <li>
+                <a href="http://devuan.c3l.lu"><span class="icon-download"></span> devuan.c3l.lu</a>
+              </li>
+              <li>
+                <a href="http://mirror.alpix.eu/devuan/"><span class="icon-download"></span> mirror.alpix.eu/devuan/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="http://devuan.smallinnovations.nl"><span class="icon-download"></span> devuan.smallinnovations.nl</a>
+              </li>
+-->
+              <li>
+                <a href="http://mirror.belltower.us/devuan/"><span class="icon-download"></span> mirror.belltower.us/devuan/</a>
+              </li>
+              <li>
+                <a href="http://devuan-cd.bio.lmu.de"><span class="icon-download"></span> devuan-cd.bio.lmu.de</a>
+              </li>
+              <li>
+                <a href="http://merlin.fit.vut.cz/mirrors/devuan-cd/"><span class="icon-download"></span> merlin.fit.vut.cz/mirrors/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://sledjhamr.org/devuan-cd/"><span class="icon-download"></span> sledjhamr.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://mirrors.dotsrc.org/devuan-cd/"><span class="icon-download"></span> mirrors.dotsrc.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://devuan.ipacct.com/devuan-cd/"><span class="icon-download"></span> devuan.ipacct.com/devuan-cd/</a>
+              </li>
+<!-- Not up-to-date: mirrors only jessie and ascii ...
+              <li>
+                <a href="http://mirror.checkdomain.de/devuan-archive/"><span class="icon-download"></span> mirror.checkdomain.de/devuan-archive/</a>
+              </li>
+-->
+              <li>
+                <a href="http://mirrors.ocf.berkeley.edu/devuan-cd/"><span class="icon-download"></span> mirrors.ocf.berkeley.edu/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://mirror.serverion.com/devuan/"><span class="icon-download"></span> mirror.serverion.com/devuan/</a>
+              </li>
+              <li>
+                <a href="http://ftpmirror1.infania.net/mirror/devuan/"><span class="icon-download"></span> ftpmirror1.infania.net/mirror/devuan/</a>
+              </li>
+              <li>
+                <a href="http://repo.ifca.es/devuan-cd/"><span class="icon-download"></span> repo.ifca.es/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://tw1.mirror.blendbyte.net/devuan-cd/"><span class="icon-download"></span> tw1.mirror.blendbyte.net/devuan-cd/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="http://devuan.bardia.tech/"><span class="icon-download"></span> devuan.bardia.tech/</a>
+              </li>
+-->
+              <li>
+                <a href="http://devuan-cd.sedf.de"><span class="icon-download"></span> devuan-cd.sedf.de</a>
+              </li>
+              <li>
+                <a href="http://devuan.sakamoto.pl"><span class="icon-download"></span> devuan.sakamoto.pl</a>
+              </li>
+              <li>
+                <a href="http://repo.jing.rocks/devuan-cd/"><span class="icon-download"></span> repo.jing.rocks/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://mirror.akardam.net/devuan-cd/"><span class="icon-download"></span> mirror.akardam.net/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="http://dev1iso.registrationsplus.net/"><span class="icon-download"></span> dev1iso.registrationsplus.net/</a>
+              </li>
+              <li>
+                <a href="http://devuan.c3sl.ufpr.br/devuan/"><span class="icon-download"></span> devuan.c3sl.ufpr.br/devuan/</a>
+              </li>
+              <li>
+                <a href="http://mirror.dogged.ca/devuan-cd/"><span class="icon-download"></span> mirror.dogged.ca/devuan-cd/</a>
+              </li>
+              <li>
+                  <a href="http://devuan.tuxmirrors.xyz/"><span class="icon-download"></span> devuan.tuxmirrors.xyz/</a>
+              </li>
+            </ul>
+          </div>
+          <div class="mirror-list-protocol">
+            <h4>FTP mirrors</h4>
+            <!-- NOTE: Append new entries to bottom of list -->
+            <ul>
+              <li>
+                <a href="ftp://mirror.leaseweb.com/devuan/"><span class="icon-download"></span> mirror.leaseweb.com/devuan/</a>
+              </li>
+              <li>
+                <a href="ftp://ftp.nluug.nl/pub/os/Linux/distr/devuan/"><span class="icon-download"></span> ftp.nluug.nl/pub/os/Linux/distr/devuan/</a>
+              </li>
+              <li>
+                <a href="ftp://mirror.belltower.us/devuan/"><span class="icon-download"></span> mirror.belltower.us/devuan/</a>
+              </li>
+              <li>
+                <a href="ftp://sledjhamr.org/devuan-cd/"><span class="icon-download"></span> sledjhamr.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="ftp://mirrors.dotsrc.org/devuan-cd/"><span class="icon-download"></span> mirrors.dotsrc.org/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="ftp://devuan.ipacct.com/devuan-cd/"><span class="icon-download"></span> devuan.ipacct.com/devuan-cd/</a>
+              </li>
+<!-- Currently unresponsive ...
+              <li>
+                <a href="ftp://mirror.checkdomain.de/devuan-archive/"><span class="icon-download"></span> mirror.checkdomain.de/devuan-archive/</a>
+              </li>
+-->
+              <li>
+                <a href="ftp://mirrors.ocf.berkeley.edu/devuan-cd/"><span class="icon-download"></span> mirrors.ocf.berkeley.edu/devuan-cd/</a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="ftp://mirror.serverion.com/devuan/"><span class="icon-download"></span> mirror.serverion.com/devuan</a>
+              </li>
+-->
+              <li>
+                <a href="ftp://ftpmirror1.infania.net/mirror/devuan/"><span class="icon-download"></span> ftpmirror1.infania.net/mirror/devuan/</a>
+              </li>
+              <li>
+                <a href="ftp://repo.ifca.es/devuan-cd/"><span class="icon-download"></span> repo.ifca.es/devuan-cd/</a>
+              </li>
+              <li>
+                <a href="ftp://mirror.akardam.net/devuan-cd/"><span class="icon-download"></span> mirror.akardam.net/devuan-cd/</a>
+              </li>
+            </ul>
+          </div>
+          <div class="mirror-list-protocol">
+            <h4>RSYNC mirrors</h4>
+            <!-- NOTE: Append new entries to bottom of list -->
+            <ul>
+              <li>
+                <a href="rsync://mirror.leaseweb.com::devuan/"><span class="icon-download"></span> <code>mirror.leaseweb.com::devuan/</code></a>
+              </li>
+              <li>
+                <a href="rsync://ftp.nluug.nl::devuan/"><span class="icon-download"></span> <code>ftp.nluug.nl::devuan/</code></a>
+              </li>
+              <li>
+                <a href="rsync://mirror.math.princeton.edu::pub/devuan/"><span class="icon-download"></span> <code>mirror.math.princeton.edu::pub/devuan/</code></a>
+              </li>
+              <li>
+                <a href="rsync://mirror.alpix.eu::devuan/"><span class="icon-download"></span> <code>mirror.alpix.eu::devuan/</code></a>
+              </li>
+              <li>
+                <a href="rsync://mirror.belltower.us::devuan/"><span class="icon-download"></span> <code>mirror.belltower.us::devuan/</code></a>
+              </li>
+              <li>
+                <a href="rsync://merlin.fit.vut.cz::devuan-cd/"><span class="icon-download"></span> <code>merlin.fit.vut.cz::devuan-cd/</code></a>
+              </li>
+<!-- Currently refusing connections ...
+              <li>
+                <a href="rsync://sledjhamr.org::devuan-cd/"><span class="icon-download"></span> <code>sledjhamr.org::devuan-cd/</code></a>
+              </li>
+-->
+              <li>
+                <a href="rsync://mirrors.dotsrc.org::devuan-cd/"><span class="icon-download"></span> <code>mirrors.dotsrc.org::devuan-cd/</code></a>
+              </li>
+              <li>
+                <a href="rsync://devuan.ipacct.com::devuan/devuan-cd/"><span class="icon-download"></span> <code>devuan.ipacct.com::devuan/devuan-cd/</code></a>
+              </li>
+              <li>
+                <a href="rsync://mirrors.ocf.berkeley.edu::devuan-cd/"><span class="icon-download"></span> <code>mirrors.ocf.berkeley.edu::devuan-cd/</code></a>
+              </li>
+<!-- Currently down ...
+              <li>
+                <a href="rsync://mirror.serverion.com::devuan/"><span class="icon-download"></span> <code>mirror.serverion.com::devuan/</code></a>
+              </li>
+-->
+              <li>
+                <a href="rsync://repo.ifca.es::devuan-cd/"><span class="icon-download"></span> <code>repo.ifca.es::devuan-cd/</code></a>
+              </li>
+              <li>
+                <a href="rsync://repo.jing.rocks::devuan-cd/"><span class="icon-download"></span> <code>repo.jing.rocks::devuan-cd/</code></a>
+              </li>
+            </ul>
+          </div>
+        </div>
+<!-- release -->
+        <h2 id="torrent-and-magnet-link">Torrent and Magnet Link</h2>
+        <ul>
+          <li>
+            <a href="https://files.devuan.org/devuan_excalibur.torrent">Release torrent</a>
+          </li>
+<!-- point -->
+          <li>
+            <a href="magnet:?xt=urn:btih:11e88cad47556ffcfe920957663ab418407ea1fb&dn=devuan_excalibur&tr=http%3A%2F%2Fbttracker.debian.org%3A6969%2Fannounce&tr=udp%3A%2F%2Fpublic.popcorn-tracker.org%3A6969%2Fannounce&tr=http%3A%2F%2Fmgtracker.org%3A2710%2Fannounce&tr=http%3A%2F%2Fopen.acgtracker.com%3A1096%2Fannounce&tr=http%3A%2F%2Fthetracker.org%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.bittorrent.am%2Fannounce&tr=http%3A%2F%2Ftracker.bittor.pw%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.aletorrenty.pl%3A2710%2Fannounce&tr=http%3A%2F%2Ftorrentsmd.com%3A8080%2Fannounce&tr=http%3A%2F%2Ft2.pow7.com%2Fannounce&tr=http%3A%2F%2Fretracker.gorcomnet.ru%2Fannounce&tr=http%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.grepler.com%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker.internetwarriors.net%3A1337%2Fannounce&tr=http%3A%2F%2Ftracker.kuroy.me%3A5944%2Fannounce&tr=udp%3A%2F%2Feddie4.nl%3A6969%2Fannounce&tr=udp%3A%2F%2Fopen.stealth.si%3A80%2Fannounce"><span class="icon-magnet"></span> magnet link</a>
+          </li>
+<!-- Old versions ...
+            <a href="magnet:?xt=urn:btih:673c0c7f8e46e1902cea1071d5ce602bd307605b&dn=devuan_excalibur&tr=udp%3A%2F%2Ftracker.opentrackr.org%3A1337%2Fannounce&tr=udp%3A%2F%2F9.rarbg.me%3A2710%2Fannounce&tr=udp%3A%2F%2Ftracker.cyberia.is%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.port443.xyz%3A6969%2Fannounce&tr=http%3A%2F%2Ftracker3.itzmx.com%3A6961%2Fannounce&tr=udp%3A%2F%2Ftracker.moeking.me%3A6969%2Fannounce&tr=http%3A%2F%2Fvps02.net.orel.ru%3A80%2Fannounce&tr=http%3A%2F%2Ftracker.openzim.org%3A80%2Fannounce&tr=udp%3A%2F%2Ftracker.skynetcloud.tk%3A6969%2Fannounce&tr=https%3A%2F%2F1.tracker.eu.org%3A443%2Fannounce&tr=https%3A%2F%2F3.tracker.eu.org%3A443%2Fannounce&tr=http%3A%2F%2Fre-tracker.uz%3A80%2Fannounce&tr=https%3A%2F%2Ftracker.parrotsec.org%3A443%2Fannounce&tr=udp%3A%2F%2Fexplodie.org%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.filemail.com%3A6969%2Fannounce&tr=udp%3A%2F%2Ftracker.nyaa.uk%3A6969%2Fannounce&tr=udp%3A%2F%2Fretracker.netbynet.ru%3A2710%2Fannounce&tr=http%3A%2F%2Ftracker.gbitt.info%3A80%2Fannounce&tr=http%3A%2F%2Ftracker2.dler.org%3A80%2Fannounce"><span class="icon-magnet"></span> magnet link</a>
+     <a href="magnet:?xt=urn:btih:8d5286ad41a0fbc6213ad6b9285232c1f467a8a3&dn=devuan_excalibur&tr=https%3a%2f%2f3.tracker.eu.org%3a443%2fannounce&tr=udp%3a%2f%2ftracker.opentrackr.org%3a1337%2fannounce&tr=https%3a%2f%2f1.tracker.eu.org%3a443%2fannounce&tr=http%3a%2f%2ftracker2.dler.org%3a80%2fannounce"><span class="icon-magnet"></span> magnet link</a>
+	    <a href="magnet:?xt=urn:btih:cc0a77ff0289d943aa82181af168ed138eec01d6&dn=Devuan%20Chimaera&tr=udp://tracker.cyberia.is:6969/announce&tr=udp://tracker.port443.xyz:6969/announce&tr=http://tracker3.itzmx.com:6961/announce&tr=udp://tracker.moeking.me:6969/announce&tr=http://vps02.net.orel.ru:80/announce&tr=http://tracker.openzim.org:80/announce&tr=udp://tracker.skynetcloud.tk:6969/announce&tr=https://1.tracker.eu.org:443/announce&tr=https://3.tracker.eu.org:443/announce&tr=http://re-tracker.uz:80/announce&tr=https://tracker.parrotsec.org:443/announce&tr=udp://explodie.org:6969/announce&tr=udp://tracker.filemail.com:6969/announce&tr=udp://tracker.nyaa.uk:6969/announce&tr=udp://retracker.netbynet.ru:2710/announce&tr=http://tracker.gbitt.info:80/announce&tr=http://tracker2.dler.org:80/announce"><span class="icon-magnet"></span> magnet link</a>
+	  </li>
+-->
+        </ul>
+<!-- point -->
+<!-- release -->
+        <p>The torrent contains all files for a given release. You can select which files to download if you have limited bandwidth or storage. Please seed if you can (~16.21GB)!</p>
+        <h2 id="distributions-based-on-devuan">Distributions Based on Devuan</h2>
+        <p>The official Devuan installation options shouldn’t be considered the only way to use Devuan. A <a href="/os/devuan-distros">number of derivatives</a> have already adopted Devuan as a base. When reviewing Devuan we do recommend taking them into consideration. They harness the power of our base distribution by targeting specific usage which is exactly what we hope to achieve with Devuan. Please go to the <a target="_blank" rel="nofollow" href="https://dev1galaxy.org">dev1galaxy.org forum</a> for <a target="_blank" rel="nofollow" href="https://dev1galaxy.org/viewforum.php?id=9">Devuan derivatives discussion and support</a>.</p>
+      </article>
+    </main>
+    <p style="margin-top:-30px; margin-bottom:30px ; text-align: center;">This site is free of cookies and javascript</p>
+    <footer class="row" id="find">
+      <p class="row" id="copyright">Copyright © 2014-2026 <a href="https://www.dyne.org/" data-rel="fiscal sponsor" title="Learn about our fiscal sponsor"><img src="/ui/img/dyne.org.png" style="display: inline-block; margin: 0 0.5rem -.7rem 0">Dyne.org foundation</a> <span>—</span> <a rel="license" href="https://creativecommons.org/licenses/by-sa/4.0/" title="This work is licensed under a Creative Commons Attribution-ShareAlike 4.0 International License. ">CC-BY-SA 4.0 international</a> <span>—</span> <a title="Source code for this web" href="https://git.devuan.org/devuan/www.devuan.org">site source</a> <span>—</span> <a href="/os/contact">contact</a></p>
+      <p id="copyright" style="font-size: .8em; line-height: 100%; margin-top: -1.5em; margin-bottom: 2em">Devuan is a registered trademark of the Dyne.org foundation. Debian is a registered trademark of Software in the Public Interest, Inc. Linux is a registered trademark of Linus Torvalds.</p>
+    </footer>
+  </body>
+</html>

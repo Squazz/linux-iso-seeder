@@ -542,9 +542,9 @@ def download_torrent(name, url):
 
 def fetch_ubuntu_lts():
     try:
-        text = requests.get(
-            "https://changelogs.ubuntu.com/meta-release-lts", timeout=30
-        ).text
+        r = requests.get("https://changelogs.ubuntu.com/meta-release-lts", timeout=30)
+        r.raise_for_status()
+        text = r.text
         blocks = [b for b in text.strip().split("\n\n") if "Supported: 1" in b]
         results = {}
 
@@ -628,7 +628,9 @@ def _kali_torrent_urls(ver):
 def fetch_kali_latest():
     url = "https://www.kali.org/get-kali/#kali-installer-images"
     try:
-        html = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        html = r.text
 
         matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
         if not matches:
@@ -662,7 +664,9 @@ def fetch_kali_old_versions():
     current release to find."""
     url = "https://cdimage.kali.org/"
     try:
-        html = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        html = r.text
         soup = BeautifulSoup(html, "html.parser")
 
         versions = []
@@ -744,7 +748,9 @@ def fetch_devuan_latest():
     release codename (e.g. devuan_excalibur.torrent)."""
     url = "https://www.devuan.org/get-devuan"
     try:
-        text = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        text = r.text
         match = re.search(r"https://files\.devuan\.org/devuan_\w+\.torrent", text)
         if not match:
             logger.warning("Could not find a Devuan release torrent link on %s", url)
@@ -761,7 +767,9 @@ def fetch_devuan_latest():
 def fetch_linuxmint_cinnamon():
     url = "https://www.linuxmint.com/download.php"
     try:
-        text = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        text = r.text
         match = re.search(r"<title>Download Linux Mint ([\d.]+)", text)
         if not match:
             logger.warning("Could not detect a Linux Mint version on %s", url)

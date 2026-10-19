@@ -1,8 +1,7 @@
 """Tests for torrent_scrape.py: bencode parsing and tracker "scrape" support.
 
-Unlike fetch_torrents.py, this module has no apk-only or container-specific
-imports (just requests + stdlib), so it can be imported directly in a plain
-test environment.
+Socket-level tests replace socket.socket with mocks; any real connection
+is refused (helpers.block_network()).
 
 Run with: python -m unittest discover -s tests
 """
@@ -20,7 +19,13 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+import helpers
+
 import torrent_scrape as ts
+
+
+def setUpModule():
+    unittest.addModuleCleanup(helpers.block_network())
 
 
 def bstr(s):

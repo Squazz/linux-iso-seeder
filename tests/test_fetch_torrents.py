@@ -35,6 +35,7 @@ def setUpModule():
     patcher = helpers.isolated_env()
     patcher.start()
     unittest.addModuleCleanup(patcher.stop)
+    unittest.addModuleCleanup(helpers.block_network())
 
 
 FakeTorrent = helpers.FakeTorrent
@@ -1095,12 +1096,9 @@ class FetchUbuntuLtsNamingTests(unittest.TestCase):
     def test_candidate_names_include_arch_and_iso_suffix(self):
         meta_release = "Dist: noble\nVersion: 24.04\nSupported: 1\n"
 
-        class FakeResponse:
-            text = meta_release
+        response = helpers.fake_response(meta_release)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_ubuntu_lts()
 
         self.assertTrue(results)
@@ -1115,15 +1113,9 @@ class FetchDebianStableNamingTests(unittest.TestCase):
     def test_candidate_name_keeps_iso_suffix(self):
         html = '<html><body><a href="debian-12.5.0-amd64-DVD-1.iso.torrent">link</a></body></html>'
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_debian_stable()
 
         self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
@@ -1138,12 +1130,9 @@ class FetchLinuxMintCinnamonNamingTests(unittest.TestCase):
     def test_candidate_name_matches_torrent_internal_name(self):
         html = "<title>Download Linux Mint 22.3 - Linux Mint</title>"
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_linuxmint_cinnamon()
 
         self.assertIn("linuxmint-22.3-cinnamon-64bit.iso", results)
@@ -1170,15 +1159,9 @@ class FetchFedoraWorkstationNamingTests(unittest.TestCase):
             "</body></html>"
         )
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_fedora_workstation()
 
         self.assertEqual(
@@ -1206,15 +1189,9 @@ class FetchArchLatestNamingTests(unittest.TestCase):
             "</table></body></html>"
         )
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_arch_latest()
 
         self.assertEqual(
@@ -1227,15 +1204,9 @@ class FetchArchLatestNamingTests(unittest.TestCase):
     def test_no_available_releases_returns_false(self):
         html = "<html><body><table id='release-table'></table></body></html>"
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             result = ft.fetch_arch_latest()
 
         self.assertFalse(result)
@@ -1255,12 +1226,9 @@ class FetchDevuanLatestNamingTests(unittest.TestCase):
             "</ul>"
         )
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_devuan_latest()
 
         self.assertEqual(
@@ -1269,12 +1237,9 @@ class FetchDevuanLatestNamingTests(unittest.TestCase):
         )
 
     def test_returns_false_when_no_torrent_link_found(self):
-        class FakeResponse:
-            text = "<html><body>nothing here</body></html>"
+        response = helpers.fake_response("<html><body>nothing here</body></html>")
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             result = ft.fetch_devuan_latest()
 
         self.assertFalse(result)
@@ -1420,12 +1385,9 @@ class DownloadTorrent404Tests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def test_404_response_is_not_found_not_failed(self):
-        class FakeResponse:
-            status_code = 404
+        response = helpers.fake_response(status=404)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             status = ft.download_torrent(
                 "ubuntu-14.04.6-live-server-amd64.iso",
                 "https://example.invalid/x.torrent",
@@ -1438,15 +1400,9 @@ class DownloadTorrent404Tests(unittest.TestCase):
         self.assertFalse(os.path.exists(dest))
 
     def test_other_http_error_is_still_failed(self):
-        class FakeResponse:
-            status_code = 500
+        response = helpers.fake_response(status=500)
 
-            def raise_for_status(self):
-                raise ft.requests.HTTPError("500 Server Error")
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             status = ft.download_torrent(
                 "ubuntu-24.04-desktop-amd64.iso", "https://example.invalid/x.torrent"
             )
@@ -1454,16 +1410,9 @@ class DownloadTorrent404Tests(unittest.TestCase):
         self.assertEqual(status, "failed")
 
     def test_successful_download_is_still_added(self):
-        class FakeResponse:
-            status_code = 200
-            content = b"fake torrent bytes"
+        response = helpers.fake_response(b"fake torrent bytes")
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             status = ft.download_torrent(
                 "ubuntu-24.04-desktop-amd64.iso", "https://example.invalid/x.torrent"
             )
@@ -1958,12 +1907,9 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
             "</body></html>"
         )
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_kali_old_versions()
 
         self.assertTrue(results)
@@ -1973,12 +1919,9 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
     def test_single_version_folder_returns_nothing(self):
         html = '<html><body><a href="current/">current</a><a href="kali-2026.2/">kali-2026.2</a></body></html>'
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_kali_old_versions()
 
         self.assertEqual(results, {})
@@ -1998,15 +1941,9 @@ class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
             "</body></html>"
         )
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_fedora_workstation_old_versions()
 
         self.assertEqual(
@@ -2020,15 +1957,9 @@ class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
     def test_single_version_per_arch_returns_nothing(self):
         html = '<html><body><a href="Fedora-Workstation-Live-x86_64-44.torrent">a</a></body></html>'
 
-        class FakeResponse:
-            text = html
+        response = helpers.fake_response(html)
 
-            def raise_for_status(self):
-                pass
-
-        with unittest.mock.patch.object(
-            ft.requests, "get", return_value=FakeResponse()
-        ):
+        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_fedora_workstation_old_versions()
 
         self.assertEqual(results, {})
@@ -2177,11 +2108,10 @@ class HasUnmetDemandTests(unittest.TestCase):
 
 class EvaluateOldReleaseDemandTests(unittest.TestCase):
     def test_404_is_not_kept_and_not_scraped(self):
-        class FakeResponse:
-            status_code = 404
+        response = helpers.fake_response(status=404)
 
         with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(ft.requests, "get", return_value=response),
             unittest.mock.patch.object(
                 ft.torrent_scrape, "scrape_torrent"
             ) as mock_scrape,
@@ -2216,15 +2146,10 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
         self.assertIsNone(scrape_result)
 
     def test_scrape_below_threshold_is_not_kept(self):
-        class FakeResponse:
-            status_code = 200
-            content = b"fake torrent bytes"
-
-            def raise_for_status(self):
-                pass
+        response = helpers.fake_response(b"fake torrent bytes")
 
         with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(ft.requests, "get", return_value=response),
             unittest.mock.patch.object(
                 ft.torrent_scrape,
                 "scrape_torrent",
@@ -2249,15 +2174,10 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
         self.assertEqual(scrape_result["leechers"], 0)
 
     def test_scrape_meeting_threshold_is_kept(self):
-        class FakeResponse:
-            status_code = 200
-            content = b"fake torrent bytes"
-
-            def raise_for_status(self):
-                pass
+        response = helpers.fake_response(b"fake torrent bytes")
 
         with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(ft.requests, "get", return_value=response),
             unittest.mock.patch.object(
                 ft.torrent_scrape,
                 "scrape_torrent",
@@ -2282,17 +2202,12 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
         self.assertEqual(scrape_result["leechers"], 30)
 
     def test_meets_absolute_floor_but_already_well_seeded_is_not_kept(self):
-        class FakeResponse:
-            status_code = 200
-            content = b"fake torrent bytes"
-
-            def raise_for_status(self):
-                pass
+        response = helpers.fake_response(b"fake torrent bytes")
 
         # 1 leecher clears a min_leechers=1 floor, but 1000 seeders already
         # cover it - not unmet demand.
         with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(ft.requests, "get", return_value=response),
             unittest.mock.patch.object(
                 ft.torrent_scrape,
                 "scrape_torrent",

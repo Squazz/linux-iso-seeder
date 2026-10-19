@@ -15,6 +15,7 @@ Run with: python -m unittest discover -s tests
 
 import contextlib
 import io
+import json
 import logging
 import os
 import runpy
@@ -35,6 +36,11 @@ import helpers
 
 import fetch_torrents as ft
 
+
+def setUpModule():
+    unittest.addModuleCleanup(helpers.block_network())
+
+
 UBUNTU_META = (
     "Dist: jammy\nName: Jammy Jellyfish\nVersion: 22.04 LTS\nSupported: 0\n\n"
     "Dist: noble\nName: Noble Numbat\nVersion: 24.04 LTS\nSupported: 1\n"
@@ -50,22 +56,6 @@ ARCH_HTML = (
     "</table></body></html>"
 )
 ARCH_TORRENT = "https://archlinux.org/releng/releases/2026.09.01/torrent/"
-
-
-class FakeResponse:
-    def __init__(self, status_code=200, text="", content=b"", headers=None, body=None):
-        self.status_code = status_code
-        self.text = text
-        self.content = content
-        self.headers = headers or {}
-        self._body = body
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise ft.requests.HTTPError(f"HTTP {self.status_code}")
-
-    def json(self):
-        return self._body
 
 
 def torrent(name, id_, ratio):
@@ -88,18 +78,18 @@ class FakeWorld:
         self.requested.append(url)
         route = self.routes.get(url)
         if route is None:
-            return FakeResponse(404)
+            return helpers.fake_response(status=404)
         if isinstance(route, Exception):
             raise route
         return route
 
-    def post(self, url, json=None, **kwargs):
-        if json is None:
-            return FakeResponse(headers={"X-Transmission-Session-Id": "sid"})
+    def post(self, url, **kwargs):
+        if kwargs.get("json") is None:  # the session-id handshake
+            return helpers.fake_response(headers={"X-Transmission-Session-Id": "sid"})
         torrents = [
             {"name": t.name, "uploadRatio": t.ratio} for t in self.transmission.torrents
         ]
-        return FakeResponse(body={"arguments": {"torrents": torrents}})
+        return helpers.fake_response(json.dumps({"arguments": {"torrents": torrents}}))
 
     def connect(self):
         self.events.append("connect")
@@ -128,21 +118,25 @@ class FakeWorld:
     def route_ubuntu(self):
         self.routes.update(
             {
-                "https://changelogs.ubuntu.com/meta-release-lts": FakeResponse(
-                    text=UBUNTU_META
+                "https://changelogs.ubuntu.com/meta-release-lts": helpers.fake_response(
+                    UBUNTU_META
                 ),
-                UBUNTU + "ubuntu-24.04-desktop-amd64.iso.torrent": FakeResponse(
-                    content=b"d1"
+                UBUNTU
+                + "ubuntu-24.04-desktop-amd64.iso.torrent": helpers.fake_response(
+                    b"d1"
                 ),
                 # live-server: not routed -> 404
-                LUBUNTU + "lubuntu-24.04-desktop-amd64.iso.torrent": FakeResponse(500),
-                XUBUNTU
-                + "desktop/xubuntu-24.04-desktop-amd64.iso.torrent": FakeResponse(
-                    content=b"x1"
+                LUBUNTU
+                + "lubuntu-24.04-desktop-amd64.iso.torrent": helpers.fake_response(
+                    status=500
                 ),
                 XUBUNTU
-                + "minimal/xubuntu-24.04-minimal-amd64.iso.torrent": FakeResponse(
-                    content=b"x2"
+                + "desktop/xubuntu-24.04-desktop-amd64.iso.torrent": helpers.fake_response(
+                    b"x1"
+                ),
+                XUBUNTU
+                + "minimal/xubuntu-24.04-minimal-amd64.iso.torrent": helpers.fake_response(
+                    b"x2"
                 ),
             }
         )
@@ -155,8 +149,8 @@ class FakeWorld:
     def route_arch(self):
         self.routes.update(
             {
-                ARCH_RELEASES: FakeResponse(text=ARCH_HTML),
-                ARCH_TORRENT: FakeResponse(content=b"a1"),
+                ARCH_RELEASES: helpers.fake_response(ARCH_HTML),
+                ARCH_TORRENT: helpers.fake_response(b"a1"),
             }
         )
 

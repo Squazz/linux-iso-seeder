@@ -21,6 +21,10 @@ import helpers
 import configure_transmission as ct
 
 
+def setUpModule():
+    unittest.addModuleCleanup(helpers.block_network())
+
+
 class BuildRpcOverridesTests(unittest.TestCase):
     def test_no_relevant_env_vars_yields_no_overrides(self):
         self.assertEqual(ct.build_rpc_overrides({}), {})
