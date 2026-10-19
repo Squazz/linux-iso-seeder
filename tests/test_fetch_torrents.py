@@ -8,6 +8,7 @@ FETCH_TORRENTS_LOG_DIR at a temp directory before importing it.
 
 Run with: python -m unittest discover -s tests
 """
+
 import json
 import os
 import subprocess
@@ -19,12 +20,14 @@ import unittest.mock
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
-if 'transmission_rpc' not in sys.modules:
-    stub = types.ModuleType('transmission_rpc')
+if "transmission_rpc" not in sys.modules:
+    stub = types.ModuleType("transmission_rpc")
     stub.Client = MagicMock()
-    sys.modules['transmission_rpc'] = stub
+    sys.modules["transmission_rpc"] = stub
 
-os.environ.setdefault('FETCH_TORRENTS_LOG_DIR', tempfile.mkdtemp(prefix='fetch_torrents_test_logs_'))
+os.environ.setdefault(
+    "FETCH_TORRENTS_LOG_DIR", tempfile.mkdtemp(prefix="fetch_torrents_test_logs_")
+)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
@@ -245,43 +248,63 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
 
     def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}
-        self.assertFalse(ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_debian(self):
         ratios = {"debian-12.4.0-amd64-DVD-1.iso": 0.5}
-        self.assertFalse(ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_kali(self):
         ratios = {"kali-linux-2023.4-installer-amd64.iso": 0.3}
-        self.assertFalse(ft.should_fetch_torrent("kali-linux-2024.1-installer-amd64.iso", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("kali-linux-2024.1-installer-amd64.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_arch(self):
         ratios = {"archlinux-2024.04.01-x86_64.iso": 0.2}
-        self.assertFalse(ft.should_fetch_torrent("archlinux-2024.05.01-x86_64.iso", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("archlinux-2024.05.01-x86_64.iso", ratios)
+        )
 
     def test_finds_previous_version_and_allows_high_ratio_ubuntu(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.5}
-        self.assertTrue(ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios))
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
 
     def test_finds_previous_version_and_allows_high_ratio_debian(self):
         ratios = {"debian-12.4.0-amd64-DVD-1.iso": 1.5}
-        self.assertTrue(ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios))
+        self.assertTrue(
+            ft.should_fetch_torrent("debian-12.5.0-amd64-DVD-1.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_mint(self):
         ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 0.4}
-        self.assertFalse(ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios)
+        )
 
     def test_finds_previous_version_and_allows_high_ratio_mint(self):
         ratios = {"linuxmint-22.2-cinnamon-64bit.iso": 1.5}
-        self.assertTrue(ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios))
+        self.assertTrue(
+            ft.should_fetch_torrent("linuxmint-22.3-cinnamon-64bit.iso", ratios)
+        )
 
     def test_finds_previous_version_and_honors_low_ratio_fedora(self):
         ratios = {"Fedora-Workstation-Live-x86_64-43": 0.4}
-        self.assertFalse(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
+        self.assertFalse(
+            ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios)
+        )
 
     def test_finds_previous_version_and_allows_high_ratio_fedora(self):
         ratios = {"Fedora-Workstation-Live-x86_64-43": 1.5}
-        self.assertTrue(ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios))
+        self.assertTrue(
+            ft.should_fetch_torrent("Fedora-Workstation-Live-x86_64-44", ratios)
+        )
 
 
 class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
@@ -294,22 +317,34 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
 
     def test_falls_back_to_removed_history_ratio_when_not_live(self):
         removed_history = {
-            'ubuntu-23.10-desktop-amd64.iso': {
-                'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.4,
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.4,
             },
         }
         self.assertFalse(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
         )
 
     def test_removed_history_ratio_above_floor_allows_fetch(self):
         removed_history = {
-            'ubuntu-23.10-desktop-amd64.iso': {
-                'removed_date': '2026-01-01', 'reason': 'keep_only_latest', 'ratio': 1.5,
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "keep_only_latest",
+                "ratio": 1.5,
             },
         }
         self.assertTrue(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
         )
 
     def test_live_ratio_takes_priority_over_removed_history(self):
@@ -317,31 +352,52 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
         # still reports hasn't been removed), but live data winning if it ever
         # happens is the safer default.
         removed_history = {
-            'ubuntu-23.10-desktop-amd64.iso': {
-                'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.1,
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.1,
             },
         }
-        ratios = {'ubuntu-23.10-desktop-amd64.iso': 1.5}
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.5}
         self.assertTrue(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios,
+                removed_history=removed_history,
+            )
         )
 
     def test_removed_history_entry_without_ratio_is_ignored(self):
         # Legacy entries recorded before this field existed have no 'ratio'
         # key - must not crash, and must not count as a usable prior version.
         removed_history = {
-            'ubuntu-23.10-desktop-amd64.iso': {'removed_date': '2026-01-01', 'reason': 'stagnant'},
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+            },
         }
         self.assertTrue(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
         )
 
     def test_removed_history_from_a_different_distro_is_not_consulted(self):
         removed_history = {
-            'debian-12.4.0-amd64-DVD-1.iso': {'removed_date': '2026-01-01', 'reason': 'stagnant', 'ratio': 0.1},
+            "debian-12.4.0-amd64-DVD-1.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.1,
+            },
         }
         self.assertTrue(
-            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
         )
 
 
@@ -370,18 +426,30 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
 
     def test_falls_back_to_removed_history_when_no_live_ratio(self):
         removed_history = {
-            "devuan_daedalus": {"removed_date": "2026-01-01", "reason": "stagnant", "ratio": 0.4},
+            "devuan_daedalus": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.4,
+            },
         }
         self.assertFalse(
-            ft.should_fetch_torrent("devuan_excalibur", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "devuan_excalibur", ratios={}, removed_history=removed_history
+            )
         )
 
     def test_other_distros_removed_history_not_consulted_for_devuan(self):
         removed_history = {
-            "debian-12.4.0-amd64-DVD-1.iso": {"removed_date": "2026-01-01", "reason": "stagnant", "ratio": 0.1},
+            "debian-12.4.0-amd64-DVD-1.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.1,
+            },
         }
         self.assertTrue(
-            ft.should_fetch_torrent("devuan_excalibur", ratios={}, removed_history=removed_history)
+            ft.should_fetch_torrent(
+                "devuan_excalibur", ratios={}, removed_history=removed_history
+            )
         )
 
 
@@ -394,9 +462,9 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
     about what happens between import and the first get_previous_ratios() call."""
 
     def test_previous_ratios_are_readable_after_a_fresh_start(self):
-        log_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_restart_')
-        ratio_log_path = os.path.join(log_dir, 'fetch_torrents_ratios.log')
-        with open(ratio_log_path, 'w', encoding='utf-8') as f:
+        log_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_restart_")
+        ratio_log_path = os.path.join(log_dir, "fetch_torrents_ratios.log")
+        with open(ratio_log_path, "w", encoding="utf-8") as f:
             f.write(
                 "2026-08-01 00:00:00,000 INFO: [ratio] RATIOS START\n"
                 "2026-08-01 00:00:00,000 INFO: [ratio] archlinux-2026.04.01-x86_64.iso            → 0.664\n"
@@ -415,13 +483,17 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
         )
         env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir)
         result = subprocess.run(
-            [sys.executable, '-c', script],
-            env=env, capture_output=True, text=True, timeout=30,
+            [sys.executable, "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(
-            "archlinux-2026.04.01-x86_64.iso", result.stdout,
+            "archlinux-2026.04.01-x86_64.iso",
+            result.stdout,
             "get_previous_ratios() found nothing from the prior run's ratio "
             "log - it was likely wiped by the ratio FileHandler's mode='w' "
             "open at import time, before ever being read. That silently "
@@ -438,7 +510,7 @@ class LogFileRotationTests(unittest.TestCase):
     was in effect during test collection)."""
 
     def _run(self, extra_env=None):
-        log_dir = tempfile.mkdtemp(prefix='fetch_torrents_log_rotation_')
+        log_dir = tempfile.mkdtemp(prefix="fetch_torrents_log_rotation_")
         script = (
             "import os, sys, types\n"
             "from unittest.mock import MagicMock\n"
@@ -453,8 +525,11 @@ class LogFileRotationTests(unittest.TestCase):
         )
         env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir, **(extra_env or {}))
         result = subprocess.run(
-            [sys.executable, '-c', script],
-            env=env, capture_output=True, text=True, timeout=30,
+            [sys.executable, "-c", script],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         lines = result.stdout.splitlines()
@@ -462,21 +537,27 @@ class LogFileRotationTests(unittest.TestCase):
 
     def test_defaults_to_a_bounded_rotating_handler(self):
         handler_type, max_bytes, backup_count = self._run()
-        self.assertEqual(handler_type, 'RotatingFileHandler')
+        self.assertEqual(handler_type, "RotatingFileHandler")
         self.assertEqual(max_bytes, 5 * 1024 * 1024)
         self.assertEqual(backup_count, 3)
 
     def test_env_vars_override_rotation_settings(self):
-        _handler_type, max_bytes, backup_count = self._run({
-            'FETCH_TORRENTS_LOG_MAX_BYTES': '1000', 'FETCH_TORRENTS_LOG_BACKUP_COUNT': '1',
-        })
+        _handler_type, max_bytes, backup_count = self._run(
+            {
+                "FETCH_TORRENTS_LOG_MAX_BYTES": "1000",
+                "FETCH_TORRENTS_LOG_BACKUP_COUNT": "1",
+            }
+        )
         self.assertEqual(max_bytes, 1000)
         self.assertEqual(backup_count, 1)
 
     def test_invalid_env_vars_fall_back_to_defaults(self):
-        _handler_type, max_bytes, backup_count = self._run({
-            'FETCH_TORRENTS_LOG_MAX_BYTES': 'not-a-number', 'FETCH_TORRENTS_LOG_BACKUP_COUNT': 'also-bad',
-        })
+        _handler_type, max_bytes, backup_count = self._run(
+            {
+                "FETCH_TORRENTS_LOG_MAX_BYTES": "not-a-number",
+                "FETCH_TORRENTS_LOG_BACKUP_COUNT": "also-bad",
+            }
+        )
         self.assertEqual(max_bytes, 5 * 1024 * 1024)
         self.assertEqual(backup_count, 3)
 
@@ -489,16 +570,14 @@ class FetchUbuntuLtsNamingTests(unittest.TestCase):
     tasks/02-ratio-key-mismatch-ubuntu-debian.md."""
 
     def test_candidate_names_include_arch_and_iso_suffix(self):
-        meta_release = (
-            "Dist: noble\n"
-            "Version: 24.04\n"
-            "Supported: 1\n"
-        )
+        meta_release = "Dist: noble\nVersion: 24.04\nSupported: 1\n"
 
         class FakeResponse:
             text = meta_release
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_ubuntu_lts()
 
         self.assertTrue(results)
@@ -519,7 +598,9 @@ class FetchDebianStableNamingTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_debian_stable()
 
         self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
@@ -537,7 +618,9 @@ class FetchLinuxMintCinnamonNamingTests(unittest.TestCase):
         class FakeResponse:
             text = html
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_linuxmint_cinnamon()
 
         self.assertIn("linuxmint-22.3-cinnamon-64bit.iso", results)
@@ -570,16 +653,16 @@ class FetchFedoraWorkstationNamingTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_fedora_workstation()
 
         self.assertEqual(
             results,
             {
-                "Fedora-Workstation-Live-x86_64-44":
-                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-44.torrent",
-                "Fedora-Workstation-Live-aarch64-44":
-                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-44.torrent",
+                "Fedora-Workstation-Live-x86_64-44": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-44.torrent",
+                "Fedora-Workstation-Live-aarch64-44": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-44.torrent",
             },
         )
 
@@ -606,12 +689,16 @@ class FetchArchLatestNamingTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_arch_latest()
 
         self.assertEqual(
             results,
-            {"archlinux-2026.09.01": "https://archlinux.org/releng/releases/2026.09.01/torrent/"},
+            {
+                "archlinux-2026.09.01": "https://archlinux.org/releng/releases/2026.09.01/torrent/"
+            },
         )
 
     def test_no_available_releases_returns_false(self):
@@ -623,7 +710,9 @@ class FetchArchLatestNamingTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             result = ft.fetch_arch_latest()
 
         self.assertFalse(result)
@@ -640,13 +729,15 @@ class FetchDevuanLatestNamingTests(unittest.TestCase):
         html = (
             '<h2 id="torrent-and-magnet-link">Torrent and Magnet Link</h2><ul>'
             '<li><a href="https://files.devuan.org/devuan_excalibur.torrent">Release torrent</a></li>'
-            '</ul>'
+            "</ul>"
         )
 
         class FakeResponse:
             text = html
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_devuan_latest()
 
         self.assertEqual(
@@ -658,7 +749,9 @@ class FetchDevuanLatestNamingTests(unittest.TestCase):
         class FakeResponse:
             text = "<html><body>nothing here</body></html>"
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             result = ft.fetch_devuan_latest()
 
         self.assertFalse(result)
@@ -674,34 +767,42 @@ class ParseSupportedDistrosTests(unittest.TestCase):
 
     def test_default_excludes_opt_in_distros(self):
         with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop('FETCH_TORRENTS_DISTROS', None)
+            os.environ.pop("FETCH_TORRENTS_DISTROS", None)
             result = ft.parse_supported_distros()
-        self.assertNotIn('arch', result)
-        self.assertNotIn('devuan', result)
-        for expected in ('ubuntu', 'debian', 'kali', 'mint', 'fedora'):
+        self.assertNotIn("arch", result)
+        self.assertNotIn("devuan", result)
+        for expected in ("ubuntu", "debian", "kali", "mint", "fedora"):
             self.assertIn(expected, result)
 
     def test_explicit_opt_in_distros_are_honored(self):
-        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'arch,devuan'}):
+        with unittest.mock.patch.dict(
+            os.environ, {"FETCH_TORRENTS_DISTROS": "arch,devuan"}
+        ):
             result = ft.parse_supported_distros()
-        self.assertEqual(sorted(result), ['arch', 'devuan'])
+        self.assertEqual(sorted(result), ["arch", "devuan"])
 
     def test_can_mix_default_and_opt_in_distros(self):
-        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'ubuntu,arch'}):
+        with unittest.mock.patch.dict(
+            os.environ, {"FETCH_TORRENTS_DISTROS": "ubuntu,arch"}
+        ):
             result = ft.parse_supported_distros()
-        self.assertEqual(sorted(result), ['arch', 'ubuntu'])
+        self.assertEqual(sorted(result), ["arch", "ubuntu"])
 
     def test_unknown_entries_are_dropped_but_valid_ones_kept(self):
-        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'ubuntu,nonsense'}):
+        with unittest.mock.patch.dict(
+            os.environ, {"FETCH_TORRENTS_DISTROS": "ubuntu,nonsense"}
+        ):
             result = ft.parse_supported_distros()
-        self.assertEqual(result, ['ubuntu'])
+        self.assertEqual(result, ["ubuntu"])
 
     def test_all_invalid_falls_back_to_default_not_all_distros(self):
-        with unittest.mock.patch.dict(os.environ, {'FETCH_TORRENTS_DISTROS': 'nonsense'}):
+        with unittest.mock.patch.dict(
+            os.environ, {"FETCH_TORRENTS_DISTROS": "nonsense"}
+        ):
             result = ft.parse_supported_distros()
         self.assertEqual(sorted(result), sorted(ft.DEFAULT_DISTROS))
-        self.assertNotIn('arch', result)
-        self.assertNotIn('devuan', result)
+        self.assertNotIn("arch", result)
+        self.assertNotIn("devuan", result)
 
 
 class LowDemandVariantTests(unittest.TestCase):
@@ -791,8 +892,8 @@ class DownloadTorrent404Tests(unittest.TestCase):
     same way as a genuine download failure."""
 
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -800,13 +901,18 @@ class DownloadTorrent404Tests(unittest.TestCase):
         class FakeResponse:
             status_code = 404
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             status = ft.download_torrent(
-                'ubuntu-14.04.6-live-server-amd64.iso', 'https://example.invalid/x.torrent'
+                "ubuntu-14.04.6-live-server-amd64.iso",
+                "https://example.invalid/x.torrent",
             )
 
-        self.assertEqual(status, 'not_found')
-        dest = os.path.join(self.tmp_watch_dir, 'ubuntu-14.04.6-live-server-amd64.iso.torrent')
+        self.assertEqual(status, "not_found")
+        dest = os.path.join(
+            self.tmp_watch_dir, "ubuntu-14.04.6-live-server-amd64.iso.torrent"
+        )
         self.assertFalse(os.path.exists(dest))
 
     def test_other_http_error_is_still_failed(self):
@@ -816,30 +922,36 @@ class DownloadTorrent404Tests(unittest.TestCase):
             def raise_for_status(self):
                 raise Exception("500 Server Error")
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             status = ft.download_torrent(
-                'ubuntu-24.04-desktop-amd64.iso', 'https://example.invalid/x.torrent'
+                "ubuntu-24.04-desktop-amd64.iso", "https://example.invalid/x.torrent"
             )
 
-        self.assertEqual(status, 'failed')
+        self.assertEqual(status, "failed")
 
     def test_successful_download_is_still_added(self):
         class FakeResponse:
             status_code = 200
-            content = b'fake torrent bytes'
+            content = b"fake torrent bytes"
 
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             status = ft.download_torrent(
-                'ubuntu-24.04-desktop-amd64.iso', 'https://example.invalid/x.torrent'
+                "ubuntu-24.04-desktop-amd64.iso", "https://example.invalid/x.torrent"
             )
 
-        self.assertEqual(status, 'added')
-        dest = os.path.join(self.tmp_watch_dir, 'ubuntu-24.04-desktop-amd64.iso.torrent')
-        with open(dest, 'rb') as f:
-            self.assertEqual(f.read(), b'fake torrent bytes')
+        self.assertEqual(status, "added")
+        dest = os.path.join(
+            self.tmp_watch_dir, "ubuntu-24.04-desktop-amd64.iso.torrent"
+        )
+        with open(dest, "rb") as f:
+            self.assertEqual(f.read(), b"fake torrent bytes")
 
 
 class SafeWatchPathTests(unittest.TestCase):
@@ -850,46 +962,46 @@ class SafeWatchPathTests(unittest.TestCase):
     upstream content into a path escape."""
 
     def setUp(self):
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', '/watch')
+        patcher = unittest.mock.patch.object(ft, "watch_dir", "/watch")
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_normal_name_resolves_under_watch_dir(self):
         self.assertEqual(
-            ft._safe_watch_path('ubuntu-24.04-desktop-amd64.iso'),
-            os.path.join('/watch', 'ubuntu-24.04-desktop-amd64.iso.torrent'),
+            ft._safe_watch_path("ubuntu-24.04-desktop-amd64.iso"),
+            os.path.join("/watch", "ubuntu-24.04-desktop-amd64.iso.torrent"),
         )
 
     def test_rejects_path_separators(self):
-        self.assertIsNone(ft._safe_watch_path('archlinux-../../../etc/cron.d/evil'))
-        self.assertIsNone(ft._safe_watch_path('foo/bar'))
-        self.assertIsNone(ft._safe_watch_path('foo\\bar'))
+        self.assertIsNone(ft._safe_watch_path("archlinux-../../../etc/cron.d/evil"))
+        self.assertIsNone(ft._safe_watch_path("foo/bar"))
+        self.assertIsNone(ft._safe_watch_path("foo\\bar"))
 
     def test_rejects_empty_or_dot_names(self):
-        self.assertIsNone(ft._safe_watch_path(''))
+        self.assertIsNone(ft._safe_watch_path(""))
         self.assertIsNone(ft._safe_watch_path(None))
-        self.assertIsNone(ft._safe_watch_path('.'))
-        self.assertIsNone(ft._safe_watch_path('..'))
+        self.assertIsNone(ft._safe_watch_path("."))
+        self.assertIsNone(ft._safe_watch_path(".."))
 
 
 class DownloadTorrentUnsafeNameTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_download_torrent_refuses_unsafe_name_without_any_request(self):
-        with unittest.mock.patch.object(ft.requests, 'get') as mock_get:
-            status = ft.download_torrent('../evil', 'https://example.invalid/x.torrent')
+        with unittest.mock.patch.object(ft.requests, "get") as mock_get:
+            status = ft.download_torrent("../evil", "https://example.invalid/x.torrent")
 
         mock_get.assert_not_called()
-        self.assertEqual(status, 'failed')
+        self.assertEqual(status, "failed")
         self.assertEqual(os.listdir(self.tmp_watch_dir), [])
 
     def test_remove_watch_file_refuses_unsafe_name_without_touching_disk(self):
-        with unittest.mock.patch.object(ft.os, 'remove') as mock_remove:
-            ft._remove_watch_file('../evil')
+        with unittest.mock.patch.object(ft.os, "remove") as mock_remove:
+            ft._remove_watch_file("../evil")
 
         mock_remove.assert_not_called()
 
@@ -903,7 +1015,9 @@ class UpdateRatioHistoryTests(unittest.TestCase):
 
     def test_new_torrent_gets_a_first_sample(self):
         today = date(2026, 8, 29)
-        history = ft.update_ratio_history({}, {"archlinux-2026.08.01-x86_64.iso": 1.2}, today)
+        history = ft.update_ratio_history(
+            {}, {"archlinux-2026.08.01-x86_64.iso": 1.2}, today
+        )
 
         self.assertEqual(
             history,
@@ -916,7 +1030,9 @@ class UpdateRatioHistoryTests(unittest.TestCase):
             "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-25", "ratio": 1.0}],
         }
 
-        updated = ft.update_ratio_history(history, {"archlinux-2026.08.01-x86_64.iso": 1.1}, today)
+        updated = ft.update_ratio_history(
+            history, {"archlinux-2026.08.01-x86_64.iso": 1.1}, today
+        )
 
         # Only 4 days since the last sample (< the 7-day interval) - no new
         # sample yet, and the ratio value on the existing sample is untouched.
@@ -931,7 +1047,9 @@ class UpdateRatioHistoryTests(unittest.TestCase):
             "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-20", "ratio": 1.0}],
         }
 
-        updated = ft.update_ratio_history(history, {"archlinux-2026.08.01-x86_64.iso": 1.3}, today)
+        updated = ft.update_ratio_history(
+            history, {"archlinux-2026.08.01-x86_64.iso": 1.3}, today
+        )
 
         self.assertEqual(
             updated,
@@ -987,7 +1105,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
             "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-06-30", "ratio": 1.0}],
         }
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep, [])
@@ -1002,7 +1122,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
             "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.495}],
         }
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(names_of(to_remove), ["ubuntu-23.10-desktop-amd64.iso"])
         self.assertEqual(to_keep, [])
@@ -1017,7 +1139,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
             "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.2}],
         }
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(to_remove, [])
         self.assertEqual(len(to_keep), 1)
@@ -1036,7 +1160,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
             "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-08-24", "ratio": 0.1}],
         }
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, history, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(to_remove, [])
         self.assertEqual(len(to_keep), 1)
@@ -1051,7 +1177,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
             FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
         ]
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, {}, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, {}, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(to_remove, [])
         self.assertEqual(len(to_keep), 1)
@@ -1060,7 +1188,9 @@ class PlanStagnationCleanupTests(unittest.TestCase):
         today = date(2026, 8, 29)
         torrents = [FakeTorrent("some-random-linux-distro-1.0.iso", 1, ratio=5.0)]
 
-        to_remove, to_keep = ft.plan_stagnation_cleanup(torrents, {}, today, window_days=30, min_ratio_delta=0.02)
+        to_remove, to_keep = ft.plan_stagnation_cleanup(
+            torrents, {}, today, window_days=30, min_ratio_delta=0.02
+        )
 
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep, [])
@@ -1071,9 +1201,11 @@ class RatioHistoryPersistenceTests(unittest.TestCase):
     tolerate a missing or corrupt file rather than crashing a run."""
 
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_ratio_history.json')
-        history = {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]}
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
+        history = {
+            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]
+        }
 
         ft.save_ratio_history(path, history)
         loaded = ft.load_ratio_history(path)
@@ -1081,16 +1213,16 @@ class RatioHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, history)
 
     def test_missing_file_returns_empty_history(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
-        path = os.path.join(tmp_dir, 'does-not-exist.json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_ratio_history(path), {})
 
     def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_ratio_history_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_ratio_history.json')
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write('{not valid json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_ratio_history_")
+        path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
 
         self.assertEqual(ft.load_ratio_history(path), {})
 
@@ -1113,7 +1245,9 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
         class FakeResponse:
             text = html
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_kali_old_versions()
 
         self.assertTrue(results)
@@ -1126,7 +1260,9 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
         class FakeResponse:
             text = html
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_kali_old_versions()
 
         self.assertEqual(results, {})
@@ -1152,16 +1288,16 @@ class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_fedora_workstation_old_versions()
 
         self.assertEqual(
             results,
             {
-                "Fedora-Workstation-Live-x86_64-43":
-                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-43.torrent",
-                "Fedora-Workstation-Live-aarch64-43":
-                    "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-43.torrent",
+                "Fedora-Workstation-Live-x86_64-43": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-43.torrent",
+                "Fedora-Workstation-Live-aarch64-43": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-43.torrent",
             },
         )
 
@@ -1174,7 +1310,9 @@ class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()):
+        with unittest.mock.patch.object(
+            ft.requests, "get", return_value=FakeResponse()
+        ):
             results = ft.fetch_fedora_workstation_old_versions()
 
         self.assertEqual(results, {})
@@ -1191,20 +1329,28 @@ class HasUnmetDemandTests(unittest.TestCase):
 
     def test_none_scrape_result_is_no_demand(self):
         self.assertFalse(
-            ft.has_unmet_demand(None, min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False)
+            ft.has_unmet_demand(
+                None, min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False
+            )
         )
 
     def test_below_absolute_threshold_is_no_demand(self):
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 0, 'seeders': 0}, min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 0, "seeders": 0},
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
     def test_single_leecher_on_huge_swarm_is_no_demand(self):
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 1, 'seeders': 1000}, min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 1, "seeders": 1000},
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
@@ -1212,21 +1358,30 @@ class HasUnmetDemandTests(unittest.TestCase):
         # 11 leechers clears a min_leechers=10 floor, but 11 < 1.2x the 10 seeders.
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 11, 'seeders': 10}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 11, "seeders": 10},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
     def test_meets_both_absolute_and_ratio_thresholds_is_demand(self):
         self.assertTrue(
             ft.has_unmet_demand(
-                {'leechers': 25, 'seeders': 10}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 25, "seeders": 10},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
     def test_exactly_at_ratio_threshold_is_demand(self):
         self.assertTrue(
             ft.has_unmet_demand(
-                {'leechers': 12, 'seeders': 10}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 12, "seeders": 10},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
@@ -1238,25 +1393,36 @@ class HasUnmetDemandTests(unittest.TestCase):
         # opts into the gamble via allow_zero_seeders.
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 10, 'seeders': 0}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=False
+                {"leechers": 10, "seeders": 0},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
         )
 
     def test_zero_seeders_counts_as_demand_when_explicitly_allowed(self):
         self.assertTrue(
             ft.has_unmet_demand(
-                {'leechers': 10, 'seeders': 0}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=True
+                {"leechers": 10, "seeders": 0},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=True,
             )
         )
 
     def test_zero_seeders_still_needs_the_absolute_floor_when_allowed(self):
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 5, 'seeders': 0}, min_leechers=10, min_leecher_ratio=1.2, allow_zero_seeders=True
+                {"leechers": 5, "seeders": 0},
+                min_leechers=10,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=True,
             )
         )
 
-    def test_lopsided_but_substantial_swarms_still_count_as_demand_at_default_ratio(self):
+    def test_lopsided_but_substantial_swarms_still_count_as_demand_at_default_ratio(
+        self,
+    ):
         # FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO defaults to 0.1: we
         # have no way of knowing whether existing seeders have spare upload
         # capacity or are bandwidth-limited, so leechers don't need to
@@ -1264,12 +1430,18 @@ class HasUnmetDemandTests(unittest.TestCase):
         # and 100:1000 both clearly indicate room for another seeder.
         self.assertTrue(
             ft.has_unmet_demand(
-                {'leechers': 10, 'seeders': 100}, min_leechers=1, min_leecher_ratio=0.1, allow_zero_seeders=False
+                {"leechers": 10, "seeders": 100},
+                min_leechers=1,
+                min_leecher_ratio=0.1,
+                allow_zero_seeders=False,
             )
         )
         self.assertTrue(
             ft.has_unmet_demand(
-                {'leechers': 100, 'seeders': 1000}, min_leechers=1, min_leecher_ratio=0.1, allow_zero_seeders=False
+                {"leechers": 100, "seeders": 1000},
+                min_leechers=1,
+                min_leecher_ratio=0.1,
+                allow_zero_seeders=False,
             )
         )
 
@@ -1279,7 +1451,10 @@ class HasUnmetDemandTests(unittest.TestCase):
         # permissive 0.1 default - it needs at least 67.3 leechers.
         self.assertFalse(
             ft.has_unmet_demand(
-                {'leechers': 3, 'seeders': 673}, min_leechers=1, min_leecher_ratio=0.1, allow_zero_seeders=False
+                {"leechers": 3, "seeders": 673},
+                min_leechers=1,
+                min_leecher_ratio=0.1,
+                allow_zero_seeders=False,
             )
         )
 
@@ -1289,11 +1464,18 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
         class FakeResponse:
             status_code = 404
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()), \
-                unittest.mock.patch.object(ft.torrent_scrape, 'scrape_torrent') as mock_scrape:
+        with (
+            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(
+                ft.torrent_scrape, "scrape_torrent"
+            ) as mock_scrape,
+        ):
             keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                'ubuntu-14.04.6-desktop-amd64.iso', 'https://example.invalid/x.torrent',
-                min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False,
+                "ubuntu-14.04.6-desktop-amd64.iso",
+                "https://example.invalid/x.torrent",
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
 
         mock_scrape.assert_not_called()
@@ -1302,10 +1484,15 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
         self.assertIsNone(scrape_result)
 
     def test_download_failure_is_not_kept(self):
-        with unittest.mock.patch.object(ft.requests, 'get', side_effect=ConnectionError("nope")):
+        with unittest.mock.patch.object(
+            ft.requests, "get", side_effect=ConnectionError("nope")
+        ):
             keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                'ubuntu-14.04.6-desktop-amd64.iso', 'https://example.invalid/x.torrent',
-                min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False,
+                "ubuntu-14.04.6-desktop-amd64.iso",
+                "https://example.invalid/x.torrent",
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
 
         self.assertFalse(keep)
@@ -1315,75 +1502,108 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
     def test_scrape_below_threshold_is_not_kept(self):
         class FakeResponse:
             status_code = 200
-            content = b'fake torrent bytes'
+            content = b"fake torrent bytes"
 
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()), \
-                unittest.mock.patch.object(
-                    ft.torrent_scrape, 'scrape_torrent',
-                    return_value={'tracker': 'http://t.example/scrape', 'seeders': 10, 'leechers': 0, 'completed': 0},
-                ):
+        with (
+            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(
+                ft.torrent_scrape,
+                "scrape_torrent",
+                return_value={
+                    "tracker": "http://t.example/scrape",
+                    "seeders": 10,
+                    "leechers": 0,
+                    "completed": 0,
+                },
+            ),
+        ):
             keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                'ubuntu-14.04.6-desktop-amd64.iso', 'https://example.invalid/x.torrent',
-                min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False,
+                "ubuntu-14.04.6-desktop-amd64.iso",
+                "https://example.invalid/x.torrent",
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
 
         self.assertFalse(keep)
-        self.assertEqual(torrent_bytes, b'fake torrent bytes')
-        self.assertEqual(scrape_result['leechers'], 0)
+        self.assertEqual(torrent_bytes, b"fake torrent bytes")
+        self.assertEqual(scrape_result["leechers"], 0)
 
     def test_scrape_meeting_threshold_is_kept(self):
         class FakeResponse:
             status_code = 200
-            content = b'fake torrent bytes'
+            content = b"fake torrent bytes"
 
             def raise_for_status(self):
                 pass
 
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()), \
-                unittest.mock.patch.object(
-                    ft.torrent_scrape, 'scrape_torrent',
-                    return_value={'tracker': 'http://t.example/scrape', 'seeders': 10, 'leechers': 30, 'completed': 0},
-                ):
+        with (
+            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(
+                ft.torrent_scrape,
+                "scrape_torrent",
+                return_value={
+                    "tracker": "http://t.example/scrape",
+                    "seeders": 10,
+                    "leechers": 30,
+                    "completed": 0,
+                },
+            ),
+        ):
             keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                'ubuntu-14.04.6-desktop-amd64.iso', 'https://example.invalid/x.torrent',
-                min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False,
+                "ubuntu-14.04.6-desktop-amd64.iso",
+                "https://example.invalid/x.torrent",
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
 
         self.assertTrue(keep)
-        self.assertEqual(torrent_bytes, b'fake torrent bytes')
-        self.assertEqual(scrape_result['leechers'], 30)
+        self.assertEqual(torrent_bytes, b"fake torrent bytes")
+        self.assertEqual(scrape_result["leechers"], 30)
 
     def test_meets_absolute_floor_but_already_well_seeded_is_not_kept(self):
         class FakeResponse:
             status_code = 200
-            content = b'fake torrent bytes'
+            content = b"fake torrent bytes"
 
             def raise_for_status(self):
                 pass
 
         # 1 leecher clears a min_leechers=1 floor, but 1000 seeders already
         # cover it - not unmet demand.
-        with unittest.mock.patch.object(ft.requests, 'get', return_value=FakeResponse()), \
-                unittest.mock.patch.object(
-                    ft.torrent_scrape, 'scrape_torrent',
-                    return_value={'tracker': 'http://t.example/scrape', 'seeders': 1000, 'leechers': 1, 'completed': 0},
-                ):
+        with (
+            unittest.mock.patch.object(ft.requests, "get", return_value=FakeResponse()),
+            unittest.mock.patch.object(
+                ft.torrent_scrape,
+                "scrape_torrent",
+                return_value={
+                    "tracker": "http://t.example/scrape",
+                    "seeders": 1000,
+                    "leechers": 1,
+                    "completed": 0,
+                },
+            ),
+        ):
             keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                'ubuntu-14.04.6-desktop-amd64.iso', 'https://example.invalid/x.torrent',
-                min_leechers=1, min_leecher_ratio=1.2, allow_zero_seeders=False,
+                "ubuntu-14.04.6-desktop-amd64.iso",
+                "https://example.invalid/x.torrent",
+                min_leechers=1,
+                min_leecher_ratio=1.2,
+                allow_zero_seeders=False,
             )
 
         self.assertFalse(keep)
-        self.assertEqual(scrape_result['leechers'], 1)
+        self.assertEqual(scrape_result["leechers"], 1)
 
 
 class CheckOldReleasesForDemandTests(unittest.TestCase):
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -1391,71 +1611,136 @@ class CheckOldReleasesForDemandTests(unittest.TestCase):
         # Neither name matches LOW_DEMAND_PATTERN - that filtering is
         # covered separately by test_low_demand_variant_is_filtered_before_evaluation.
         candidates = {
-            'kali-linux-2026.1-installer-purple-amd64.iso': 'https://example.invalid/dead.torrent',
-            'kali-linux-2026.1-installer-amd64.iso': 'https://example.invalid/alive.torrent',
+            "kali-linux-2026.1-installer-purple-amd64.iso": "https://example.invalid/dead.torrent",
+            "kali-linux-2026.1-installer-amd64.iso": "https://example.invalid/alive.torrent",
         }
 
-        def fake_evaluate(name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15):
-            if 'purple' in name:
-                return False, b'dead bytes', {'tracker': 't', 'seeders': 5, 'leechers': 0, 'completed': 0}
-            return True, b'alive bytes', {'tracker': 't', 'seeders': 5, 'leechers': 30, 'completed': 0}
+        def fake_evaluate(
+            name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15
+        ):
+            if "purple" in name:
+                return (
+                    False,
+                    b"dead bytes",
+                    {"tracker": "t", "seeders": 5, "leechers": 0, "completed": 0},
+                )
+            return (
+                True,
+                b"alive bytes",
+                {"tracker": "t", "seeders": 5, "leechers": 30, "completed": 0},
+            )
 
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {'kali': lambda: candidates}, clear=True), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand', side_effect=fake_evaluate):
-            added, skipped, _ = ft.check_old_releases_for_demand(['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand", side_effect=fake_evaluate
+            ),
+        ):
+            added, skipped, _ = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
 
         self.assertEqual(added, 1)
         self.assertEqual(skipped, 1)
-        alive_path = os.path.join(self.tmp_watch_dir, 'kali-linux-2026.1-installer-amd64.iso.torrent')
-        dead_path = os.path.join(self.tmp_watch_dir, 'kali-linux-2026.1-installer-purple-amd64.iso.torrent')
-        with open(alive_path, 'rb') as f:
-            self.assertEqual(f.read(), b'alive bytes')
+        alive_path = os.path.join(
+            self.tmp_watch_dir, "kali-linux-2026.1-installer-amd64.iso.torrent"
+        )
+        dead_path = os.path.join(
+            self.tmp_watch_dir, "kali-linux-2026.1-installer-purple-amd64.iso.torrent"
+        )
+        with open(alive_path, "rb") as f:
+            self.assertEqual(f.read(), b"alive bytes")
         self.assertFalse(os.path.exists(dead_path))
 
     def test_skips_distros_without_old_release_discovery(self):
         with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {}, clear=True):
-            added, skipped, _ = ft.check_old_releases_for_demand(['ubuntu'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+            added, skipped, _ = ft.check_old_releases_for_demand(
+                ["ubuntu"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
 
         self.assertEqual((added, skipped), (0, 0))
 
     def test_already_present_torrent_is_not_re_evaluated(self):
-        name = 'kali-linux-2026.1-installer-amd64.iso'
-        existing_path = os.path.join(self.tmp_watch_dir, f'{name}.torrent')
-        with open(existing_path, 'wb') as f:
-            f.write(b'already here')
+        name = "kali-linux-2026.1-installer-amd64.iso"
+        existing_path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
+        with open(existing_path, "wb") as f:
+            f.write(b"already here")
 
-        with unittest.mock.patch.dict(
-                    ft.OLD_RELEASE_DISCOVERY,
-                    {'kali': lambda: {name: 'https://example.invalid/x.torrent'}}, clear=True,
-                ), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
-            added, skipped, _ = ft.check_old_releases_for_demand(['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY,
+                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
+                clear=True,
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand"
+            ) as mock_evaluate,
+        ):
+            added, skipped, _ = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
 
         mock_evaluate.assert_not_called()
         self.assertEqual((added, skipped), (0, 0))
 
     def test_unsafe_candidate_name_is_skipped_without_evaluation(self):
-        name = 'kali-linux-2026.1-installer-../../etc/cron.d/evil'
+        name = "kali-linux-2026.1-installer-../../etc/cron.d/evil"
 
-        with unittest.mock.patch.dict(
-                    ft.OLD_RELEASE_DISCOVERY,
-                    {'kali': lambda: {name: 'https://example.invalid/x.torrent'}}, clear=True,
-                ), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
-            added, skipped, _ = ft.check_old_releases_for_demand(['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY,
+                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
+                clear=True,
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand"
+            ) as mock_evaluate,
+        ):
+            added, skipped, _ = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
 
         mock_evaluate.assert_not_called()
         self.assertEqual((added, skipped), (0, 1))
 
     def test_low_demand_variant_is_filtered_before_evaluation(self):
-        name = 'kali-linux-2026.1-installer-netinst-amd64.iso'
+        name = "kali-linux-2026.1-installer-netinst-amd64.iso"
 
-        with unittest.mock.patch.dict(
-                    ft.OLD_RELEASE_DISCOVERY,
-                    {'kali': lambda: {name: 'https://example.invalid/x.torrent'}}, clear=True,
-                ), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
-            added, skipped, _ = ft.check_old_releases_for_demand(['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False)
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY,
+                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
+                clear=True,
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand"
+            ) as mock_evaluate,
+        ):
+            added, skipped, _ = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+            )
 
         mock_evaluate.assert_not_called()
         self.assertEqual((added, skipped), (0, 0))
@@ -1468,7 +1753,11 @@ class FormatRunSummaryTests(unittest.TestCase):
 
     def test_without_old_release_check(self):
         summary = ft.format_run_summary(
-            elapsed=12.5, success_count=3, existing_count=1, not_found_count=0, failure_count=0,
+            elapsed=12.5,
+            success_count=3,
+            existing_count=1,
+            not_found_count=0,
+            failure_count=0,
         )
         self.assertEqual(
             summary,
@@ -1477,8 +1766,13 @@ class FormatRunSummaryTests(unittest.TestCase):
 
     def test_with_old_release_check_appends_counts(self):
         summary = ft.format_run_summary(
-            elapsed=12.5, success_count=3, existing_count=1, not_found_count=0, failure_count=0,
-            old_added=2, old_skipped=6,
+            elapsed=12.5,
+            success_count=3,
+            existing_count=1,
+            not_found_count=0,
+            failure_count=0,
+            old_added=2,
+            old_skipped=6,
         )
         self.assertEqual(
             summary,
@@ -1488,8 +1782,13 @@ class FormatRunSummaryTests(unittest.TestCase):
 
     def test_still_starts_with_run_complete_for_always_log_filter(self):
         summary = ft.format_run_summary(
-            elapsed=1.0, success_count=0, existing_count=0, not_found_count=0, failure_count=0,
-            old_added=0, old_skipped=0,
+            elapsed=1.0,
+            success_count=0,
+            existing_count=0,
+            not_found_count=0,
+            failure_count=0,
+            old_added=0,
+            old_skipped=0,
         )
         self.assertTrue(summary.startswith("Run complete in"))
 
@@ -1501,26 +1800,42 @@ class ShouldRecheckOldReleaseTests(unittest.TestCase):
     a while instead."""
 
     def test_never_checked_is_due(self):
-        self.assertTrue(ft.should_recheck_old_release('x', {}, date(2026, 1, 8), recheck_interval_days=7))
+        self.assertTrue(
+            ft.should_recheck_old_release(
+                "x", {}, date(2026, 1, 8), recheck_interval_days=7
+            )
+        )
 
     def test_checked_recently_is_not_due(self):
-        state = {'x': {'last_checked': '2026-01-05', 'leechers': 0}}
-        self.assertFalse(ft.should_recheck_old_release('x', state, date(2026, 1, 8), recheck_interval_days=7))
+        state = {"x": {"last_checked": "2026-01-05", "leechers": 0}}
+        self.assertFalse(
+            ft.should_recheck_old_release(
+                "x", state, date(2026, 1, 8), recheck_interval_days=7
+            )
+        )
 
     def test_checked_exactly_at_interval_is_due(self):
-        state = {'x': {'last_checked': '2026-01-01', 'leechers': 0}}
-        self.assertTrue(ft.should_recheck_old_release('x', state, date(2026, 1, 8), recheck_interval_days=7))
+        state = {"x": {"last_checked": "2026-01-01", "leechers": 0}}
+        self.assertTrue(
+            ft.should_recheck_old_release(
+                "x", state, date(2026, 1, 8), recheck_interval_days=7
+            )
+        )
 
     def test_checked_past_interval_is_due(self):
-        state = {'x': {'last_checked': '2025-12-01', 'leechers': 0}}
-        self.assertTrue(ft.should_recheck_old_release('x', state, date(2026, 1, 8), recheck_interval_days=7))
+        state = {"x": {"last_checked": "2025-12-01", "leechers": 0}}
+        self.assertTrue(
+            ft.should_recheck_old_release(
+                "x", state, date(2026, 1, 8), recheck_interval_days=7
+            )
+        )
 
 
 class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_old_release_state_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_old_release_check_state.json')
-        state = {'x': {'last_checked': '2026-01-08', 'leechers': 0}}
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
+        state = {"x": {"last_checked": "2026-01-08", "leechers": 0}}
 
         ft.save_old_release_check_state(path, state)
         loaded = ft.load_old_release_check_state(path)
@@ -1528,16 +1843,16 @@ class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, state)
 
     def test_missing_file_returns_empty_state(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_old_release_state_')
-        path = os.path.join(tmp_dir, 'does-not-exist.json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_old_release_check_state(path), {})
 
     def test_corrupt_file_returns_empty_state_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_old_release_state_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_old_release_check_state.json')
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write('{not valid json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_old_release_state_")
+        path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
 
         self.assertEqual(ft.load_old_release_check_state(path), {})
 
@@ -1546,21 +1861,25 @@ class RecordRemovalTests(unittest.TestCase):
     def test_adds_entry_without_mutating_input(self):
         history = {}
         updated = ft.record_removal(
-            history, 'kali-linux-2026.1-installer-amd64.iso', date(2026, 2, 1), 'stagnant', 0.42,
+            history,
+            "kali-linux-2026.1-installer-amd64.iso",
+            date(2026, 2, 1),
+            "stagnant",
+            0.42,
         )
 
         self.assertEqual(history, {})  # input untouched
         self.assertEqual(
-            updated['kali-linux-2026.1-installer-amd64.iso'],
-            {'removed_date': '2026-02-01', 'reason': 'stagnant', 'ratio': 0.42},
+            updated["kali-linux-2026.1-installer-amd64.iso"],
+            {"removed_date": "2026-02-01", "reason": "stagnant", "ratio": 0.42},
         )
 
 
 class RemovedHistoryPersistenceTests(unittest.TestCase):
     def test_round_trips_through_disk(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_removed_history_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_removed_history.json')
-        history = {'x': {'removed_date': '2026-02-01', 'reason': 'stagnant'}}
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
+        history = {"x": {"removed_date": "2026-02-01", "reason": "stagnant"}}
 
         ft.save_removed_history(path, history)
         loaded = ft.load_removed_history(path)
@@ -1568,16 +1887,16 @@ class RemovedHistoryPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded, history)
 
     def test_missing_file_returns_empty_history(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_removed_history_')
-        path = os.path.join(tmp_dir, 'does-not-exist.json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        path = os.path.join(tmp_dir, "does-not-exist.json")
 
         self.assertEqual(ft.load_removed_history(path), {})
 
     def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_removed_history_')
-        path = os.path.join(tmp_dir, 'fetch_torrents_removed_history.json')
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write('{not valid json')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_removed_history_")
+        path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("{not valid json")
 
         self.assertEqual(ft.load_removed_history(path), {})
 
@@ -1589,21 +1908,34 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
     network, and must record a fresh check for anything it does evaluate."""
 
     def setUp(self):
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_recently_checked_candidate_is_skipped_without_network_call(self):
-        name = 'kali-linux-2026.1-installer-amd64.iso'
-        candidates = {name: 'https://example.invalid/x.torrent'}
-        check_state = {name: {'last_checked': '2026-01-05', 'leechers': 0}}
+        name = "kali-linux-2026.1-installer-amd64.iso"
+        candidates = {name: "https://example.invalid/x.torrent"}
+        check_state = {name: {"last_checked": "2026-01-05", "leechers": 0}}
 
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {'kali': lambda: candidates}, clear=True), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand"
+            ) as mock_evaluate,
+        ):
             added, skipped, new_state = ft.check_old_releases_for_demand(
-                ['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False,
-                check_state=check_state, removed_history={}, today=date(2026, 1, 8), recheck_interval_days=7,
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state=check_state,
+                removed_history={},
+                today=date(2026, 1, 8),
+                recheck_interval_days=7,
             )
 
         mock_evaluate.assert_not_called()
@@ -1611,53 +1943,100 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
         self.assertEqual(new_state, check_state)
 
     def test_previously_removed_candidate_is_skipped_without_network_call(self):
-        name = 'kali-linux-2026.1-installer-amd64.iso'
-        candidates = {name: 'https://example.invalid/x.torrent'}
-        removed_history = {name: {'removed_date': '2026-01-01', 'reason': 'stagnant'}}
+        name = "kali-linux-2026.1-installer-amd64.iso"
+        candidates = {name: "https://example.invalid/x.torrent"}
+        removed_history = {name: {"removed_date": "2026-01-01", "reason": "stagnant"}}
 
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {'kali': lambda: candidates}, clear=True), \
-                unittest.mock.patch.object(ft, 'evaluate_old_release_demand') as mock_evaluate:
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft, "evaluate_old_release_demand"
+            ) as mock_evaluate,
+        ):
             added, skipped, new_state = ft.check_old_releases_for_demand(
-                ['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False,
-                check_state={}, removed_history=removed_history, today=date(2026, 1, 8), recheck_interval_days=7,
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state={},
+                removed_history=removed_history,
+                today=date(2026, 1, 8),
+                recheck_interval_days=7,
             )
 
         mock_evaluate.assert_not_called()
         self.assertEqual((added, skipped), (0, 1))
 
     def test_due_candidate_is_evaluated_and_recorded(self):
-        name = 'kali-linux-2026.1-installer-amd64.iso'
-        candidates = {name: 'https://example.invalid/x.torrent'}
+        name = "kali-linux-2026.1-installer-amd64.iso"
+        candidates = {name: "https://example.invalid/x.torrent"}
 
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {'kali': lambda: candidates}, clear=True), \
-                unittest.mock.patch.object(
-                    ft, 'evaluate_old_release_demand',
-                    return_value=(True, b'bytes', {'tracker': 't', 'seeders': 1, 'leechers': 30, 'completed': 0}),
-                ):
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft,
+                "evaluate_old_release_demand",
+                return_value=(
+                    True,
+                    b"bytes",
+                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
+                ),
+            ),
+        ):
             added, skipped, new_state = ft.check_old_releases_for_demand(
-                ['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False,
-                check_state={}, removed_history={}, today=date(2026, 1, 8), recheck_interval_days=7,
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state={},
+                removed_history={},
+                today=date(2026, 1, 8),
+                recheck_interval_days=7,
             )
 
         self.assertEqual((added, skipped), (1, 0))
-        self.assertEqual(new_state[name], {'last_checked': '2026-01-08', 'leechers': 30})
+        self.assertEqual(
+            new_state[name], {"last_checked": "2026-01-08", "leechers": 30}
+        )
 
     def test_no_demand_result_is_still_recorded_for_future_recheck_gating(self):
-        name = 'kali-linux-2026.1-installer-arm64.iso'
-        candidates = {name: 'https://example.invalid/x.torrent'}
+        name = "kali-linux-2026.1-installer-arm64.iso"
+        candidates = {name: "https://example.invalid/x.torrent"}
 
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {'kali': lambda: candidates}, clear=True), \
-                unittest.mock.patch.object(
-                    ft, 'evaluate_old_release_demand',
-                    return_value=(False, b'bytes', {'tracker': 't', 'seeders': 1, 'leechers': 0, 'completed': 0}),
-                ):
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft,
+                "evaluate_old_release_demand",
+                return_value=(
+                    False,
+                    b"bytes",
+                    {"tracker": "t", "seeders": 1, "leechers": 0, "completed": 0},
+                ),
+            ),
+        ):
             added, skipped, new_state = ft.check_old_releases_for_demand(
-                ['kali'], include_low_demand=False, min_leechers=1, min_leecher_ratio=0.0, allow_zero_seeders=False,
-                check_state={}, removed_history={}, today=date(2026, 1, 8), recheck_interval_days=7,
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state={},
+                removed_history={},
+                today=date(2026, 1, 8),
+                recheck_interval_days=7,
             )
 
         self.assertEqual((added, skipped), (0, 1))
-        self.assertEqual(new_state[name], {'last_checked': '2026-01-08', 'leechers': 0})
+        self.assertEqual(new_state[name], {"last_checked": "2026-01-08", "leechers": 0})
 
 
 class CleanupRpcAuthTests(unittest.TestCase):
@@ -1670,12 +2049,14 @@ class CleanupRpcAuthTests(unittest.TestCase):
     failure is only logged, never surfaced."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_cleanup_auth_')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_cleanup_auth_")
         for attr, filename in (
-            ('removed_history_file', 'removed_history.json'),
-            ('ratio_history_file', 'ratio_history.json'),
+            ("removed_history_file", "removed_history.json"),
+            ("ratio_history_file", "ratio_history.json"),
         ):
-            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher = unittest.mock.patch.object(
+                ft, attr, os.path.join(tmp_dir, filename)
+            )
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -1685,29 +2066,55 @@ class CleanupRpcAuthTests(unittest.TestCase):
         return client
 
     def test_cleanup_old_versions_passes_configured_credentials(self):
-        with unittest.mock.patch.dict(os.environ, {
-            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
-        }), unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
+                },
+            ),
+            unittest.mock.patch.object(
+                ft, "Client", return_value=self._mock_client()
+            ) as mock_client_cls,
+        ):
             ft.cleanup_old_versions()
 
-        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username='alice', password='hunter2')
+        mock_client_cls.assert_called_once_with(
+            host="localhost", port=9091, username="alice", password="hunter2"
+        )
 
     def test_cleanup_old_versions_passes_no_credentials_when_unset(self):
         with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop('TRANSMISSION_RPC_USERNAME', None)
-            os.environ.pop('TRANSMISSION_RPC_PASSWORD', None)
-            with unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+            os.environ.pop("TRANSMISSION_RPC_USERNAME", None)
+            os.environ.pop("TRANSMISSION_RPC_PASSWORD", None)
+            with unittest.mock.patch.object(
+                ft, "Client", return_value=self._mock_client()
+            ) as mock_client_cls:
                 ft.cleanup_old_versions()
 
-        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username=None, password=None)
+        mock_client_cls.assert_called_once_with(
+            host="localhost", port=9091, username=None, password=None
+        )
 
     def test_cleanup_stagnant_torrents_passes_configured_credentials(self):
-        with unittest.mock.patch.dict(os.environ, {
-            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
-        }), unittest.mock.patch.object(ft, 'Client', return_value=self._mock_client()) as mock_client_cls:
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
+                },
+            ),
+            unittest.mock.patch.object(
+                ft, "Client", return_value=self._mock_client()
+            ) as mock_client_cls,
+        ):
             ft.cleanup_stagnant_torrents()
 
-        mock_client_cls.assert_called_once_with(host='localhost', port=9091, username='alice', password='hunter2')
+        mock_client_cls.assert_called_once_with(
+            host="localhost", port=9091, username="alice", password="hunter2"
+        )
 
 
 class LogSeedRatiosViaHttpTests(unittest.TestCase):
@@ -1728,50 +2135,77 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
 
     def test_session_id_request_has_a_timeout(self):
         with unittest.mock.patch.object(
-            ft.requests, 'post',
+            ft.requests,
+            "post",
             side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
         ) as mock_post:
             ft.log_seed_ratios_via_http()
 
         first_call_kwargs = mock_post.call_args_list[0].kwargs
-        self.assertIn('timeout', first_call_kwargs)
+        self.assertIn("timeout", first_call_kwargs)
 
     def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
-        with unittest.mock.patch.dict(os.environ, {
-            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
-        }), unittest.mock.patch.object(
-            ft.requests, 'post',
-            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
-        ) as mock_post:
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
+                },
+            ),
+            unittest.mock.patch.object(
+                ft.requests,
+                "post",
+                side_effect=[
+                    self.FakeSessionIdResponse(),
+                    self.FakeTorrentGetResponse(),
+                ],
+            ) as mock_post,
+        ):
             ft.log_seed_ratios_via_http()
 
         second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertEqual(second_call_kwargs.get('auth'), ('alice', 'hunter2'))
+        self.assertEqual(second_call_kwargs.get("auth"), ("alice", "hunter2"))
 
     def test_no_auth_when_credentials_unset(self):
         with unittest.mock.patch.dict(os.environ, {}, clear=False):
-            os.environ.pop('TRANSMISSION_RPC_USERNAME', None)
-            os.environ.pop('TRANSMISSION_RPC_PASSWORD', None)
+            os.environ.pop("TRANSMISSION_RPC_USERNAME", None)
+            os.environ.pop("TRANSMISSION_RPC_PASSWORD", None)
             with unittest.mock.patch.object(
-                ft.requests, 'post',
-                side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+                ft.requests,
+                "post",
+                side_effect=[
+                    self.FakeSessionIdResponse(),
+                    self.FakeTorrentGetResponse(),
+                ],
             ) as mock_post:
                 ft.log_seed_ratios_via_http()
 
         second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertIsNone(second_call_kwargs.get('auth'))
+        self.assertIsNone(second_call_kwargs.get("auth"))
 
     def test_explicit_auth_argument_still_wins(self):
-        with unittest.mock.patch.dict(os.environ, {
-            'TRANSMISSION_RPC_USERNAME': 'alice', 'TRANSMISSION_RPC_PASSWORD': 'hunter2',
-        }), unittest.mock.patch.object(
-            ft.requests, 'post',
-            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
-        ) as mock_post:
-            ft.log_seed_ratios_via_http(auth=('bob', 'other'))
+        with (
+            unittest.mock.patch.dict(
+                os.environ,
+                {
+                    "TRANSMISSION_RPC_USERNAME": "alice",
+                    "TRANSMISSION_RPC_PASSWORD": "hunter2",
+                },
+            ),
+            unittest.mock.patch.object(
+                ft.requests,
+                "post",
+                side_effect=[
+                    self.FakeSessionIdResponse(),
+                    self.FakeTorrentGetResponse(),
+                ],
+            ) as mock_post,
+        ):
+            ft.log_seed_ratios_via_http(auth=("bob", "other"))
 
         second_call_kwargs = mock_post.call_args_list[1].kwargs
-        self.assertEqual(second_call_kwargs.get('auth'), ('bob', 'other'))
+        self.assertEqual(second_call_kwargs.get("auth"), ("bob", "other"))
 
 
 class CleanupRemovesWatchFileTests(unittest.TestCase):
@@ -1781,67 +2215,73 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
     by default) ever cleans them up."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_cleanup_watchfile_')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_cleanup_watchfile_")
         for attr, filename in (
-            ('removed_history_file', 'removed_history.json'),
-            ('ratio_history_file', 'ratio_history.json'),
+            ("removed_history_file", "removed_history.json"),
+            ("ratio_history_file", "ratio_history.json"),
         ):
-            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher = unittest.mock.patch.object(
+                ft, attr, os.path.join(tmp_dir, filename)
+            )
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def _touch_watch_file(self, name):
         path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write('fake torrent bytes')
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("fake torrent bytes")
         return path
 
     def test_cleanup_old_versions_removes_the_watch_file(self):
-        old_path = self._touch_watch_file('ubuntu-23.10-desktop-amd64.iso')
-        self._touch_watch_file('ubuntu-24.04-desktop-amd64.iso')
+        old_path = self._touch_watch_file("ubuntu-23.10-desktop-amd64.iso")
+        self._touch_watch_file("ubuntu-24.04-desktop-amd64.iso")
         torrents = [
-            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
-            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
         ]
         client = MagicMock()
         client.get_torrents.return_value = torrents
 
-        with unittest.mock.patch.dict(os.environ, {'CLEANUP_SKIP_RATIO_CHECK': 'true'}), \
-                unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.dict(os.environ, {"CLEANUP_SKIP_RATIO_CHECK": "true"}),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.cleanup_old_versions()
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
         self.assertFalse(os.path.exists(old_path))
         history = ft.load_removed_history(ft.removed_history_file)
-        self.assertEqual(history['ubuntu-23.10-desktop-amd64.iso']['ratio'], 2.0)
+        self.assertEqual(history["ubuntu-23.10-desktop-amd64.iso"]["ratio"], 2.0)
 
     def test_missing_watch_file_does_not_raise(self):
         # No .torrent file created for the superseded version - cleanup must
         # still succeed and remove the torrent from Transmission.
         torrents = [
-            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
-            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
         ]
         client = MagicMock()
         client.get_torrents.return_value = torrents
 
-        with unittest.mock.patch.dict(os.environ, {'CLEANUP_SKIP_RATIO_CHECK': 'true'}), \
-                unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.dict(os.environ, {"CLEANUP_SKIP_RATIO_CHECK": "true"}),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.cleanup_old_versions()  # must not raise
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
 
     def test_cleanup_stagnant_torrents_removes_the_watch_file(self):
-        old_path = self._touch_watch_file('ubuntu-23.10-desktop-amd64.iso')
-        self._touch_watch_file('ubuntu-24.04-desktop-amd64.iso')
+        old_path = self._touch_watch_file("ubuntu-23.10-desktop-amd64.iso")
+        self._touch_watch_file("ubuntu-24.04-desktop-amd64.iso")
         torrents = [
-            FakeTorrent('ubuntu-24.04-desktop-amd64.iso', 1, ratio=2.0),
-            FakeTorrent('ubuntu-23.10-desktop-amd64.iso', 2, ratio=2.0),
+            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=2.0),
         ]
         client = MagicMock()
         client.get_torrents.return_value = torrents
@@ -1853,17 +2293,19 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         # unchanged since then, so plan_stagnation_cleanup() must select this
         # torrent for removal.
         anchor_date = (date.today() - timedelta(days=32)).isoformat()
-        history = {'ubuntu-23.10-desktop-amd64.iso': [{'date': anchor_date, 'ratio': 2.0}]}
-        with open(ft.ratio_history_file, 'w', encoding='utf-8') as f:
+        history = {
+            "ubuntu-23.10-desktop-amd64.iso": [{"date": anchor_date, "ratio": 2.0}]
+        }
+        with open(ft.ratio_history_file, "w", encoding="utf-8") as f:
             json.dump(history, f)
 
-        with unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with unittest.mock.patch.object(ft, "Client", return_value=client):
             ft.cleanup_stagnant_torrents()
 
         client.remove_torrent.assert_called_once_with(2, delete_data=True)
         self.assertFalse(os.path.exists(old_path))
         history = ft.load_removed_history(ft.removed_history_file)
-        self.assertEqual(history['ubuntu-23.10-desktop-amd64.iso']['ratio'], 2.0)
+        self.assertEqual(history["ubuntu-23.10-desktop-amd64.iso"]["ratio"], 2.0)
 
 
 class PlanDiskPressureCleanupTests(unittest.TestCase):
@@ -1877,24 +2319,45 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
             FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
         ]
-        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=80.0, threshold_percent=95.0), [])
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=80.0, threshold_percent=95.0
+            ),
+            [],
+        )
 
     def test_disabled_when_threshold_is_zero_or_negative(self):
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
             FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
         ]
-        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=0), [])
-        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=-1), [])
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=99.0, threshold_percent=0
+            ),
+            [],
+        )
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=99.0, threshold_percent=-1
+            ),
+            [],
+        )
 
     def test_at_or_above_threshold_returns_candidates_lowest_ratio_first(self):
         torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),   # latest - never a candidate
+            FakeTorrent(
+                "ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0
+            ),  # latest - never a candidate
             FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
             FakeTorrent("ubuntu-22.04.1-live-server-amd64.iso", 3, ratio=0.2),
-            FakeTorrent("ubuntu-24.04.1-live-server-amd64.iso", 4, ratio=5.0),  # latest of this group
+            FakeTorrent(
+                "ubuntu-24.04.1-live-server-amd64.iso", 4, ratio=5.0
+            ),  # latest of this group
         ]
-        result = ft.plan_disk_pressure_cleanup(torrents, used_percent=95.0, threshold_percent=95.0)
+        result = ft.plan_disk_pressure_cleanup(
+            torrents, used_percent=95.0, threshold_percent=95.0
+        )
         self.assertEqual(
             names_of(result),
             ["ubuntu-22.04.1-live-server-amd64.iso", "ubuntu-23.10-desktop-amd64.iso"],
@@ -1904,7 +2367,12 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
 
     def test_no_superseded_candidates_returns_empty(self):
         torrents = [FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=0.0)]
-        self.assertEqual(ft.plan_disk_pressure_cleanup(torrents, used_percent=99.0, threshold_percent=95.0), [])
+        self.assertEqual(
+            ft.plan_disk_pressure_cleanup(
+                torrents, used_percent=99.0, threshold_percent=95.0
+            ),
+            [],
+        )
 
 
 class EnforceDiskUsageLimitTests(unittest.TestCase):
@@ -1914,38 +2382,48 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
     torrent holds."""
 
     def setUp(self):
-        tmp_dir = tempfile.mkdtemp(prefix='fetch_torrents_disk_pressure_')
+        tmp_dir = tempfile.mkdtemp(prefix="fetch_torrents_disk_pressure_")
         for attr, filename in (
-            ('removed_history_file', 'removed_history.json'),
-            ('ratio_history_file', 'ratio_history.json'),
+            ("removed_history_file", "removed_history.json"),
+            ("ratio_history_file", "ratio_history.json"),
         ):
-            patcher = unittest.mock.patch.object(ft, attr, os.path.join(tmp_dir, filename))
+            patcher = unittest.mock.patch.object(
+                ft, attr, os.path.join(tmp_dir, filename)
+            )
             patcher.start()
             self.addCleanup(patcher.stop)
 
-        self.tmp_watch_dir = tempfile.mkdtemp(prefix='fetch_torrents_test_watch_')
-        patcher = unittest.mock.patch.object(ft, 'watch_dir', self.tmp_watch_dir)
+        self.tmp_watch_dir = tempfile.mkdtemp(prefix="fetch_torrents_test_watch_")
+        patcher = unittest.mock.patch.object(ft, "watch_dir", self.tmp_watch_dir)
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def test_disabled_threshold_never_touches_disk_or_rpc(self):
-        with unittest.mock.patch.object(ft.shutil, 'disk_usage') as mock_disk_usage, \
-                unittest.mock.patch.object(ft, 'Client') as mock_client_cls:
+        with (
+            unittest.mock.patch.object(ft.shutil, "disk_usage") as mock_disk_usage,
+            unittest.mock.patch.object(ft, "Client") as mock_client_cls,
+        ):
             ft.enforce_disk_usage_limit(0)
 
         mock_disk_usage.assert_not_called()
         mock_client_cls.assert_not_called()
 
     def test_below_threshold_does_not_connect_to_transmission(self):
-        with unittest.mock.patch.object(ft.shutil, 'disk_usage', return_value=(100, 50, 50)), \
-                unittest.mock.patch.object(ft, 'Client') as mock_client_cls:
+        with (
+            unittest.mock.patch.object(
+                ft.shutil, "disk_usage", return_value=(100, 50, 50)
+            ),
+            unittest.mock.patch.object(ft, "Client") as mock_client_cls,
+        ):
             ft.enforce_disk_usage_limit(95)
 
         mock_client_cls.assert_not_called()
 
     def test_removes_lowest_ratio_candidates_until_under_threshold(self):
         torrents = [
-            FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),  # latest, never removed
+            FakeTorrent(
+                "ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0
+            ),  # latest, never removed
             FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.5),
             FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.2),
         ]
@@ -1955,17 +2433,24 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         # 96% initially (over threshold); drops to 90% (under threshold)
         # after the first removal - the second, higher-ratio candidate must
         # be left alone.
-        with unittest.mock.patch.object(
-            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.object(
+                ft.shutil,
+                "disk_usage",
+                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+            ),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.enforce_disk_usage_limit(95)
 
         client.remove_torrent.assert_called_once_with(3, delete_data=True)
 
     def test_removes_the_watch_file_for_each_removal(self):
-        watch_path = os.path.join(self.tmp_watch_dir, "ubuntu-22.04-desktop-amd64.iso.torrent")
-        with open(watch_path, 'w', encoding='utf-8') as f:
-            f.write('fake torrent bytes')
+        watch_path = os.path.join(
+            self.tmp_watch_dir, "ubuntu-22.04-desktop-amd64.iso.torrent"
+        )
+        with open(watch_path, "w", encoding="utf-8") as f:
+            f.write("fake torrent bytes")
 
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=5.0),
@@ -1975,9 +2460,14 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         client = MagicMock()
         client.get_torrents.return_value = torrents
 
-        with unittest.mock.patch.object(
-            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.object(
+                ft.shutil,
+                "disk_usage",
+                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+            ),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.enforce_disk_usage_limit(95)
 
         self.assertFalse(os.path.exists(watch_path))
@@ -1987,8 +2477,12 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         client = MagicMock()
         client.get_torrents.return_value = torrents
 
-        with unittest.mock.patch.object(ft.shutil, 'disk_usage', return_value=(100, 96, 4)), \
-                unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.object(
+                ft.shutil, "disk_usage", return_value=(100, 96, 4)
+            ),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.enforce_disk_usage_limit(95)  # must not raise
 
         client.remove_torrent.assert_not_called()
@@ -2002,14 +2496,21 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         client = MagicMock()
         client.get_torrents.return_value = torrents
 
-        with unittest.mock.patch.object(
-            ft.shutil, 'disk_usage', side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
-        ), unittest.mock.patch.object(ft, 'Client', return_value=client):
+        with (
+            unittest.mock.patch.object(
+                ft.shutil,
+                "disk_usage",
+                side_effect=[(100, 96, 4), (100, 96, 4), (100, 90, 10)],
+            ),
+            unittest.mock.patch.object(ft, "Client", return_value=client),
+        ):
             ft.enforce_disk_usage_limit(95)
 
         history = ft.load_removed_history(ft.removed_history_file)
-        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]['reason'], 'disk_pressure')
-        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]['ratio'], 0.2)
+        self.assertEqual(
+            history["ubuntu-22.04-desktop-amd64.iso"]["reason"], "disk_pressure"
+        )
+        self.assertEqual(history["ubuntu-22.04-desktop-amd64.iso"]["ratio"], 0.2)
 
 
 if __name__ == "__main__":

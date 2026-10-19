@@ -11,6 +11,7 @@ Both HTTP(S) trackers (the unofficial "scrape convention") and UDP trackers
 (BEP 15) are supported. Any other scheme is skipped; callers should just
 move on to the torrent's next tracker.
 """
+
 import hashlib
 import ipaddress
 import os
@@ -30,6 +31,7 @@ class UdpTrackerError(ValueError):
     response, transaction ID mismatch, or an explicit tracker error
     action) - callers should catch it the same as any other scrape
     failure and move on to the next tracker."""
+
     pass
 
 
@@ -40,31 +42,31 @@ def bdecode(data, index=0):
     if index >= len(data):
         raise BencodeError("Unexpected end of data")
 
-    prefix = data[index:index + 1]
+    prefix = data[index : index + 1]
 
-    if prefix == b'i':
-        end = data.index(b'e', index)
-        return int(data[index + 1:end]), end + 1
+    if prefix == b"i":
+        end = data.index(b"e", index)
+        return int(data[index + 1 : end]), end + 1
 
     if prefix.isdigit():
-        colon = data.index(b':', index)
+        colon = data.index(b":", index)
         length = int(data[index:colon])
         start = colon + 1
         end = start + length
         return data[start:end], end
 
-    if prefix == b'l':
+    if prefix == b"l":
         index += 1
         items = []
-        while data[index:index + 1] != b'e':
+        while data[index : index + 1] != b"e":
             item, index = bdecode(data, index)
             items.append(item)
         return items, index + 1
 
-    if prefix == b'd':
+    if prefix == b"d":
         index += 1
         result = {}
-        while data[index:index + 1] != b'e':
+        while data[index : index + 1] != b"e":
             key, index = bdecode(data, index)
             if not isinstance(key, bytes):
                 raise BencodeError("Dict keys must be byte strings")
@@ -82,24 +84,26 @@ def bencode(value):
     if isinstance(value, bool):
         raise BencodeError("bool is not a bencode type")
     if isinstance(value, int):
-        return b'i' + str(value).encode() + b'e'
+        return b"i" + str(value).encode() + b"e"
     if isinstance(value, (bytes, bytearray)):
-        return str(len(value)).encode() + b':' + bytes(value)
+        return str(len(value)).encode() + b":" + bytes(value)
     if isinstance(value, str):
-        encoded = value.encode('utf-8')
-        return str(len(encoded)).encode() + b':' + encoded
+        encoded = value.encode("utf-8")
+        return str(len(encoded)).encode() + b":" + encoded
     if isinstance(value, list):
-        return b'l' + b''.join(bencode(v) for v in value) + b'e'
+        return b"l" + b"".join(bencode(v) for v in value) + b"e"
     if isinstance(value, dict):
+
         def key_bytes(k):
-            return k if isinstance(k, bytes) else k.encode('utf-8')
+            return k if isinstance(k, bytes) else k.encode("utf-8")
+
         items = sorted(value.items(), key=lambda kv: key_bytes(kv[0]))
-        parts = [b'd']
+        parts = [b"d"]
         for k, v in items:
             parts.append(bencode(key_bytes(k)))
             parts.append(bencode(v))
-        parts.append(b'e')
-        return b''.join(parts)
+        parts.append(b"e")
+        return b"".join(parts)
     raise BencodeError(f"Cannot bencode type {type(value)}")
 
 
@@ -107,9 +111,9 @@ def compute_info_hash(torrent_bytes):
     """The 20-byte SHA-1 hash that identifies a torrent, computed from the
     raw bytes of its 'info' dict."""
     metainfo, _ = bdecode(torrent_bytes)
-    if not isinstance(metainfo, dict) or b'info' not in metainfo:
+    if not isinstance(metainfo, dict) or b"info" not in metainfo:
         raise BencodeError("Not a valid .torrent file: missing 'info' dictionary")
-    return hashlib.sha1(bencode(metainfo[b'info'])).digest()
+    return hashlib.sha1(bencode(metainfo[b"info"])).digest()
 
 
 def get_announce_urls(torrent_bytes):
@@ -117,15 +121,15 @@ def get_announce_urls(torrent_bytes):
     order) then the primary 'announce' if not already present, de-duped."""
     metainfo, _ = bdecode(torrent_bytes)
     urls = []
-    for tier in metainfo.get(b'announce-list', []):
+    for tier in metainfo.get(b"announce-list", []):
         for url in tier:
-            decoded = url.decode('utf-8')
+            decoded = url.decode("utf-8")
             if decoded not in urls:
                 urls.append(decoded)
 
-    primary = metainfo.get(b'announce')
+    primary = metainfo.get(b"announce")
     if primary is not None:
-        decoded = primary.decode('utf-8')
+        decoded = primary.decode("utf-8")
         if decoded not in urls:
             urls.insert(0, decoded)
 
@@ -138,20 +142,24 @@ def derive_scrape_url(announce_url):
     None if the tracker doesn't support scrape (no 'announce' in its last
     path segment) or isn't HTTP(S)."""
     parts = urlsplit(announce_url)
-    if parts.scheme not in ('http', 'https'):
+    if parts.scheme not in ("http", "https"):
         return None
 
-    last_slash = parts.path.rfind('/')
-    segment = parts.path[last_slash + 1:]
-    if 'announce' not in segment:
+    last_slash = parts.path.rfind("/")
+    segment = parts.path[last_slash + 1 :]
+    if "announce" not in segment:
         return None
 
-    new_segment = segment.replace('announce', 'scrape', 1)
-    new_path = parts.path[:last_slash + 1] + new_segment
-    return urlunsplit((parts.scheme, parts.netloc, new_path, parts.query, parts.fragment))
+    new_segment = segment.replace("announce", "scrape", 1)
+    new_path = parts.path[: last_slash + 1] + new_segment
+    return urlunsplit(
+        (parts.scheme, parts.netloc, new_path, parts.query, parts.fragment)
+    )
 
 
-UDP_TRACKER_PROTOCOL_ID = 0x41727101980  # BEP 15 magic connection_id for the initial connect request
+UDP_TRACKER_PROTOCOL_ID = (
+    0x41727101980  # BEP 15 magic connection_id for the initial connect request
+)
 UDP_ACTION_CONNECT = 0
 UDP_ACTION_SCRAPE = 2
 UDP_ACTION_ERROR = 3
@@ -162,7 +170,7 @@ def parse_udp_tracker_url(announce_url):
     isn't udp or no port is present - BEP 15 has no default port, so a
     tracker URL without one can't be dialed."""
     parts = urlsplit(announce_url)
-    if parts.scheme != 'udp':
+    if parts.scheme != "udp":
         return None
     if not parts.hostname or not parts.port:
         return None
@@ -170,7 +178,9 @@ def parse_udp_tracker_url(announce_url):
 
 
 def build_udp_connect_request(transaction_id):
-    return struct.pack(">QII", UDP_TRACKER_PROTOCOL_ID, UDP_ACTION_CONNECT, transaction_id)
+    return struct.pack(
+        ">QII", UDP_TRACKER_PROTOCOL_ID, UDP_ACTION_CONNECT, transaction_id
+    )
 
 
 def _check_for_udp_error_action(data, transaction_id):
@@ -180,7 +190,9 @@ def _check_for_udp_error_action(data, transaction_id):
     if len(data) >= 8:
         action, resp_transaction_id = struct.unpack(">II", data[:8])
         if action == UDP_ACTION_ERROR and resp_transaction_id == transaction_id:
-            raise UdpTrackerError(f"Tracker error: {data[8:].decode('utf-8', 'replace')}")
+            raise UdpTrackerError(
+                f"Tracker error: {data[8:].decode('utf-8', 'replace')}"
+            )
 
 
 def parse_udp_connect_response(data, transaction_id):
@@ -198,7 +210,10 @@ def parse_udp_connect_response(data, transaction_id):
 def build_udp_scrape_request(connection_id, transaction_id, info_hash):
     if len(info_hash) != 20:
         raise UdpTrackerError(f"info_hash must be 20 bytes, got {len(info_hash)}")
-    return struct.pack(">QII", connection_id, UDP_ACTION_SCRAPE, transaction_id) + info_hash
+    return (
+        struct.pack(">QII", connection_id, UDP_ACTION_SCRAPE, transaction_id)
+        + info_hash
+    )
 
 
 def parse_udp_scrape_response(data, transaction_id):
@@ -213,11 +228,11 @@ def parse_udp_scrape_response(data, transaction_id):
     if resp_transaction_id != transaction_id:
         raise UdpTrackerError("Transaction ID mismatch in scrape response")
     seeders, completed, leechers = struct.unpack(">III", data[8:20])
-    return {'seeders': seeders, 'leechers': leechers, 'completed': completed}
+    return {"seeders": seeders, "leechers": leechers, "completed": completed}
 
 
 def _random_transaction_id():
-    return int.from_bytes(os.urandom(4), 'big')
+    return int.from_bytes(os.urandom(4), "big")
 
 
 def scrape_udp_tracker(host, port, info_hash, timeout=15):
@@ -237,7 +252,10 @@ def scrape_udp_tracker(host, port, info_hash, timeout=15):
         connection_id = parse_udp_connect_response(data, connect_transaction_id)
 
         scrape_transaction_id = _random_transaction_id()
-        sock.sendto(build_udp_scrape_request(connection_id, scrape_transaction_id, info_hash), addr)
+        sock.sendto(
+            build_udp_scrape_request(connection_id, scrape_transaction_id, info_hash),
+            addr,
+        )
         data, _ = sock.recvfrom(2048)
         return parse_udp_scrape_response(data, scrape_transaction_id)
     finally:
@@ -251,8 +269,12 @@ def _is_disallowed_ip(ip_str):
     container's own services (127.0.0.1) alongside RFC1918 space."""
     ip = ipaddress.ip_address(ip_str)
     return (
-        ip.is_private or ip.is_loopback or ip.is_link_local
-        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
     )
 
 
@@ -280,8 +302,8 @@ def _is_safe_scrape_host(hostname):
 
 
 def build_scrape_request_url(scrape_url, info_hash):
-    encoded_hash = quote_from_bytes(info_hash, safe='')
-    separator = '&' if '?' in scrape_url else '?'
+    encoded_hash = quote_from_bytes(info_hash, safe="")
+    separator = "&" if "?" in scrape_url else "?"
     return f"{scrape_url}{separator}info_hash={encoded_hash}"
 
 
@@ -290,17 +312,17 @@ def parse_scrape_response(data, info_hash):
     'completed'} for info_hash, or None if the tracker's response doesn't
     include stats for it."""
     parsed, _ = bdecode(data)
-    if b'failure reason' in parsed:
-        raise BencodeError(parsed[b'failure reason'].decode('utf-8', 'replace'))
+    if b"failure reason" in parsed:
+        raise BencodeError(parsed[b"failure reason"].decode("utf-8", "replace"))
 
-    stats = parsed.get(b'files', {}).get(info_hash)
+    stats = parsed.get(b"files", {}).get(info_hash)
     if stats is None:
         return None
 
     return {
-        'seeders': stats.get(b'complete', 0),
-        'leechers': stats.get(b'incomplete', 0),
-        'completed': stats.get(b'downloaded', 0),
+        "seeders": stats.get(b"complete", 0),
+        "leechers": stats.get(b"incomplete", 0),
+        "completed": stats.get(b"downloaded", 0),
     }
 
 
@@ -310,7 +332,7 @@ def scrape_torrent(torrent_path, timeout=15):
     until one returns usable stats. Returns {'tracker', 'seeders',
     'leechers', 'completed'}, or None if no tracker could be scraped
     (all UDP-only, all unreachable, or none had stats for this hash)."""
-    with open(torrent_path, 'rb') as f:
+    with open(torrent_path, "rb") as f:
         torrent_bytes = f.read()
 
     info_hash = compute_info_hash(torrent_bytes)
@@ -325,7 +347,7 @@ def scrape_torrent(torrent_path, timeout=15):
                 stats = scrape_udp_tracker(host, port, info_hash, timeout=timeout)
             except Exception:
                 continue
-            return {'tracker': f'udp://{host}:{port}', **stats}
+            return {"tracker": f"udp://{host}:{port}", **stats}
 
         scrape_url = derive_scrape_url(announce_url)
         if not scrape_url:
@@ -342,6 +364,6 @@ def scrape_torrent(torrent_path, timeout=15):
             continue
 
         if stats is not None:
-            return {'tracker': scrape_url, **stats}
+            return {"tracker": scrape_url, **stats}
 
     return None

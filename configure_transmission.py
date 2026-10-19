@@ -9,6 +9,7 @@ case that fills in a value despite no env var being set is
 build_port_forwarding_overrides()'s first-run default - see its docstring -
 which only ever applies before there's anything on disk to disturb.
 """
+
 import json
 import os
 import sys
@@ -17,25 +18,25 @@ import sys
 def build_rpc_overrides(env):
     overrides = {}
 
-    whitelist = env.get('TRANSMISSION_RPC_WHITELIST', '').strip()
+    whitelist = env.get("TRANSMISSION_RPC_WHITELIST", "").strip()
     if whitelist:
-        overrides['rpc-whitelist-enabled'] = True
-        overrides['rpc-whitelist'] = whitelist
+        overrides["rpc-whitelist-enabled"] = True
+        overrides["rpc-whitelist"] = whitelist
 
-    username = env.get('TRANSMISSION_RPC_USERNAME', '').strip()
-    password = env.get('TRANSMISSION_RPC_PASSWORD', '').strip()
+    username = env.get("TRANSMISSION_RPC_USERNAME", "").strip()
+    password = env.get("TRANSMISSION_RPC_PASSWORD", "").strip()
     if username and password:
-        overrides['rpc-authentication-required'] = True
-        overrides['rpc-username'] = username
+        overrides["rpc-authentication-required"] = True
+        overrides["rpc-username"] = username
         # Plaintext is intentional: transmission-daemon hashes rpc-password
         # in place on its next start, same as if set by hand.
-        overrides['rpc-password'] = password
+        overrides["rpc-password"] = password
 
     return overrides
 
 
 def _parse_positive_int(value):
-    value = (value or '').strip()
+    value = (value or "").strip()
     if not value:
         return None
     try:
@@ -54,21 +55,23 @@ def build_peer_limit_overrides(env):
     honor (or that blocks all peers, in the case of 0)."""
     overrides = {}
 
-    global_limit = _parse_positive_int(env.get('TRANSMISSION_PEER_LIMIT_GLOBAL', ''))
+    global_limit = _parse_positive_int(env.get("TRANSMISSION_PEER_LIMIT_GLOBAL", ""))
     if global_limit is not None:
-        overrides['peer-limit-global'] = global_limit
+        overrides["peer-limit-global"] = global_limit
 
-    per_torrent_limit = _parse_positive_int(env.get('TRANSMISSION_PEER_LIMIT_PER_TORRENT', ''))
+    per_torrent_limit = _parse_positive_int(
+        env.get("TRANSMISSION_PEER_LIMIT_PER_TORRENT", "")
+    )
     if per_torrent_limit is not None:
-        overrides['peer-limit-per-torrent'] = per_torrent_limit
+        overrides["peer-limit-per-torrent"] = per_torrent_limit
 
     return overrides
 
 
 def _parse_bool(value):
-    value = (value or '').strip().lower()
-    if value in ('true', 'false'):
-        return value == 'true'
+    value = (value or "").strip().lower()
+    if value in ("true", "false"):
+        return value == "true"
     return None
 
 
@@ -82,11 +85,11 @@ def build_port_forwarding_overrides(env, settings_file_exists):
     Transmission itself would otherwise pick its own default. Once the file
     exists, this is untouched unless TRANSMISSION_PORT_FORWARDING says
     otherwise, same as every other setting here."""
-    explicit = _parse_bool(env.get('TRANSMISSION_PORT_FORWARDING', ''))
+    explicit = _parse_bool(env.get("TRANSMISSION_PORT_FORWARDING", ""))
     if explicit is not None:
-        return {'port-forwarding-enabled': explicit}
+        return {"port-forwarding-enabled": explicit}
     if not settings_file_exists:
-        return {'port-forwarding-enabled': False}
+        return {"port-forwarding-enabled": False}
     return {}
 
 
@@ -95,7 +98,9 @@ def warn_if_open_without_auth(overrides):
     anyone who can reach the RPC port has full control (add/remove/delete
     data) - Transmission has no read-only RPC mode. Returns a warning
     message to log, or None if there's nothing to warn about."""
-    if overrides.get('rpc-whitelist-enabled') and not overrides.get('rpc-authentication-required'):
+    if overrides.get("rpc-whitelist-enabled") and not overrides.get(
+        "rpc-authentication-required"
+    ):
         return (
             "TRANSMISSION_RPC_WHITELIST is set but TRANSMISSION_RPC_USERNAME/"
             "TRANSMISSION_RPC_PASSWORD are not - the web UI/RPC endpoint is "
@@ -114,22 +119,25 @@ def load_settings(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
-        print(f"configure_transmission: could not read {path} ({exc}) - starting fresh.", file=sys.stderr)
+        print(
+            f"configure_transmission: could not read {path} ({exc}) - starting fresh.",
+            file=sys.stderr,
+        )
         return {}
 
 
 def save_settings(path, settings):
     tmp_path = f"{path}.tmp"
-    with open(tmp_path, 'w', encoding='utf-8') as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=4, sort_keys=True)
     os.replace(tmp_path, path)
 
 
 def main():
-    settings_path = os.getenv('TRANSMISSION_SETTINGS_FILE', '/config/settings.json')
+    settings_path = os.getenv("TRANSMISSION_SETTINGS_FILE", "/config/settings.json")
     settings_file_exists = os.path.exists(settings_path)
     overrides = {
         **build_rpc_overrides(os.environ),
