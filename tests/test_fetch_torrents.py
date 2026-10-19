@@ -388,6 +388,103 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
         self.assertEqual(to_remove, [older])
 
 
+class ParseVersionTypeTests(unittest.TestCase):
+    """(version, type_) is the grouping key for the ratio gate and cleanup:
+    two names share a ratio history only when their type_ is equal."""
+
+    CASES = (
+        (
+            "ubuntu-24.04-desktop-amd64.iso",
+            "ubuntu",
+            ("24.04", "ubuntu-desktop-amd64.iso"),
+        ),
+        (
+            "ubuntu-24.04-desktop-arm64.iso",
+            "ubuntu",
+            ("24.04", "ubuntu-desktop-arm64.iso"),
+        ),
+        (
+            "xubuntu-24.04-desktop-amd64.iso",
+            "ubuntu",
+            ("24.04", "xubuntu-desktop-amd64.iso"),
+        ),
+        ("debian-12.5.0-amd64-DVD-1.iso", "debian", ("12.5.0", "amd64-DVD-1.iso")),
+        ("debian-12.5.0-arm64-DVD-1.iso", "debian", ("12.5.0", "arm64-DVD-1.iso")),
+        (
+            "kali-linux-2024.1-installer-amd64.iso",
+            "kali",
+            ("2024.1", "installer-amd64.iso"),
+        ),
+        (
+            "kali-linux-2024.1-installer-arm64.iso",
+            "kali",
+            ("2024.1", "installer-arm64.iso"),
+        ),
+        ("archlinux-2024.05.01-x86_64.iso", "arch", ("2024.05.01", "")),
+        ("linuxmint-22.3-cinnamon-64bit.iso", "mint", ("22.3", "cinnamon-64bit.iso")),
+        ("Fedora-Workstation-Live-x86_64-44", "fedora", ("44", "x86_64")),
+        ("Fedora-Workstation-Live-aarch64-44", "fedora", ("44", "aarch64")),
+        ("anything-1.0", "not-a-distro", ("", "")),
+    )
+
+    def test_every_ubuntu_flavour_fetched_is_recognised_as_ubuntu(self):
+        # fetch_ubuntu_lts() fetches ubuntu, lubuntu and xubuntu images; a
+        # flavour get_distro() doesn't recognise skips the ratio gate and
+        # cleanup grouping entirely.
+        for name in (
+            "ubuntu-24.04-desktop-amd64.iso",
+            "lubuntu-24.04-desktop-amd64.iso",
+            "xubuntu-24.04-desktop-amd64.iso",
+        ):
+            with self.subTest(name):
+                self.assertEqual(ft.get_distro(name), "ubuntu")
+
+    def test_lubuntu_is_ratio_gated_on_its_own_previous_release(self):
+        ratios = {
+            "lubuntu-23.10-desktop-amd64.iso": 0.2,
+            "ubuntu-23.10-desktop-amd64.iso": 5.0,
+        }
+        with helpers.isolated_env():
+            self.assertFalse(
+                ft.should_fetch_torrent("lubuntu-24.04-desktop-amd64.iso", ratios)
+            )
+
+    def test_version_and_type_per_distro(self):
+        for name, distro, expected in self.CASES:
+            with self.subTest(name):
+                self.assertEqual(ft.parse_version_type(name, distro), expected)
+
+    def test_architectures_of_the_same_release_get_different_types(self):
+        pairs = [
+            (
+                "ubuntu-24.04-desktop-amd64.iso",
+                "ubuntu-24.04-desktop-arm64.iso",
+                "ubuntu",
+            ),
+            (
+                "debian-12.5.0-amd64-DVD-1.iso",
+                "debian-12.5.0-arm64-DVD-1.iso",
+                "debian",
+            ),
+            (
+                "kali-linux-2024.1-installer-amd64.iso",
+                "kali-linux-2024.1-installer-arm64.iso",
+                "kali",
+            ),
+            (
+                "Fedora-Workstation-Live-x86_64-44",
+                "Fedora-Workstation-Live-aarch64-44",
+                "fedora",
+            ),
+        ]
+        for a, b, distro in pairs:
+            with self.subTest(distro):
+                self.assertNotEqual(
+                    ft.parse_version_type(a, distro)[1],
+                    ft.parse_version_type(b, distro)[1],
+                )
+
+
 class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     """Candidate names must key into the same ratio-lookup bucket as the names Transmission
     actually reports (which include the arch suffix and .iso extension),

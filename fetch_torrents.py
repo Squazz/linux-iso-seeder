@@ -203,7 +203,7 @@ def get_previous_ratios(log_file):
 
 
 distro_patterns = {
-    "ubuntu": re.compile(r"^ubuntu-|^lbuntu-|^xbuntu-"),
+    "ubuntu": re.compile(r"^(ubuntu|lubuntu|xubuntu)-"),
     "debian": re.compile(r"^debian-"),
     "kali": re.compile(r"^kali-linux-"),
     "arch": re.compile(r"^archlinux-"),
