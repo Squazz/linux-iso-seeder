@@ -14,6 +14,8 @@ import json
 import os
 import sys
 
+DEFAULT_SETTINGS_FILE = "/config/settings.json"
+
 
 def build_rpc_overrides(env):
     overrides = {}
@@ -136,8 +138,12 @@ def save_settings(path, settings):
     os.replace(tmp_path, path)
 
 
-def main():
-    settings_path = os.getenv("TRANSMISSION_SETTINGS_FILE", "/config/settings.json")
+def main(settings_path=None):
+    """settings_path defaults to TRANSMISSION_SETTINGS_FILE, then
+    DEFAULT_SETTINGS_FILE."""
+    settings_path = settings_path or os.getenv(
+        "TRANSMISSION_SETTINGS_FILE", DEFAULT_SETTINGS_FILE
+    )
     settings_file_exists = os.path.exists(settings_path)
     overrides = {
         **build_rpc_overrides(os.environ),

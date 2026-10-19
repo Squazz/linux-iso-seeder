@@ -97,7 +97,7 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 | 28 | [Make `wait_for_transmission_rpc` testable and test it](28-rpc-wait-seam.md) | P2 | REFACTOR_REQUIRED | — | done |
 | 29 | [Inject the UDP transaction id; assert wire payloads](29-udp-transaction-id-seam.md) | P3 | REFACTOR_REQUIRED | — | done |
 | 30 | [Test `scripts/live_check.py` beyond `problems()`](30-live-check-tests.md) | P2 | REFACTOR_REQUIRED | — | done |
-| 31 | [`configure_transmission`: hermetic default path, boundaries](31-configure-transmission-gaps.md) | P3 | NO_REFACTOR | — | open |
+| 31 | [`configure_transmission`: hermetic default path, boundaries](31-configure-transmission-gaps.md) | P3 | NO_REFACTOR | — | done |
 | 32 | [Atomic `.torrent` writes](32-atomic-torrent-writes.md) | P2 (bug) | NO_REFACTOR | — | done |
 | 33 | [`scrape_torrent` fall-through branches and SSRF edges](33-scrape-torrent-branches-and-ssrf.md) | P2 | NO_REFACTOR | — | done |
 | 34 | [Mechanical test tidy-up](34-mechanical-test-tidy-up.md) | P3 | NO_REFACTOR | — | open |
@@ -119,6 +119,12 @@ mutants) counts as clean:
 - `break` → `continue` once `enforce_disk_usage_limit` is under the
   threshold: every later candidate fails the same check, so the only
   difference is extra disk-usage reads.
+
+In `configure_transmission.py` (task 31), `save_settings`'s `indent=4` and
+`sort_keys=True` are accepted too. transmission-daemon owns settings.json and
+rewrites it in its own layout when it saves, so ours is never relied on. The
+fetch_torrents state files are different: only this code writes them, so
+their layout is pinned in `tests/test_persistence.py`.
 
 Task 36 removed three other equivalents by simplifying the code, so mutmut
 no longer generates them: Arch's `max(..., key=...)` became `max()`, Fedora's

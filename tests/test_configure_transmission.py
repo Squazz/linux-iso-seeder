@@ -135,6 +135,18 @@ class BuildPeerLimitOverridesTests(unittest.TestCase):
 
         self.assertEqual(overrides, {})
 
+    def test_a_limit_of_one_is_kept(self):
+        overrides = ct.build_peer_limit_overrides(
+            {
+                "TRANSMISSION_PEER_LIMIT_GLOBAL": "1",
+                "TRANSMISSION_PEER_LIMIT_PER_TORRENT": " 1 ",
+            }
+        )
+
+        self.assertEqual(
+            overrides, {"peer-limit-global": 1, "peer-limit-per-torrent": 1}
+        )
+
     def test_zero_and_negative_values_are_ignored(self):
         overrides = ct.build_peer_limit_overrides(
             {
@@ -172,6 +184,16 @@ class BuildPortForwardingOverridesTests(unittest.TestCase):
         )
 
         self.assertEqual(overrides, {"port-forwarding-enabled": False})
+
+    def test_explicit_value_ignores_case_and_surrounding_whitespace(self):
+        for value, expected in (("TRUE", True), (" false ", False), ("True\n", True)):
+            with self.subTest(value=value):
+                overrides = ct.build_port_forwarding_overrides(
+                    {"TRANSMISSION_PORT_FORWARDING": value},
+                    settings_file_exists=True,
+                )
+
+                self.assertEqual(overrides, {"port-forwarding-enabled": expected})
 
     def test_blank_env_var_on_first_run_falls_back_to_default(self):
         overrides = ct.build_port_forwarding_overrides(
@@ -233,9 +255,22 @@ class ApplyOverridesTests(unittest.TestCase):
 
         merged = ct.apply_overrides(settings, overrides)
 
-        self.assertEqual(merged["peer-port"], 51413)
-        self.assertEqual(merged["rpc-whitelist"], "10.0.0.*")
-        self.assertTrue(merged["rpc-whitelist-enabled"])
+        self.assertEqual(
+            merged,
+            {
+                "peer-port": 51413,
+                "rpc-whitelist-enabled": True,
+                "rpc-whitelist": "10.0.0.*",
+            },
+        )
+        self.assertEqual(
+            settings,
+            {
+                "peer-port": 51413,
+                "rpc-whitelist-enabled": True,
+                "rpc-whitelist": "127.0.0.1",
+            },
+        )
 
 
 class MainTests(unittest.TestCase):
@@ -243,7 +278,10 @@ class MainTests(unittest.TestCase):
     settings.json out."""
 
     def setUp(self):
-        self.path = os.path.join(
+        self.path = self._new_settings_path()
+
+    def _new_settings_path(self):
+        return os.path.join(
             helpers.make_temp_dir(self, "configure_transmission_main_"),
             "settings.json",
         )
@@ -319,8 +357,7 @@ class MainTests(unittest.TestCase):
         # Pins current behavior; whether these should warn is a product call.
         for value in ("abc", "0"):
             with self.subTest(value=value):
-                if os.path.exists(self.path):
-                    os.remove(self.path)
+                self.path = self._new_settings_path()
 
                 stderr = self._run(TRANSMISSION_PEER_LIMIT_GLOBAL=value)
 
@@ -352,17 +389,29 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(self._read_settings(), {"port-forwarding-enabled": False})
 
-    def test_defaults_to_config_settings_path(self):
+    def test_default_settings_file_is_in_the_config_volume(self):
+        self.assertEqual(ct.DEFAULT_SETTINGS_FILE, "/config/settings.json")
+
+    def test_without_an_env_var_the_default_settings_file_is_used(self):
+        # The default is patched to a temp path, so this never reads (or
+        # depends on) a real /config/settings.json on the machine.
         with (
+            unittest.mock.patch.object(ct, "DEFAULT_SETTINGS_FILE", self.path),
             unittest.mock.patch.dict(os.environ, {}, clear=True),
-            unittest.mock.patch.object(ct, "save_settings") as save,
-            unittest.mock.patch.object(ct, "load_settings", return_value={}),
         ):
             ct.main()
 
-        save.assert_called_once_with(
-            "/config/settings.json", {"port-forwarding-enabled": False}
-        )
+        self.assertEqual(self._read_settings(), {"port-forwarding-enabled": False})
+
+    def test_an_explicit_settings_path_wins_over_the_env_var(self):
+        env_path = self._new_settings_path()
+        with unittest.mock.patch.dict(
+            os.environ, {"TRANSMISSION_SETTINGS_FILE": env_path}, clear=True
+        ):
+            ct.main(settings_path=self.path)
+
+        self.assertEqual(self._read_settings(), {"port-forwarding-enabled": False})
+        self.assertFalse(os.path.exists(env_path))
 
 
 if __name__ == "__main__":
