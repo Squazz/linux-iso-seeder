@@ -33,9 +33,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import helpers
-
 import fetch_torrents as ft
+
+import helpers
 
 
 def setUpModule():
@@ -685,6 +685,101 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
             "open at import time, before ever being read. That silently "
             "defeats the low-ratio fetch gate for every distro.",
         )
+
+
+class GetPreviousRatiosTests(unittest.TestCase):
+    """get_previous_ratios() is what feeds should_fetch_torrent()'s ratios:
+    only the last START/END segment of the previous run's ratio log counts,
+    so a ratio from an older run can't satisfy (or block) the gate."""
+
+    def _write_log(self, *messages):
+        path = os.path.join(
+            helpers.make_temp_dir(self, "fetch_torrents_prev_ratios_"),
+            "fetch_torrents_ratios.log",
+        )
+        with open(path, "w", encoding="utf-8") as f:
+            f.writelines(f"2026-08-01 00:00:00,000 INFO: {message}\n" for message in messages)
+        return path
+
+    def test_missing_file_returns_empty(self):
+        missing = os.path.join(
+            helpers.make_temp_dir(self, "fetch_torrents_prev_ratios_"), "nope.log"
+        )
+        self.assertEqual(ft.get_previous_ratios(missing), {})
+
+    def test_without_markers_every_ratio_line_is_parsed(self):
+        path = self._write_log(
+            "[ratio] ubuntu-24.04-desktop-amd64.iso → 1.250",
+            "unrelated line",
+            "[ratio] debian-12.5.0-amd64-DVD-1.iso → 0.664",
+        )
+        self.assertEqual(
+            ft.get_previous_ratios(path),
+            {
+                "ubuntu-24.04-desktop-amd64.iso": 1.25,
+                "debian-12.5.0-amd64-DVD-1.iso": 0.664,
+            },
+        )
+
+    def test_only_the_last_complete_segment_is_returned(self):
+        path = self._write_log(
+            "[ratio] RATIOS START",
+            "[ratio] old-only.iso → 0.100",
+            "[ratio] shared.iso → 0.200",
+            "[ratio] RATIOS END",
+            "[ratio] RATIOS START",
+            "[ratio] shared.iso → 1.500",
+            "[ratio] RATIOS END",
+            "[ratio] after-end.iso → 0.300",
+        )
+        self.assertEqual(ft.get_previous_ratios(path), {"shared.iso": 1.5})
+
+    def test_start_without_end_parses_to_end_of_file(self):
+        # A run that crashed mid-way never wrote its END marker.
+        path = self._write_log(
+            "[ratio] RATIOS START",
+            "[ratio] old.iso → 0.100",
+            "[ratio] RATIOS END",
+            "[ratio] RATIOS START",
+            "[ratio] crashed-run.iso → 0.700",
+        )
+        self.assertEqual(ft.get_previous_ratios(path), {"crashed-run.iso": 0.7})
+
+    def test_end_before_the_last_start_is_ignored(self):
+        path = self._write_log(
+            "[ratio] RATIOS END",
+            "[ratio] before-start.iso → 0.100",
+            "[ratio] RATIOS START",
+            "[ratio] current.iso → 0.900",
+        )
+        self.assertEqual(ft.get_previous_ratios(path), {"current.iso": 0.9})
+
+    def test_padded_names_are_stripped(self):
+        path = self._write_log(
+            "[ratio] archlinux-2026.04.01-x86_64.iso            → 0.664",
+        )
+        self.assertEqual(
+            ft.get_previous_ratios(path), {"archlinux-2026.04.01-x86_64.iso": 0.664}
+        )
+
+    def test_names_with_internal_spaces_keep_them(self):
+        path = self._write_log("[ratio]   Some Torrent Name   → 2.000")
+        self.assertEqual(ft.get_previous_ratios(path), {"Some Torrent Name": 2.0})
+
+    def test_ratio_without_decimal_point_is_not_matched(self):
+        # Pins current behavior: log_seed_ratios_via_http() always writes
+        # three decimals, so an integer ratio means a line it didn't write.
+        path = self._write_log("[ratio] whole.iso → 1")
+        self.assertEqual(ft.get_previous_ratios(path), {})
+
+    def test_duplicate_name_in_a_segment_last_one_wins(self):
+        path = self._write_log(
+            "[ratio] RATIOS START",
+            "[ratio] dup.iso → 0.100",
+            "[ratio] dup.iso → 1.100",
+            "[ratio] RATIOS END",
+        )
+        self.assertEqual(ft.get_previous_ratios(path), {"dup.iso": 1.1})
 
 
 class LogFileRotationTests(unittest.TestCase):
