@@ -7,6 +7,7 @@ Run with: python -m unittest discover -s tests
 """
 
 import hashlib
+import inspect
 import os
 import socket
 import struct
@@ -69,7 +70,9 @@ class BdecodeBencodeTests(unittest.TestCase):
         self.assertEqual(value, {b"info": {b"name": b"test", b"length": 10}})
 
     def test_bdecode_invalid_prefix_raises(self):
-        with self.assertRaises(ts.BencodeError):
+        with self.assertRaisesRegex(
+            ts.BencodeError, r"Invalid bencode prefix b'x' at index 0"
+        ):
             ts.bdecode(b"x123")
 
     def test_bdecode_malformed_input_raises_bencode_error(self):
@@ -87,10 +90,11 @@ class BdecodeBencodeTests(unittest.TestCase):
             b"d3:cow3:moo": "unterminated dict",
         }
         for data, problem in cases.items():
-            with self.subTest(problem, data=data):
-                with self.assertRaises(ts.BencodeError) as ctx:
-                    ts.bdecode(data)
-                self.assertRegex(str(ctx.exception), r"index \d+")
+            with (
+                self.subTest(problem, data=data),
+                self.assertRaisesRegex(ts.BencodeError, r"index \d+"),
+            ):
+                ts.bdecode(data)
 
     def test_bdecode_truncated_string_reports_declared_and_remaining_bytes(self):
         with self.assertRaisesRegex(
@@ -105,7 +109,7 @@ class BdecodeBencodeTests(unittest.TestCase):
             ts.bdecode(b"l4:spam")
 
     def test_bdecode_truncated_string_inside_container_raises(self):
-        with self.assertRaises(ts.BencodeError):
+        with self.assertRaisesRegex(ts.BencodeError, "declares 10 bytes"):
             ts.bdecode(b"d4:info10:shorte")
 
     def test_bdecode_string_ending_exactly_at_end_of_data_is_accepted(self):
@@ -142,7 +146,12 @@ class BencodeStrTests(unittest.TestCase):
 
     def test_unsupported_types_raise(self):
         for value in (True, 1.5, None, ("tuple",)):
-            with self.subTest(value=value), self.assertRaises(ts.BencodeError):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    ts.BencodeError, "is not a bencode type|Cannot bencode type"
+                ),
+            ):
                 ts.bencode(value)
 
 
@@ -168,7 +177,7 @@ class ComputeInfoHashTests(unittest.TestCase):
         torrent_bytes = (
             b"d" + bstr("announce") + bstr("http://tracker.example.com/announce") + b"e"
         )
-        with self.assertRaises(ts.BencodeError):
+        with self.assertRaisesRegex(ts.BencodeError, "missing 'info' dictionary"):
             ts.compute_info_hash(torrent_bytes)
 
 
@@ -311,7 +320,7 @@ class ParseScrapeResponseTests(unittest.TestCase):
 
     def test_raises_on_failure_reason(self):
         response = b"d14:failure reason7:blockede"
-        with self.assertRaises(ts.BencodeError):
+        with self.assertRaisesRegex(ts.BencodeError, "^blocked$"):
             ts.parse_scrape_response(response, b"A" * 20)
 
 
@@ -371,21 +380,27 @@ class BuildParseUdpConnectRequestTests(unittest.TestCase):
 
     def test_transaction_id_mismatch_raises(self):
         response = _connect_response(transaction_id=42, connection_id=1)
-        with self.assertRaises(ts.UdpTrackerError):
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "Transaction ID mismatch in connect response"
+        ):
             ts.parse_udp_connect_response(response, transaction_id=99)
 
     def test_wrong_action_raises(self):
         response = _connect_response(transaction_id=42, connection_id=1, action=2)
-        with self.assertRaises(ts.UdpTrackerError):
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "Unexpected action 2 in connect response"
+        ):
             ts.parse_udp_connect_response(response, transaction_id=42)
 
-    def test_short_response_raises(self):
-        with self.assertRaises(ts.UdpTrackerError):
-            ts.parse_udp_connect_response(b"\x00" * 8, transaction_id=42)
-
-    def test_short_response_reports_its_length(self):
-        with self.assertRaisesRegex(ts.UdpTrackerError, r"too short \(15 bytes\)"):
-            ts.parse_udp_connect_response(b"\x00" * 15, transaction_id=42)
+    def test_short_response_raises_with_its_length(self):
+        for length in (8, 15):
+            with (
+                self.subTest(length=length),
+                self.assertRaisesRegex(
+                    ts.UdpTrackerError, rf"too short \({length} bytes\)"
+                ),
+            ):
+                ts.parse_udp_connect_response(b"\x00" * length, transaction_id=42)
 
     def test_trailing_bytes_after_connect_response_are_ignored(self):
         response = _connect_response(transaction_id=42, connection_id=7) + b"xx"
@@ -400,15 +415,15 @@ class BuildParseUdpConnectRequestTests(unittest.TestCase):
 
     def test_error_action_for_another_transaction_is_not_reported_as_ours(self):
         response = _error_response(transaction_id=99, message="not for you")
-        with self.assertRaises(ts.UdpTrackerError) as ctx:
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "^Unexpected action 3 in connect response$"
+        ):
             ts.parse_udp_connect_response(response, transaction_id=42)
-        self.assertNotIn("not for you", str(ctx.exception))
 
     def test_tracker_error_action_raises_with_message(self):
         response = _error_response(transaction_id=42, message="bad request")
-        with self.assertRaises(ts.UdpTrackerError) as ctx:
+        with self.assertRaisesRegex(ts.UdpTrackerError, "^Tracker error: bad request$"):
             ts.parse_udp_connect_response(response, transaction_id=42)
-        self.assertIn("bad request", str(ctx.exception))
 
 
 class BuildParseUdpScrapeRequestTests(unittest.TestCase):
@@ -426,7 +441,9 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
         self.assertEqual(request[16:], info_hash)
 
     def test_wrong_length_info_hash_raises(self):
-        with self.assertRaises(ts.UdpTrackerError):
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "info_hash must be 20 bytes, got 5"
+        ):
             ts.build_udp_scrape_request(
                 connection_id=1, transaction_id=1, info_hash=b"short"
             )
@@ -442,24 +459,31 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
         response = _scrape_response(
             transaction_id=7, seeders=1, completed=1, leechers=1
         )
-        with self.assertRaises(ts.UdpTrackerError):
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "Transaction ID mismatch in scrape response"
+        ):
             ts.parse_udp_scrape_response(response, transaction_id=8)
 
     def test_wrong_action_raises(self):
         response = _scrape_response(
             transaction_id=7, seeders=1, completed=1, leechers=1, action=0
         )
-        with self.assertRaises(ts.UdpTrackerError):
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "Unexpected action 0 in scrape response"
+        ):
             ts.parse_udp_scrape_response(response, transaction_id=7)
 
-    def test_short_response_raises(self):
-        with self.assertRaises(ts.UdpTrackerError):
-            ts.parse_udp_scrape_response(b"\x00" * 4, transaction_id=7)
-
-    def test_response_one_byte_short_of_one_hash_raises(self):
-        response = _scrape_response(7, seeders=1, completed=1, leechers=1)[:19]
-        with self.assertRaisesRegex(ts.UdpTrackerError, r"too short \(19 bytes\)"):
-            ts.parse_udp_scrape_response(response, transaction_id=7)
+    def test_short_response_raises_with_its_length(self):
+        # 19 bytes is one short of the stats for a single hash.
+        full = _scrape_response(7, seeders=1, completed=1, leechers=1)
+        for length in (4, 19):
+            with (
+                self.subTest(length=length),
+                self.assertRaisesRegex(
+                    ts.UdpTrackerError, rf"too short \({length} bytes\)"
+                ),
+            ):
+                ts.parse_udp_scrape_response(full[:length], transaction_id=7)
 
     def test_trailing_bytes_after_first_hash_are_ignored(self):
         response = (
@@ -472,120 +496,144 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
 
     def test_tracker_error_action_raises_with_message(self):
         response = _error_response(transaction_id=7, message="scrape not supported")
-        with self.assertRaises(ts.UdpTrackerError) as ctx:
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "^Tracker error: scrape not supported$"
+        ):
             ts.parse_udp_scrape_response(response, transaction_id=7)
-        self.assertIn("scrape not supported", str(ctx.exception))
 
 
 class ScrapeUdpTrackerTests(unittest.TestCase):
-    """Exercises scrape_udp_tracker()'s socket I/O via a mocked socket, so
-    no real network access is required - same spirit as ScrapeTorrentTests
-    mocking ts.requests.get for the HTTP path."""
+    """Exercises scrape_udp_tracker()'s socket I/O against an autospec'd
+    socket (so a mistyped socket method fails) and a fixed transaction id
+    sequence, so no real network access or randomness is involved."""
 
-    def _make_fake_socket(self, recvfrom_side_effect):
-        fake_sock = unittest.mock.Mock()
-        fake_sock.recvfrom.side_effect = recvfrom_side_effect
-        return fake_sock
+    INFO_HASH = bytes(range(20))
+    ADDR = ("tracker.example.com", 1337)
 
-    def test_full_round_trip_returns_stats(self):
-        info_hash = b"A" * 20
-        connect_resp = _connect_response(
-            transaction_id=0x00000001, connection_id=0xCAFEBABE
-        )
-        scrape_resp = _scrape_response(
-            transaction_id=0x00000002, seeders=5, completed=2, leechers=3
-        )
-        fake_sock = self._make_fake_socket(
-            [
-                (connect_resp, ("1.2.3.4", 1337)),
-                (scrape_resp, ("1.2.3.4", 1337)),
-            ]
-        )
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            unittest.mock.patch.object(
-                ts.os, "urandom", side_effect=[b"\x00\x00\x00\x01", b"\x00\x00\x00\x02"]
-            ),
-        ):
-            stats = ts.scrape_udp_tracker(
-                "tracker.example.com", 1337, info_hash, timeout=5
+    def _scrape(self, replies, ids=(1, 2), **kwargs):
+        """Runs scrape_udp_tracker with `replies` as what recvfrom returns
+        (or raises); returns (result or raised exception, fake socket)."""
+        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
+        fake_sock.recvfrom.side_effect = replies
+        with unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock):
+            result = ts.scrape_udp_tracker(
+                *self.ADDR,
+                self.INFO_HASH,
+                new_transaction_id=iter(ids).__next__,
+                **kwargs,
             )
+        return result, fake_sock
+
+    def test_full_round_trip_sends_both_bep15_requests_and_returns_stats(self):
+        stats, fake_sock = self._scrape(
+            [
+                (_connect_response(transaction_id=1, connection_id=0xCAFEBABE), None),
+                (_scrape_response(2, seeders=5, completed=2, leechers=3), None),
+            ],
+            timeout=5,
+        )
 
         self.assertEqual(stats, {"seeders": 5, "leechers": 3, "completed": 2})
         fake_sock.settimeout.assert_called_once_with(5)
         self.assertEqual(
-            [call.args[1] for call in fake_sock.sendto.call_args_list],
-            [("tracker.example.com", 1337)] * 2,
-        )
-        # Second (scrape) request must carry the connection_id from the connect response.
-        scrape_request_bytes = fake_sock.sendto.call_args_list[1][0][0]
-        connection_id_sent, action_sent = struct.unpack(
-            ">QI", scrape_request_bytes[:12]
-        )
-        self.assertEqual(connection_id_sent, 0xCAFEBABE)
-        self.assertEqual(action_sent, 2)
-        fake_sock.close.assert_called_once()
-
-    def test_scrape_response_echoing_the_connect_id_raises(self):
-        info_hash = b"A" * 20
-        fake_sock = self._make_fake_socket(
+            fake_sock.sendto.call_args_list,
             [
-                (_connect_response(transaction_id=1, connection_id=9), None),
-                (_scrape_response(1, seeders=5, completed=2, leechers=3), None),
-            ]
+                unittest.mock.call(struct.pack(">QII", 0x41727101980, 0, 1), self.ADDR),
+                unittest.mock.call(
+                    struct.pack(">QII", 0xCAFEBABE, 2, 2) + self.INFO_HASH, self.ADDR
+                ),
+            ],
         )
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            unittest.mock.patch.object(
-                ts.os, "urandom", side_effect=[b"\x00\x00\x00\x01", b"\x00\x00\x00\x02"]
-            ),
-            self.assertRaisesRegex(ts.UdpTrackerError, "mismatch in scrape response"),
-        ):
-            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
-
         fake_sock.close.assert_called_once()
+
+    def test_scrape_uses_a_fresh_transaction_id_not_the_connect_one(self):
+        # A reply to the scrape that echoes the connect's id is not ours.
+        with self.assertRaisesRegex(
+            ts.UdpTrackerError, "Transaction ID mismatch in scrape response"
+        ):
+            self._scrape(
+                [
+                    (_connect_response(transaction_id=1, connection_id=9), None),
+                    (_scrape_response(1, seeders=5, completed=2, leechers=3), None),
+                ]
+            )
 
     def test_default_timeout_is_15_seconds(self):
-        fake_sock = self._make_fake_socket(TimeoutError("timed out"))
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            self.assertRaises(socket.timeout),
-        ):
-            ts.scrape_udp_tracker("tracker.example.com", 1337, b"A" * 20)
-
-        fake_sock.settimeout.assert_called_once_with(15)
-
-    def test_connect_transaction_mismatch_raises_and_closes_socket(self):
-        info_hash = b"A" * 20
-        bad_connect_resp = _connect_response(transaction_id=0x00000002, connection_id=1)
-        fake_sock = self._make_fake_socket([(bad_connect_resp, ("1.2.3.4", 1337))])
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            unittest.mock.patch.object(
-                ts.os, "urandom", return_value=b"\x00\x00\x00\x01"
-            ),
-            self.assertRaises(ts.UdpTrackerError),
-        ):
-            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
-
-        fake_sock.close.assert_called_once()
-
-    def test_socket_timeout_propagates(self):
-        info_hash = b"A" * 20
-        fake_sock = unittest.mock.Mock()
+        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
         fake_sock.recvfrom.side_effect = TimeoutError("timed out")
 
         with (
             unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            self.assertRaises(socket.timeout),
+            self.assertRaisesRegex(socket.timeout, "timed out"),
         ):
-            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
+            ts.scrape_udp_tracker(
+                *self.ADDR, self.INFO_HASH, new_transaction_id=lambda: 1
+            )
+
+        fake_sock.settimeout.assert_called_once_with(15)
+
+    def test_connect_transaction_mismatch_raises_and_closes_socket(self):
+        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
+        fake_sock.recvfrom.side_effect = [
+            (_connect_response(transaction_id=2, connection_id=1), None)
+        ]
+
+        with (
+            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
+            self.assertRaisesRegex(
+                ts.UdpTrackerError, "Transaction ID mismatch in connect response"
+            ),
+        ):
+            ts.scrape_udp_tracker(
+                *self.ADDR, self.INFO_HASH, new_transaction_id=lambda: 1
+            )
 
         fake_sock.close.assert_called_once()
+
+    def test_socket_timeout_propagates_and_closes_socket(self):
+        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
+        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
+
+        with (
+            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
+            self.assertRaisesRegex(socket.timeout, "timed out"),
+        ):
+            ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH, timeout=5)
+
+        fake_sock.close.assert_called_once()
+
+    def test_opens_a_udp_socket(self):
+        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
+        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
+
+        with (
+            unittest.mock.patch.object(
+                ts.socket, "socket", return_value=fake_sock
+            ) as make_socket,
+            self.assertRaises(socket.timeout),
+        ):
+            ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH)
+
+        make_socket.assert_called_once_with(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+class RandomTransactionIdTests(unittest.TestCase):
+    def test_is_four_random_bytes_read_big_endian(self):
+        with unittest.mock.patch.object(
+            ts.os, "urandom", return_value=b"\x01\x02\x03\x04"
+        ) as urandom:
+            self.assertEqual(ts._random_transaction_id(), 0x01020304)
+
+        urandom.assert_called_once_with(4)
+
+    def test_is_the_default_id_source(self):
+        default = (
+            inspect.signature(ts.scrape_udp_tracker)
+            .parameters["new_transaction_id"]
+            .default
+        )
+
+        self.assertIs(default, ts._random_transaction_id)
 
 
 class IsDisallowedIpTests(unittest.TestCase):

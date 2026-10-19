@@ -258,7 +258,9 @@ def _random_transaction_id():
     return int.from_bytes(os.urandom(4), "big")
 
 
-def scrape_udp_tracker(host, port, info_hash, timeout=15):
+def scrape_udp_tracker(
+    host, port, info_hash, timeout=15, *, new_transaction_id=_random_transaction_id
+):
     """Scrapes a BEP 15 UDP tracker for info_hash's stats via a connect
     round trip followed by a scrape round trip. Returns {'seeders',
     'leechers', 'completed'}. Raises (UdpTrackerError, OSError/socket.timeout,
@@ -269,12 +271,12 @@ def scrape_udp_tracker(host, port, info_hash, timeout=15):
         sock.settimeout(timeout)
         addr = (host, port)
 
-        connect_transaction_id = _random_transaction_id()
+        connect_transaction_id = new_transaction_id()
         sock.sendto(build_udp_connect_request(connect_transaction_id), addr)
         data, _ = sock.recvfrom(UDP_RECV_BUFFER_BYTES)
         connection_id = parse_udp_connect_response(data, connect_transaction_id)
 
-        scrape_transaction_id = _random_transaction_id()
+        scrape_transaction_id = new_transaction_id()
         sock.sendto(
             build_udp_scrape_request(connection_id, scrape_transaction_id, info_hash),
             addr,
