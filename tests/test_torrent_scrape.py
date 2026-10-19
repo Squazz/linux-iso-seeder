@@ -608,6 +608,27 @@ class IsDisallowedIpTests(unittest.TestCase):
     def test_public_ipv6_is_allowed(self):
         self.assertFalse(ts._is_disallowed_ip("2001:4860:4860::8888"))
 
+    def test_multicast_is_disallowed(self):
+        for ip in ("224.0.0.1", "239.255.255.250", "ff02::1"):
+            with self.subTest(ip=ip):
+                self.assertTrue(ts._is_disallowed_ip(ip))
+
+    def test_unspecified_address_is_disallowed(self):
+        # Connecting to 0.0.0.0 / :: reaches this host on most systems.
+        for ip in ("0.0.0.0", "::"):
+            with self.subTest(ip=ip):
+                self.assertTrue(ts._is_disallowed_ip(ip))
+
+    def test_ipv4_mapped_internal_addresses_are_disallowed(self):
+        # The Docker build runs this suite under Alpine's Python too, so
+        # this also holds there, not only on a developer's interpreter.
+        for ip in ("::ffff:127.0.0.1", "::ffff:10.0.0.1", "::ffff:169.254.169.254"):
+            with self.subTest(ip=ip):
+                self.assertTrue(ts._is_disallowed_ip(ip))
+
+    def test_ipv4_mapped_public_address_is_allowed(self):
+        self.assertFalse(ts._is_disallowed_ip("::ffff:93.184.216.34"))
+
 
 class ResolveAddressesTests(unittest.TestCase):
     def test_returns_the_ip_of_every_getaddrinfo_entry(self):
@@ -643,6 +664,10 @@ class IsSafeScrapeHostTests(unittest.TestCase):
         ):
             self.assertFalse(ts._is_safe_scrape_host("multi-homed.example.com"))
 
+    def test_resolving_to_no_addresses_is_unsafe(self):
+        with unittest.mock.patch.object(ts, "_resolve_addresses", return_value=[]):
+            self.assertFalse(ts._is_safe_scrape_host("tracker.example.com"))
+
     def test_resolution_failure_is_unsafe(self):
         with unittest.mock.patch.object(
             ts, "_resolve_addresses", side_effect=OSError("not known")
@@ -654,20 +679,59 @@ class IsSafeScrapeHostTests(unittest.TestCase):
         self.assertFalse(ts._is_safe_scrape_host(""))
 
 
+PUBLIC_IP = "93.184.216.34"
+
+
+def resolve_private(*private_hosts):
+    """A _resolve_addresses stand-in: loopback for private_hosts, a public
+    address for every other host."""
+
+    def resolve(hostname):
+        return ["127.0.0.1"] if hostname in private_hosts else [PUBLIC_IP]
+
+    return resolve
+
+
+def percent_encoded(raw):
+    """RFC 3986 percent-encoding of raw bytes, written independently of
+    urllib so it serves as an oracle for build_scrape_request_url()."""
+    unreserved = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+    return "".join(chr(b) if b in unreserved else f"%{b:02X}" for b in raw)
+
+
+def tracker_response(info_hash, seeders, leechers, completed=0):
+    """A real HTTP response carrying a bencoded scrape for info_hash."""
+    return helpers.fake_response(
+        b"d5:filesd"
+        + bstr(info_hash)
+        + b"d8:complete"
+        + bint(seeders)
+        + b"10:incomplete"
+        + bint(leechers)
+        + b"10:downloaded"
+        + bint(completed)
+        + b"eee"
+    )
+
+
+OTHER_HASH = b"\x01" * 20
+
+
 class ScrapeTorrentTests(unittest.TestCase):
     def setUp(self):
         # scrape_torrent() resolves each tracker's host before ever
         # requesting it (see IsSafeScrapeHostTests) - default every test's
-        # hosts to a public address so existing tracker-selection behavior
-        # doesn't depend on real DNS. Tests of the SSRF guard itself override
-        # this per-case.
+        # hosts to a public address so tracker-selection behavior doesn't
+        # depend on real DNS. Tests of the SSRF guard itself override this
+        # per-case.
         patcher = unittest.mock.patch.object(
-            ts, "_resolve_addresses", return_value=["93.184.216.34"]
+            ts, "_resolve_addresses", side_effect=resolve_private()
         )
         patcher.start()
         self.addCleanup(patcher.stop)
 
     def _write_torrent(self, announce_urls):
+        """Writes a .torrent with these trackers; returns (path, info_hash)."""
         tiers = b"".join(b"l" + bstr(u) + b"e" for u in announce_urls)
         info_bytes = b"d6:lengthi1e4:name4:teste"
         torrent_bytes = (
@@ -686,19 +750,10 @@ class ScrapeTorrentTests(unittest.TestCase):
         self.addCleanup(os.remove, path)
         with os.fdopen(fd, "wb") as f:
             f.write(torrent_bytes)
-        return path
-
-    def _scrape_response_bytes(self, info_hash, seeders, leechers):
-        return (
-            b"d5:filesd"
-            + bstr(info_hash)
-            + f"d8:completei{seeders}e10:incompletei{leechers}e10:downloadedi0ee".encode()
-            + b"ee"
-            + b"e"
-        )
+        return path, hashlib.sha1(info_bytes).digest()
 
     def test_uses_udp_tracker_when_it_succeeds(self):
-        path = self._write_torrent(
+        path, info_hash = self._write_torrent(
             [
                 "udp://tracker.example.com:80/announce",
                 "http://tracker.example.com:6969/announce",
@@ -708,103 +763,165 @@ class ScrapeTorrentTests(unittest.TestCase):
             unittest.mock.patch.object(
                 ts,
                 "scrape_udp_tracker",
-                return_value={
-                    "seeders": 5,
-                    "leechers": 7,
-                    "completed": 1,
-                },
+                return_value={"seeders": 5, "leechers": 7, "completed": 1},
             ) as mock_udp_scrape,
             unittest.mock.patch.object(ts.requests, "get") as mock_get,
         ):
             result = ts.scrape_torrent(path)
 
-        mock_udp_scrape.assert_called_once()
-        self.assertEqual(mock_udp_scrape.call_args.kwargs["timeout"], 15)
+        mock_udp_scrape.assert_called_once_with(
+            "tracker.example.com", 80, info_hash, timeout=15
+        )
         mock_get.assert_not_called()
-        self.assertEqual(result["seeders"], 5)
-        self.assertEqual(result["leechers"], 7)
-        self.assertEqual(result["tracker"], "udp://tracker.example.com:80")
+        self.assertEqual(
+            result,
+            {
+                "tracker": "udp://tracker.example.com:80",
+                "seeders": 5,
+                "leechers": 7,
+                "completed": 1,
+            },
+        )
+
+    def test_timeout_is_passed_to_the_udp_scrape(self):
+        path, info_hash = self._write_torrent(["udp://tracker.example.com:80/announce"])
+        with unittest.mock.patch.object(
+            ts,
+            "scrape_udp_tracker",
+            return_value={"seeders": 0, "leechers": 0, "completed": 0},
+        ) as mock_udp_scrape:
+            ts.scrape_torrent(path, timeout=3)
+
+        mock_udp_scrape.assert_called_once_with(
+            "tracker.example.com", 80, info_hash, timeout=3
+        )
 
     def test_falls_through_from_failing_udp_tracker_to_http_tracker(self):
-        path = self._write_torrent(
+        path, info_hash = self._write_torrent(
             [
                 "udp://tracker.example.com:80/announce",
                 "http://tracker.example.com:6969/announce",
             ]
         )
-        with open(path, "rb") as f:
-            info_hash = ts.compute_info_hash(f.read())
-        fake_response = unittest.mock.Mock()
-        fake_response.content = self._scrape_response_bytes(info_hash, 5, 7)
-        fake_response.raise_for_status = lambda: None
-
         with (
             unittest.mock.patch.object(
                 ts, "scrape_udp_tracker", side_effect=OSError("unreachable")
             ),
             unittest.mock.patch.object(
-                ts.requests, "get", return_value=fake_response
+                ts.requests,
+                "get",
+                return_value=tracker_response(info_hash, 5, 7, completed=2),
             ) as mock_get,
         ):
-            result = ts.scrape_torrent(path)
+            result = ts.scrape_torrent(path, timeout=3)
 
-        mock_get.assert_called_once()
-        self.assertIn("tracker.example.com:6969/scrape", mock_get.call_args[0][0])
-        self.assertEqual(result["seeders"], 5)
-        self.assertEqual(result["leechers"], 7)
-        self.assertEqual(result["tracker"], "http://tracker.example.com:6969/scrape")
+        self.assertEqual(
+            mock_get.call_args_list,
+            [
+                unittest.mock.call(
+                    "http://tracker.example.com:6969/scrape?info_hash="
+                    + percent_encoded(info_hash),
+                    timeout=3,
+                )
+            ],
+        )
+        self.assertEqual(
+            result,
+            {
+                "tracker": "http://tracker.example.com:6969/scrape",
+                "seeders": 5,
+                "leechers": 7,
+                "completed": 2,
+            },
+        )
 
     def test_skips_udp_tracker_with_no_port(self):
         """BEP 15 requires an explicit port; an announce URL without one
         can't be dialed, so it should be skipped like any other unusable
         tracker rather than raising."""
-        path = self._write_torrent(
+        path, info_hash = self._write_torrent(
             [
                 "udp://tracker.example.com/announce",
                 "http://tracker.example.com:6969/announce",
             ]
         )
-        with open(path, "rb") as f:
-            info_hash = ts.compute_info_hash(f.read())
-        fake_response = unittest.mock.Mock()
-        fake_response.content = self._scrape_response_bytes(info_hash, 5, 7)
-        fake_response.raise_for_status = lambda: None
-
         with (
             unittest.mock.patch.object(ts, "scrape_udp_tracker") as mock_udp_scrape,
-            unittest.mock.patch.object(ts.requests, "get", return_value=fake_response),
+            unittest.mock.patch.object(
+                ts.requests, "get", return_value=tracker_response(info_hash, 5, 7)
+            ),
         ):
             result = ts.scrape_torrent(path)
 
         mock_udp_scrape.assert_not_called()
         self.assertEqual(result["tracker"], "http://tracker.example.com:6969/scrape")
 
-    def test_falls_through_to_next_tracker_on_failure(self):
-        path = self._write_torrent(
-            [
-                "http://dead.example.com/announce",
-                "http://alive.example.com/announce",
-            ]
-        )
-        with open(path, "rb") as f:
-            info_hash = ts.compute_info_hash(f.read())
-        fake_response = unittest.mock.Mock()
-        fake_response.content = self._scrape_response_bytes(info_hash, 1, 2)
-        fake_response.raise_for_status = lambda: None
+    def test_falls_through_to_the_next_http_tracker(self):
+        """Tracker A is unusable in each way scrape_torrent() tolerates;
+        tracker B answers. A's failure must not end the search."""
+        good = "http://good.example.com/announce"
+        dead = "http://dead.example.com/announce"
+        # case -> (A's announce URL, what A answers: a response, an
+        # exception to raise, or None if A must never be requested)
+        cases = {
+            "connection error": (dead, ConnectionError("nope")),
+            "HTTP status error": (dead, helpers.fake_response(status=500)),
+            "failure reason": (
+                dead,
+                helpers.fake_response(b"d14:failure reason11:not allowede"),
+            ),
+            "no stats for this hash": (dead, tracker_response(OTHER_HASH, 9, 9)),
+            "no announce segment": ("http://dead.example.com/tracker", None),
+        }
+        for case, (announce, dead_answer) in cases.items():
+            with self.subTest(case):
+                path, info_hash = self._write_torrent([announce, good])
+                query = "/scrape?info_hash=" + percent_encoded(info_hash)
+                dead_url = "http://dead.example.com" + query
+                good_url = "http://good.example.com" + query
 
-        def fake_get(url, timeout=None):
-            if "dead" in url:
-                raise ConnectionError("nope")
-            return fake_response
+                answers = {good_url: tracker_response(info_hash, 1, 2, completed=3)}
 
-        with unittest.mock.patch.object(ts.requests, "get", side_effect=fake_get):
-            result = ts.scrape_torrent(path)
+                def fake_get(
+                    url, timeout=None, answers=answers, dead_answer=dead_answer
+                ):
+                    if url in answers:
+                        return answers[url]
+                    if isinstance(dead_answer, Exception):
+                        raise dead_answer
+                    return dead_answer
 
-        self.assertEqual(result["seeders"], 1)
-        self.assertEqual(result["tracker"], "http://alive.example.com/scrape")
+                with unittest.mock.patch.object(
+                    ts.requests, "get", side_effect=fake_get
+                ) as mock_get:
+                    result = ts.scrape_torrent(path, timeout=3)
+
+                requested = [good_url] if dead_answer is None else [dead_url, good_url]
+                self.assertEqual(
+                    mock_get.call_args_list,
+                    [unittest.mock.call(url, timeout=3) for url in requested],
+                )
+                self.assertEqual(
+                    result,
+                    {
+                        "tracker": "http://good.example.com/scrape",
+                        "seeders": 1,
+                        "leechers": 2,
+                        "completed": 3,
+                    },
+                )
+
+    def test_default_http_timeout_is_15_seconds(self):
+        path, info_hash = self._write_torrent(["http://good.example.com/announce"])
+        with unittest.mock.patch.object(
+            ts.requests, "get", return_value=tracker_response(info_hash, 1, 2)
+        ) as mock_get:
+            ts.scrape_torrent(path)
+
+        self.assertEqual(mock_get.call_args.kwargs, {"timeout": 15})
 
     def test_returns_none_when_no_tracker_usable(self):
-        path = self._write_torrent(["udp://only.example.com:1337/announce"])
+        path, _info_hash = self._write_torrent(["udp://only.example.com:1337/announce"])
         with (
             unittest.mock.patch.object(
                 ts, "scrape_udp_tracker", side_effect=OSError("unreachable")
@@ -815,31 +932,29 @@ class ScrapeTorrentTests(unittest.TestCase):
         mock_get.assert_not_called()
         self.assertIsNone(result)
 
+    def test_returns_none_when_no_tracker_has_stats_for_the_hash(self):
+        path, _info_hash = self._write_torrent(["http://good.example.com/announce"])
+        with unittest.mock.patch.object(
+            ts.requests, "get", return_value=tracker_response(OTHER_HASH, 9, 9)
+        ):
+            self.assertIsNone(ts.scrape_torrent(path))
+
     def test_skips_udp_tracker_resolving_to_a_private_address(self):
-        path = self._write_torrent(
+        path, info_hash = self._write_torrent(
             [
                 "udp://internal.example.com:1337/announce",
                 "http://real-tracker.example.com/announce",
             ]
         )
-        with open(path, "rb") as f:
-            info_hash = ts.compute_info_hash(f.read())
-        fake_response = unittest.mock.Mock()
-        fake_response.content = self._scrape_response_bytes(info_hash, 3, 4)
-        fake_response.raise_for_status = lambda: None
-
-        def fake_resolve(hostname):
-            if hostname == "internal.example.com":
-                return ["127.0.0.1"]
-            return ["93.184.216.34"]
-
         with (
             unittest.mock.patch.object(
-                ts, "_resolve_addresses", side_effect=fake_resolve
+                ts,
+                "_resolve_addresses",
+                side_effect=resolve_private("internal.example.com"),
             ),
             unittest.mock.patch.object(ts, "scrape_udp_tracker") as mock_udp_scrape,
             unittest.mock.patch.object(
-                ts.requests, "get", return_value=fake_response
+                ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
             ) as mock_get,
         ):
             result = ts.scrape_torrent(path)
@@ -853,39 +968,38 @@ class ScrapeTorrentTests(unittest.TestCase):
         (e.g. a compromised upstream mirror pointing at cloud metadata or
         this container's own services) must never be scraped - no request
         should go out to it at all."""
-        path = self._write_torrent(
+        path, info_hash = self._write_torrent(
             [
                 "http://internal.example.com/announce",
                 "http://real-tracker.example.com/announce",
             ]
         )
-        with open(path, "rb") as f:
-            info_hash = ts.compute_info_hash(f.read())
-        fake_response = unittest.mock.Mock()
-        fake_response.content = self._scrape_response_bytes(info_hash, 3, 4)
-        fake_response.raise_for_status = lambda: None
-
-        def fake_resolve(hostname):
-            if hostname == "internal.example.com":
-                return ["127.0.0.1"]
-            return ["93.184.216.34"]
-
         with (
             unittest.mock.patch.object(
-                ts, "_resolve_addresses", side_effect=fake_resolve
+                ts,
+                "_resolve_addresses",
+                side_effect=resolve_private("internal.example.com"),
             ),
             unittest.mock.patch.object(
-                ts.requests, "get", return_value=fake_response
+                ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
             ) as mock_get,
         ):
             result = ts.scrape_torrent(path)
 
-        mock_get.assert_called_once()
-        self.assertIn("real-tracker.example.com", mock_get.call_args[0][0])
+        self.assertEqual(
+            mock_get.call_args_list,
+            [
+                unittest.mock.call(
+                    "http://real-tracker.example.com/scrape?info_hash="
+                    + percent_encoded(info_hash),
+                    timeout=15,
+                )
+            ],
+        )
         self.assertEqual(result["tracker"], "http://real-tracker.example.com/scrape")
 
     def test_returns_none_when_every_tracker_resolves_privately(self):
-        path = self._write_torrent(["http://internal.example.com/announce"])
+        path, _info_hash = self._write_torrent(["http://internal.example.com/announce"])
         with (
             unittest.mock.patch.object(
                 ts, "_resolve_addresses", return_value=["169.254.169.254"]

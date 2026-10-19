@@ -99,7 +99,7 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 | 30 | [Test `scripts/live_check.py` beyond `problems()`](30-live-check-tests.md) | P2 | REFACTOR_REQUIRED | — | done |
 | 31 | [`configure_transmission`: hermetic default path, boundaries](31-configure-transmission-gaps.md) | P3 | NO_REFACTOR | — | open |
 | 32 | [Atomic `.torrent` writes](32-atomic-torrent-writes.md) | P2 (bug) | NO_REFACTOR | — | done |
-| 33 | [`scrape_torrent` fall-through branches and SSRF edges](33-scrape-torrent-branches-and-ssrf.md) | P2 | NO_REFACTOR | — | open |
+| 33 | [`scrape_torrent` fall-through branches and SSRF edges](33-scrape-torrent-branches-and-ssrf.md) | P2 | NO_REFACTOR | — | done |
 | 34 | [Mechanical test tidy-up](34-mechanical-test-tidy-up.md) | P3 | NO_REFACTOR | — | open |
 | 35 | [Consolidate fixtures and the path-global seam](35-fixture-consolidation.md) | P3 | NO_REFACTOR → REFACTOR_REQUIRED | 34 | open |
 | 36 | [Remaining `fetch_torrents.py` mutation survivors](36-remaining-mutation-survivors.md) | P3 | NO_REFACTOR | — | open |
