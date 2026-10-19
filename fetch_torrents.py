@@ -182,14 +182,24 @@ def get_rpc_credentials():
     return username or None, password or None
 
 
-def wait_for_transmission_rpc(host="localhost", port=9091, timeout=30):
-    start = time.time()
-    while time.time() - start < timeout:
+def wait_for_transmission_rpc(
+    host="localhost",
+    port=9091,
+    timeout=30,
+    *,
+    connect=socket.create_connection,
+    clock=time.monotonic,
+    sleep=time.sleep,
+):
+    """True once host:port accepts a TCP connection, retrying once a second;
+    False if it still doesn't after `timeout` seconds."""
+    start = clock()
+    while clock() - start < timeout:
         try:
-            with socket.create_connection((host, port), timeout=3):
+            with connect((host, port), timeout=3):
                 return True
         except OSError:
-            time.sleep(1)
+            sleep(1)
     return False
 
 
@@ -1797,6 +1807,7 @@ def run(
     fetchers=DEFAULT_FETCHERS,
     disk_usage=shutil.disk_usage,
     download_path="/downloads",
+    wait_for_rpc=wait_for_transmission_rpc,
 ):
     """The daily run: fetch new releases (ratio-gated on the previous run's
     ratio log), optionally check old releases for demand, log seed ratios
@@ -1818,7 +1829,7 @@ def run(
     if config.check_old_releases:
         _check_old_releases(config, today, summary)
 
-    if wait_for_transmission_rpc():
+    if wait_for_rpc():
         try:
             log_seed_ratios_via_http(auth=config.rpc_auth)
         except Exception as exc:

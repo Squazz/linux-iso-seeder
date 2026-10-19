@@ -94,7 +94,7 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| 28 | [Make `wait_for_transmission_rpc` testable and test it](28-rpc-wait-seam.md) | P2 | REFACTOR_REQUIRED | — | open |
+| 28 | [Make `wait_for_transmission_rpc` testable and test it](28-rpc-wait-seam.md) | P2 | REFACTOR_REQUIRED | — | done |
 | 29 | [Inject the UDP transaction id; assert wire payloads](29-udp-transaction-id-seam.md) | P3 | REFACTOR_REQUIRED | — | open |
 | 30 | [Test `scripts/live_check.py` beyond `problems()`](30-live-check-tests.md) | P2 | REFACTOR_REQUIRED | — | open |
 | 31 | [`configure_transmission`: hermetic default path, boundaries](31-configure-transmission-gaps.md) | P3 | NO_REFACTOR | — | open |

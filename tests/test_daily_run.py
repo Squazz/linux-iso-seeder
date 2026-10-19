@@ -3,8 +3,8 @@ around it.
 
 RunTests call run() directly with everything external faked at its
 boundary: HTTP (ft.requests.get/post), the Transmission client (a
-client_factory returning helpers.FakeTransmission), the RPC port check
-(socket.create_connection), disk usage and the clock. State files live in a
+client_factory returning helpers.FakeTransmission), the RPC readiness
+check (wait_for_rpc), disk usage and the clock. State files live in a
 per-test temp dir.
 
 MainWiringTests runs the script via runpy exactly as the container does, to
@@ -70,6 +70,7 @@ class FakeWorld:
         self.events = []
         self.transmission = helpers.FakeTransmission()
         self.rpc_auths = []
+        self.rpc_up = True
         self.disk_used_percent = 10
         self.disk_paths = []
 
@@ -96,6 +97,9 @@ class FakeWorld:
             {"name": t.name, "uploadRatio": t.ratio} for t in self.transmission.torrents
         ]
         return helpers.fake_response(json.dumps({"arguments": {"torrents": torrents}}))
+
+    def wait_for_rpc(self):
+        return self.rpc_up
 
     def connect(self):
         self.events.append("connect")
@@ -162,6 +166,77 @@ class FakeWorld:
         )
 
 
+class FakeClock:
+    """A monotonic clock that only moves when `sleep` is called, recording
+    each sleep."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+class WaitForTransmissionRpcTests(unittest.TestCase):
+    def setUp(self):
+        self.clock = FakeClock()
+        self.attempts = []
+
+    def _connect_after(self, refusals):
+        @contextlib.contextmanager
+        def connect(address, timeout):
+            self.attempts.append((address, timeout))
+            if len(self.attempts) <= refusals:
+                raise ConnectionRefusedError
+            yield MagicMock()
+
+        return connect
+
+    def _wait(self, refusals, **kwargs):
+        return ft.wait_for_transmission_rpc(
+            connect=self._connect_after(refusals),
+            clock=self.clock,
+            sleep=self.clock.sleep,
+            **kwargs,
+        )
+
+    def test_connects_on_the_first_try_without_sleeping(self):
+        self.assertTrue(self._wait(refusals=0))
+
+        self.assertEqual(self.attempts, [(("localhost", 9091), 3)])
+        self.assertEqual(self.clock.sleeps, [])
+
+    def test_retries_once_a_second_until_the_port_opens(self):
+        self.assertTrue(self._wait(refusals=4))
+
+        self.assertEqual(self.clock.sleeps, [1] * 4)
+        self.assertEqual(len(self.attempts), 5)
+
+    def test_gives_up_once_the_timeout_has_elapsed(self):
+        self.assertFalse(self._wait(refusals=1000))
+
+        # Attempts at t=0..29; at t=30 elapsed is no longer < 30.
+        self.assertEqual(len(self.attempts), 30)
+        self.assertEqual(self.clock.now, 30)
+
+    def test_host_port_and_timeout_are_honoured(self):
+        self.assertFalse(
+            self._wait(refusals=1000, host="transmission", port=9999, timeout=2)
+        )
+
+        self.assertEqual(self.attempts, [(("transmission", 9999), 3)] * 2)
+
+    def test_succeeds_on_the_last_attempt_before_the_timeout(self):
+        self.assertTrue(self._wait(refusals=29))
+
+        self.assertEqual(len(self.attempts), 30)
+
+
 class RunTestCase(unittest.TestCase):
     """Base for tests of ft.run() inside a FakeWorld; defines no tests."""
 
@@ -170,9 +245,6 @@ class RunTestCase(unittest.TestCase):
         patches = [
             unittest.mock.patch.object(ft.requests, "get", self.world.get),
             unittest.mock.patch.object(ft.requests, "post", self.world.post),
-            unittest.mock.patch.object(
-                ft.socket, "create_connection", self._rpc_port_open
-            ),
             unittest.mock.patch.object(ft, "watch_dir", self.world.watch_dir),
         ]
         for attr, filename in (
@@ -191,11 +263,6 @@ class RunTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    @staticmethod
-    @contextlib.contextmanager
-    def _rpc_port_open(*args, **kwargs):
-        yield MagicMock()
-
     def _run(self, fetchers=ft.DEFAULT_FETCHERS, now=lambda: 1000.0, **env):
         """Runs ft.run() with load_config(env); returns (summary, messages)."""
         with self.assertLogs(ft.logger, level="DEBUG") as logs:
@@ -206,6 +273,7 @@ class RunTestCase(unittest.TestCase):
                 now=now,
                 fetchers=fetchers,
                 disk_usage=self.world.disk_usage,
+                wait_for_rpc=self.world.wait_for_rpc,
             )
         return summary, [record.getMessage() for record in logs.records]
 
@@ -295,6 +363,7 @@ class RunTests(RunTestCase):
             today=date(2026, 9, 2),
             now=lambda: 1000.0,
             disk_usage=self.world.disk_usage,
+            wait_for_rpc=self.world.wait_for_rpc,
             fetchers=(("arch", lambda: {"archlinux-2026.10.01": ARCH_TORRENT}),),
         )
 
@@ -405,22 +474,14 @@ class RunTests(RunTestCase):
         self.assertTrue(messages[-1].startswith("Run complete in"))
 
     def test_rpc_unavailable_skips_ratio_logging_but_still_cleans_up(self):
-        def refuse(*args, **kwargs):
-            raise ConnectionRefusedError
-
+        self.world.rpc_up = False
         self.world.transmission.torrents = [
             torrent("ubuntu-24.04-desktop-amd64.iso", 1, 2.0),
             torrent("ubuntu-23.10-desktop-amd64.iso", 2, 2.0),
         ]
-        with (
-            unittest.mock.patch.object(
-                ft, "wait_for_transmission_rpc", return_value=False
-            ),
-            unittest.mock.patch.object(ft.socket, "create_connection", refuse),
-        ):
-            _summary, messages = self._run(
-                FETCH_TORRENTS_DISTROS="arch", CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
-            )
+        _summary, messages = self._run(
+            FETCH_TORRENTS_DISTROS="arch", CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
+        )
 
         self.assertIn(
             "Transmission RPC not available on localhost:9091; skipping ratio logs.",
