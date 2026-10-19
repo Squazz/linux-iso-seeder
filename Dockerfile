@@ -44,6 +44,7 @@ ENTRYPOINT ["/entrypoint.sh"]
 FROM runtime AS test
 WORKDIR /src
 COPY fetch_torrents.py torrent_scrape.py configure_transmission.py ./
+COPY scripts ./scripts
 COPY tests ./tests
 RUN python3 -m unittest discover -s tests
 
