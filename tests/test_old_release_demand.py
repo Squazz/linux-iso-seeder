@@ -659,6 +659,52 @@ class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
             self.assertEqual(f.read(), b"torrent bytes" * 32)
         self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
 
+    def test_a_failed_write_is_counted_and_later_candidates_still_added(self):
+        names = [
+            f"kali-linux-2026.1-installer-{arch}.iso" for arch in ("amd64", "arm64")
+        ]
+        # An unsafe name is skipped first, so the failed write is a second skip.
+        candidates = {"kali-linux/../evil": "https://example.invalid/evil.torrent"}
+        candidates |= {
+            name: f"https://example.invalid/{name}.torrent" for name in names
+        }
+        real_write = ft._write_watch_file
+
+        def write(dest, data):
+            if os.path.basename(dest) == f"{names[0]}.torrent":
+                raise OSError(28, "No space left on device")
+            real_write(dest, data)
+
+        with (
+            unittest.mock.patch.dict(
+                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
+            ),
+            unittest.mock.patch.object(
+                ft,
+                "evaluate_old_release_demand",
+                return_value=(
+                    True,
+                    b"torrent bytes",
+                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
+                ),
+            ),
+            unittest.mock.patch.object(ft, "_write_watch_file", write),
+        ):
+            added, skipped, state = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=False,
+                check_state={},
+                removed_history={},
+                today=date(2026, 1, 8),
+            )
+
+        self.assertEqual((added, skipped), (1, 2))
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{names[1]}.torrent"])
+        self.assertEqual(list(state), [names[1]])
+
 
 class OldReleaseTracker:
     """Plays both network boundaries of the old-release check: requests.get

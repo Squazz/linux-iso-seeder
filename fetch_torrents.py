@@ -677,10 +677,6 @@ def fetch_kali_latest():
             name = os.path.basename(turl).replace(".torrent", "")
             results[name] = turl
 
-        if not results:
-            logger.warning("No Kali torrents found.")
-            return False
-
         return results
 
     except Exception as exc:
