@@ -161,6 +161,8 @@ class FakeTransmission:
     """In-memory stand-in for transmission_rpc.Client: get_torrents()
     returns what it currently holds, remove_torrent() drops that torrent.
     `calls` records both, in order, for tests that care about sequencing.
+    A torrent removed without delete_data (the real Client's default) moves
+    to `data_left_on_disk`, since Transmission leaves its files behind.
 
     Every call is bound against the real Client's signature first, so an
     argument the pinned library wouldn't accept raises TypeError here too
@@ -168,6 +170,7 @@ class FakeTransmission:
 
     def __init__(self, torrents=()):
         self.torrents = list(torrents)
+        self.data_left_on_disk = []
         self.calls = []
 
     def get_torrents(self, *args, **kwargs):
@@ -178,6 +181,8 @@ class FakeTransmission:
     def remove_torrent(self, *args, **kwargs):
         call = _bind_to_client("remove_torrent", args, kwargs)
         self.calls.append(("remove_torrent", call["ids"], call["delete_data"]))
+        if not call["delete_data"]:
+            self.data_left_on_disk += [t for t in self.torrents if t.id == call["ids"]]
         self.torrents = [t for t in self.torrents if t.id != call["ids"]]
 
     @property
@@ -187,8 +192,9 @@ class FakeTransmission:
 
 class FakeDisk:
     """shutil.disk_usage() stand-in whose used space is `base_used` plus the
-    size of every torrent `transmission` still holds - so removals free
-    space the way they would for real."""
+    size of every torrent whose data is still on disk - those `transmission`
+    holds, plus any it removed without delete_data - so removals free space
+    only the way they would for real."""
 
     def __init__(self, transmission, total, sizes, base_used=0):
         self.transmission = transmission
@@ -199,9 +205,8 @@ class FakeDisk:
 
     def __call__(self, path):
         self.paths.append(path)
-        used = self.base_used + sum(
-            self.sizes.get(t.id, 0) for t in self.transmission.torrents
-        )
+        on_disk = self.transmission.torrents + self.transmission.data_left_on_disk
+        used = self.base_used + sum(self.sizes.get(t.id, 0) for t in on_disk)
         return (self.total, used, self.total - used)
 
 

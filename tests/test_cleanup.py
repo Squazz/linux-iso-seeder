@@ -872,6 +872,131 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
             {"removed_date": "2026-08-01", "reason": "stagnant", "ratio": 2.0},
         )
 
+    def _write_ratio_history(self, history):
+        with open(ft.ratio_history_file, "w", encoding="utf-8") as f:
+            json.dump(history, f)
+
+    def test_cleanup_stagnant_torrents_deletes_the_downloaded_data(self):
+        today = date(2026, 8, 1)
+        self._write_ratio_history(
+            {
+                "ubuntu-23.10-desktop-amd64.iso": [
+                    {"date": (today - timedelta(days=32)).isoformat(), "ratio": 2.0}
+                ]
+            }
+        )
+        transmission = self._transmission()
+
+        ft.cleanup_stagnant_torrents(transmission, today=today)
+
+        self.assertEqual(
+            transmission.calls, ["get_torrents", ("remove_torrent", 2, True)]
+        )
+
+    def test_cleanup_stagnant_torrents_judges_over_a_30_day_window_by_default(self):
+        # Exactly 30 days of flat ratio: stagnant under the default window,
+        # though a day short of it under any longer one.
+        today = date(2026, 8, 1)
+        self._write_ratio_history(
+            {
+                "ubuntu-23.10-desktop-amd64.iso": [
+                    {"date": (today - timedelta(days=30)).isoformat(), "ratio": 2.0}
+                ]
+            }
+        )
+        transmission = self._transmission()
+
+        ft.cleanup_stagnant_torrents(transmission, today=today)
+
+        self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+
+    def test_cleanup_stagnant_torrents_keeps_growth_above_the_default_delta(self):
+        # Ratio grew 0.5 over the window: well above the 0.02 default.
+        today = date(2026, 8, 1)
+        self._write_ratio_history(
+            {
+                "ubuntu-23.10-desktop-amd64.iso": [
+                    {"date": (today - timedelta(days=32)).isoformat(), "ratio": 1.5}
+                ]
+            }
+        )
+        transmission = self._transmission()
+
+        with self.assertLogs(ft.logger, level="INFO") as logs:
+            ft.cleanup_stagnant_torrents(transmission, today=today)
+
+        self.assertEqual(len(transmission.torrents), 2)
+        self.assertIn(
+            "Keeping old version ubuntu-23.10-desktop-amd64.iso – ratio grew by "
+            "0.500 over the last 30 days.",
+            [r.getMessage() for r in logs.records],
+        )
+
+    def test_cleanup_stagnant_torrents_honours_custom_window_and_delta(self):
+        # window_days=10, min_ratio_delta=0.5. 23.10 grew 0.6 in 12 days
+        # (kept); 22.04 grew 0.3 (removed). Swapping the two settings would
+        # remove both. The 20-day-old 23.10 sample is past the 10 + 7 day
+        # prune horizon, so it must be dropped from the saved history.
+        today = date(2026, 8, 1)
+
+        def days_ago(n):
+            return (today - timedelta(days=n)).isoformat()
+
+        self._write_ratio_history(
+            {
+                "ubuntu-23.10-desktop-amd64.iso": [
+                    {"date": days_ago(20), "ratio": 0.9},
+                    {"date": days_ago(12), "ratio": 1.0},
+                ],
+                "ubuntu-22.04-desktop-amd64.iso": [
+                    {"date": days_ago(12), "ratio": 1.0}
+                ],
+            }
+        )
+        transmission = helpers.FakeTransmission(
+            [
+                helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.6),
+                helpers.FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 3, ratio=1.3),
+            ]
+        )
+
+        with self.assertLogs(ft.logger, level="INFO") as logs:
+            ft.cleanup_stagnant_torrents(
+                transmission, today=today, window_days=10, min_ratio_delta=0.5
+            )
+
+        self.assertEqual(
+            transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+        self.assertIn(
+            "Removing stagnant torrent: ubuntu-22.04-desktop-amd64.iso "
+            "(no meaningful ratio growth in 10 days)",
+            [r.getMessage() for r in logs.records],
+        )
+        self.assertEqual(
+            ft.load_ratio_history(ft.ratio_history_file)[
+                "ubuntu-23.10-desktop-amd64.iso"
+            ],
+            [
+                {"date": days_ago(12), "ratio": 1.0},
+                {"date": "2026-08-01", "ratio": 1.6},
+            ],
+        )
+
+    def test_cleanup_stagnant_torrents_records_a_zero_ratio_as_zero(self):
+        transmission = helpers.FakeTransmission(
+            [helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=0.0)]
+        )
+
+        ft.cleanup_stagnant_torrents(transmission, today=date(2026, 8, 1))
+
+        self.assertEqual(
+            ft.load_ratio_history(ft.ratio_history_file),
+            {"ubuntu-24.04-desktop-amd64.iso": [{"date": "2026-08-01", "ratio": 0.0}]},
+        )
+
     def test_cleanup_stagnant_torrents_records_todays_sample(self):
         transmission = self._transmission()
 
@@ -1090,6 +1215,98 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
         self._enforce(95, disk)
 
         self.assertEqual(self.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+
+    def test_removal_deletes_the_downloaded_data(self):
+        self._enforce(95, self._disk(base_used=86))
+
+        self.assertEqual(
+            self.transmission.calls, ["get_torrents", ("remove_torrent", 3, True)]
+        )
+
+    def test_usage_exactly_at_threshold_triggers_cleanup(self):
+        # 85 + 10 = 95% used: at the threshold counts as exceeded.
+        disk = self._disk(base_used=85)
+
+        self._enforce(95, disk)
+
+        self.assertEqual(
+            self.transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+
+    def test_usage_just_below_threshold_does_not_connect(self):
+        disk = self._disk(base_used=84.5)  # 94.5%
+
+        self._enforce(95, disk)
+
+        self.assertEqual(self.connections, 0)
+
+    def test_stops_once_usage_is_just_below_threshold(self):
+        # 95.5% used; removing 22.04 (1 GB) leaves 94.5%, so 23.10 stays.
+        disk = self._disk(base_used=89.5, sizes={1: 1, 2: 4, 3: 1})
+
+        self._enforce(95, disk)
+
+        self.assertEqual(
+            self.transmission.names,
+            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
+        )
+
+    def test_a_1_percent_threshold_is_enforced(self):
+        disk = self._disk(base_used=40)  # 50%
+
+        self._enforce(1, disk)
+
+        self.assertEqual(self.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+
+    def test_zero_size_disk_does_not_connect_or_raise(self):
+        disk = helpers.FakeDisk(self.transmission, 0, {})
+
+        self._enforce(1, disk)
+
+        self.assertEqual((disk.paths, self.connections), (["/downloads"], 0))
+
+    def test_checks_the_given_download_path_and_connects_once(self):
+        disk = self._disk(base_used=99)
+
+        ft.enforce_disk_usage_limit(
+            self._connect,
+            95,
+            today=date(2026, 8, 1),
+            disk_usage=disk,
+            download_path="/mnt/seeds",
+        )
+
+        self.assertEqual(set(disk.paths), {"/mnt/seeds"})
+        self.assertEqual(self.connections, 1)
+
+    def test_logs_each_removal_with_usage_and_ratio(self):
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            self._enforce(95, self._disk(base_used=86))
+
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                (
+                    "Downloads folder usage 96.0% >= 95.0% threshold - removing "
+                    "ubuntu-22.04-desktop-amd64.iso (ratio 0.200) to free space."
+                )
+            ],
+        )
+
+    def test_records_a_zero_ratio_removal_as_zero(self):
+        self.transmission.torrents[2] = helpers.FakeTorrent(
+            "ubuntu-22.04-desktop-amd64.iso", 3, ratio=0.0
+        )
+
+        self._enforce(95, self._disk(base_used=86))
+
+        self.assertEqual(
+            ft.load_removed_history(ft.removed_history_file)[
+                "ubuntu-22.04-desktop-amd64.iso"
+            ]["ratio"],
+            0.0,
+        )
 
     def test_never_removes_the_latest_version(self):
         disk = self._disk(base_used=99)

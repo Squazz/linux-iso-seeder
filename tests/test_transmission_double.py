@@ -41,6 +41,30 @@ class FakeTransmissionMatchesClientTests(unittest.TestCase):
         self.assertEqual(own - set(dir(transmission_rpc.Client)), set())
 
 
+class FakeDiskTests(unittest.TestCase):
+    """The real Client's remove_torrent() defaults to delete_data=False,
+    which takes the torrent out of Transmission but leaves its downloaded
+    data on disk - so FakeDisk must only count a removal as freed space
+    when the data was deleted too."""
+
+    def setUp(self):
+        self.transmission = helpers.FakeTransmission(
+            [helpers.FakeTorrent("ubuntu-22.04-desktop-amd64.iso", 1)]
+        )
+        self.disk = helpers.FakeDisk(self.transmission, 100, {1: 6}, base_used=10)
+
+    def test_removal_with_data_frees_its_space(self):
+        self.transmission.remove_torrent(1, delete_data=True)
+
+        self.assertEqual(self.disk("/downloads"), (100, 10, 90))
+
+    def test_removal_without_data_frees_nothing(self):
+        self.transmission.remove_torrent(1)
+
+        self.assertEqual(self.transmission.torrents, [])
+        self.assertEqual(self.disk("/downloads"), (100, 16, 84))
+
+
 class FakeTorrentTests(unittest.TestCase):
     def test_is_a_real_torrent_reading_real_rpc_field_names(self):
         torrent = helpers.FakeTorrent(
