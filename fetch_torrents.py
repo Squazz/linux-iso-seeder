@@ -11,10 +11,9 @@ import time
 from datetime import date
 
 import requests
+import torrent_scrape
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
-
-import torrent_scrape
 
 # Configure logging
 log_dir = os.getenv("FETCH_TORRENTS_LOG_DIR", "/logs")
@@ -185,21 +184,12 @@ def get_previous_ratios(log_file):
     # Only parse the latest ratio segment between the last start and end markers.
     start_marker = "[ratio] RATIOS START"
     end_marker = "[ratio] RATIOS END"
-    start_index = None
-    end_index = None
-
-    for idx, line in enumerate(lines):
-        if start_marker in line:
-            start_index = idx
-            end_index = None
-        elif start_index is not None and end_marker in line:
-            end_index = idx
-
-    if start_index is not None:
-        if end_index is not None and end_index > start_index:
-            lines = lines[start_index + 1 : end_index]
-        else:
-            lines = lines[start_index + 1 :]
+    starts = [idx for idx, line in enumerate(lines) if start_marker in line]
+    if starts:
+        lines = lines[starts[-1] + 1 :]
+        ends = [idx for idx, line in enumerate(lines) if end_marker in line]
+        if ends:
+            lines = lines[: ends[-1]]
 
     for line in lines:
         match = re.search(r"\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)", line)

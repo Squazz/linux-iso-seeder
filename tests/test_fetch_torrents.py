@@ -778,6 +778,20 @@ class GetPreviousRatiosTests(unittest.TestCase):
         )
         self.assertEqual(ft.get_previous_ratios(path), {"current.iso": 0.9})
 
+    def test_last_end_after_the_last_start_closes_the_segment(self):
+        # Not written by a normal run; pins current behavior.
+        path = self._write_log(
+            "[ratio] RATIOS START",
+            "[ratio] first.iso → 0.100",
+            "[ratio] RATIOS END",
+            "[ratio] second.iso → 0.200",
+            "[ratio] RATIOS END",
+            "[ratio] after.iso → 0.300",
+        )
+        self.assertEqual(
+            ft.get_previous_ratios(path), {"first.iso": 0.1, "second.iso": 0.2}
+        )
+
     def test_padded_names_are_stripped(self):
         path = self._write_log(
             "[ratio] archlinux-2026.04.01-x86_64.iso            → 0.664",
