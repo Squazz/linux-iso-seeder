@@ -35,6 +35,28 @@ class HasUnmetDemandTests(unittest.TestCase):
             )
         )
 
+    def test_missing_counts_mean_zero(self):
+        # A tracker's scrape can omit a count; missing must read as 0, not
+        # as some peer.
+        self.assertIs(
+            ft.has_unmet_demand(
+                {"seeders": 0},
+                min_leechers=1,
+                min_leecher_ratio=0.0,
+                allow_zero_seeders=True,
+            ),
+            False,
+        )
+        self.assertIs(
+            ft.has_unmet_demand(
+                {"leechers": 5},
+                min_leechers=1,
+                min_leecher_ratio=0.1,
+                allow_zero_seeders=False,
+            ),
+            False,
+        )
+
     def test_below_absolute_threshold_is_no_demand(self):
         self.assertFalse(
             ft.has_unmet_demand(
