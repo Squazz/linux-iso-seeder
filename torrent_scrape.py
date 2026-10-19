@@ -364,7 +364,7 @@ def scrape_torrent(torrent_path, timeout=15):
                 continue
             try:
                 stats = scrape_udp_tracker(host, port, info_hash, timeout=timeout)
-            except Exception:
+            except Exception:  # noqa: S112 - any failing tracker: try the next one
                 continue
             return {"tracker": f"udp://{host}:{port}", **stats}
 
@@ -379,7 +379,7 @@ def scrape_torrent(torrent_path, timeout=15):
             response = requests.get(request_url, timeout=timeout)
             response.raise_for_status()
             stats = parse_scrape_response(response.content, info_hash)
-        except Exception:
+        except Exception:  # noqa: S112 - any failing tracker: try the next one
             continue
 
         if stats is not None:

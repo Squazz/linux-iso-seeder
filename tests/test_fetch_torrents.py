@@ -18,7 +18,7 @@ import tempfile
 import types
 import unittest
 import unittest.mock
-from datetime import date, timedelta
+from datetime import UTC, date, timedelta
 from unittest.mock import MagicMock
 
 if "transmission_rpc" not in sys.modules:
@@ -365,20 +365,20 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
         self.assertEqual(to_remove, [undated])
 
     def test_datetime_added_dates_are_ordered_by_timestamp(self):
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         older = FakeTorrent(
             "devuan_daedalus",
             1,
             ratio=2.0,
-            added_date=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            added_date=datetime(2026, 1, 1, tzinfo=UTC),
         )
         torrents = [
             FakeTorrent(
                 "devuan_excalibur",
                 2,
                 ratio=2.0,
-                added_date=datetime(2026, 6, 1, tzinfo=timezone.utc),
+                added_date=datetime(2026, 6, 1, tzinfo=UTC),
             ),
             older,
         ]
@@ -807,6 +807,7 @@ class RatioLogSurvivesRestartTests(unittest.TestCase):
         env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir)
         result = subprocess.run(
             [sys.executable, "-c", script],
+            check=False,
             env=env,
             capture_output=True,
             text=True,
@@ -960,6 +961,7 @@ class LogFileRotationTests(unittest.TestCase):
         env = dict(os.environ, FETCH_TORRENTS_LOG_DIR=log_dir, **(extra_env or {}))
         result = subprocess.run(
             [sys.executable, "-c", script],
+            check=False,
             env=env,
             capture_output=True,
             text=True,
@@ -1353,7 +1355,7 @@ class DownloadTorrent404Tests(unittest.TestCase):
             status_code = 500
 
             def raise_for_status(self):
-                raise Exception("500 Server Error")
+                raise ft.requests.HTTPError("500 Server Error")
 
         with unittest.mock.patch.object(
             ft.requests, "get", return_value=FakeResponse()
@@ -2215,7 +2217,7 @@ class EvaluateOldReleaseDemandTests(unittest.TestCase):
                 },
             ),
         ):
-            keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
+            keep, _torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
                 "ubuntu-14.04.6-desktop-amd64.iso",
                 "https://example.invalid/x.torrent",
                 min_leechers=1,
@@ -2582,7 +2584,7 @@ class CheckOldReleasesForDemandStateTests(unittest.TestCase):
                 ft, "evaluate_old_release_demand"
             ) as mock_evaluate,
         ):
-            added, skipped, new_state = ft.check_old_releases_for_demand(
+            added, skipped, _new_state = ft.check_old_releases_for_demand(
                 ["kali"],
                 include_low_demand=False,
                 min_leechers=1,
@@ -2751,7 +2753,8 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
     the caller doesn't explicitly override auth."""
 
     class FakeSessionIdResponse:
-        headers = {"X-Transmission-Session-Id": "abc"}
+        def __init__(self):
+            self.headers = {"X-Transmission-Session-Id": "abc"}
 
     class FakeTorrentGetResponse:
         def raise_for_status(self):

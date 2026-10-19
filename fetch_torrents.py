@@ -9,11 +9,13 @@ import socket
 import tempfile
 import time
 from datetime import date
+from typing import Any
 
 import requests
-import torrent_scrape
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
+
+import torrent_scrape
 
 # Configure logging
 log_dir = os.getenv("FETCH_TORRENTS_LOG_DIR", "/logs")
@@ -522,7 +524,6 @@ def download_torrent(name, url):
 
 
 def fetch_ubuntu_lts():
-    url = "https://releases.ubuntu.com/"
     try:
         text = requests.get(
             "https://changelogs.ubuntu.com/meta-release-lts", timeout=30
@@ -889,16 +890,20 @@ def evaluate_old_release_demand(
         return False, None, None
 
     torrent_bytes = r.content
-    tmp = tempfile.NamedTemporaryFile(suffix=".torrent", delete=False)
+    tmp_path = None
     try:
-        tmp.write(torrent_bytes)
-        tmp.close()
-        scrape_result = torrent_scrape.scrape_torrent(tmp.name, timeout=timeout)
+        # Closed before scraping: scrape_torrent() reopens it by name, which
+        # Windows refuses while the file is still open.
+        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(torrent_bytes)
+        scrape_result = torrent_scrape.scrape_torrent(tmp_path, timeout=timeout)
     except Exception as exc:
         logger.warning("Could not scrape %s: %s", name, exc)
         scrape_result = None
     finally:
-        os.remove(tmp.name)
+        if tmp_path is not None:
+            os.remove(tmp_path)
 
     keep = has_unmet_demand(
         scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders
@@ -1135,7 +1140,7 @@ def log_seed_ratios_via_http(
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url, timeout=15)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
-    payload = {
+    payload: dict[str, Any] = {
         "method": "torrent-get",
         "arguments": {"fields": ["name", "uploadRatio"]},
     }

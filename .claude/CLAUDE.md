@@ -10,7 +10,8 @@ Testing rules and the import-stubbing pattern live in the root [CLAUDE.md](../CL
 ## Commands
 - Test: `python -m unittest discover -s tests -v` (Windows: `py -m unittest discover -s tests -v`)
 - Lint/format: `ruff check .` / `ruff format .`
-- Typecheck: `mypy fetch_torrents.py torrent_scrape.py configure_transmission.py`
+- Typecheck: `mypy` (files and settings in `pyproject.toml`)
+- CI's `test` job runs ruff check, ruff format --check and mypy before the tests; versions are pinned in `requirements-dev.txt`
 - Mutation: `mutmut run` (mutmut<3)
 - Dev deps: `pip install -r requirements-dev.txt` (includes `requirements-test.txt`)
 

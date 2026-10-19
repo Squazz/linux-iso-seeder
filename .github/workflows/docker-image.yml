@@ -39,8 +39,17 @@ jobs:
       with:
         python-version: "3.x"
 
-    - name: Install test dependencies
-      run: pip install -r requirements-test.txt
+    - name: Install dev dependencies
+      run: pip install -r requirements-dev.txt
+
+    - name: Lint
+      run: ruff check .
+
+    - name: Check formatting
+      run: ruff format --check .
+
+    - name: Type-check
+      run: mypy
 
     - name: Run tests
       run: python -m unittest discover -s tests -v

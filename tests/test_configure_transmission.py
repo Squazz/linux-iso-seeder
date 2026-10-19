@@ -11,8 +11,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import configure_transmission as ct
 import helpers
+
+import configure_transmission as ct
 
 
 class BuildRpcOverridesTests(unittest.TestCase):

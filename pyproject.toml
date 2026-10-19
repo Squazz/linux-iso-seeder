@@ -1,0 +1,25 @@
+# Tool configuration only - this project isn't packaged. The container runs
+# the scripts directly with Alpine's python3 (see Dockerfile).
+
+[tool.ruff]
+# Alpine's python3 at the time of writing; also what CI's "3.x" must stay
+# compatible with.
+target-version = "py312"
+
+[tool.ruff.lint]
+ignore = [
+    # Broad `except Exception` is the error-handling design here: each
+    # distro fetcher, cleanup step and tracker scrape must log and carry on
+    # rather than abort the whole daily run (see the __main__ block).
+    "BLE001",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["fetch_torrents.py", "torrent_scrape.py", "configure_transmission.py"]
+
+[[tool.mypy.overrides]]
+# Installed from Alpine's py3-transmission-rpc in the container; not a test
+# dependency, so there's nothing for mypy to read locally or in CI.
+module = "transmission_rpc"
+ignore_missing_imports = true

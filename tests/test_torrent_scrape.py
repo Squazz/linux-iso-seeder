@@ -42,7 +42,7 @@ class BdecodeBencodeTests(unittest.TestCase):
         self.assertEqual(index, 7)
 
     def test_bdecode_negative_integer(self):
-        value, index = ts.bdecode(b"i-42e")
+        value, _index = ts.bdecode(b"i-42e")
         self.assertEqual(value, -42)
 
     def test_bdecode_bytestring(self):
@@ -56,11 +56,11 @@ class BdecodeBencodeTests(unittest.TestCase):
         self.assertEqual(index, 2)
 
     def test_bdecode_list(self):
-        value, index = ts.bdecode(b"l4:spam4:eggse")
+        value, _index = ts.bdecode(b"l4:spam4:eggse")
         self.assertEqual(value, [b"spam", b"eggs"])
 
     def test_bdecode_dict(self):
-        value, index = ts.bdecode(b"d3:cow3:moo4:spam4:eggse")
+        value, _index = ts.bdecode(b"d3:cow3:moo4:spam4:eggse")
         self.assertEqual(value, {b"cow": b"moo", b"spam": b"eggs"})
 
     def test_bdecode_nested(self):
@@ -451,9 +451,11 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
         fake_sock = unittest.mock.Mock()
         fake_sock.recvfrom.side_effect = TimeoutError("timed out")
 
-        with unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock):
-            with self.assertRaises(socket.timeout):
-                ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
+        with (
+            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
+            self.assertRaises(socket.timeout),
+        ):
+            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
 
         fake_sock.close.assert_called_once()
 
