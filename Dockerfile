@@ -1,8 +1,14 @@
+# Rolling on purpose: entrypoint.sh apk-upgrades on start anyway, and
+# requirements-test.txt tracks what alpine:latest ships.
+# hadolint ignore=DL3007
 FROM alpine:latest AS runtime
 ARG VERSION=latest
 LABEL org.opencontainers.image.source=https://github.com/squazz/linux-iso-seeder
 LABEL org.opencontainers.image.version=$VERSION
-# Install prerequisites
+# Install prerequisites. Unpinned: Alpine drops superseded package
+# versions from its mirrors, so pins would break the build on the next
+# security update.
+# hadolint ignore=DL3018
 RUN apk update && \
     apk add --no-cache transmission-daemon curl wget python3 py3-pip py3-requests py3-beautifulsoup4 py3-transmission-rpc su-exec
 

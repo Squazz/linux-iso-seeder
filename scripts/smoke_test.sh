@@ -1,8 +1,9 @@
 #!/bin/sh
 # Starts a built image the way a deployment would and checks it comes up:
 # entrypoint.sh runs, configure_transmission.py applies its overrides,
-# transmission-daemon is running, RUN_AS_NON_ROOT hands /config to PUID:PGID,
-# and every Python module imports against the image's apk packages.
+# transmission-daemon is running, the daily fetch_torrents.py run starts,
+# RUN_AS_NON_ROOT hands /config to PUID:PGID, and every Python module
+# imports against the image's apk packages.
 #
 # Usage: scripts/smoke_test.sh <image>
 #
@@ -63,6 +64,21 @@ wait_until_started() {
     fail "transmission-daemon not running after ${TIMEOUT_SECONDS}s" "$cid"
 }
 
+# A fetch_torrents.py that crashes on import or before its first log line
+# never writes this. Network errors after it (--network none) are expected.
+wait_for_fetch_run() {
+    cid=$1
+    elapsed=0
+    while [ "$elapsed" -lt "$TIMEOUT_SECONDS" ]; do
+        if docker exec "$cid" grep -q "Starting torrent fetch run." /logs/fetch_torrents.log 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    fail "fetch_torrents.py did not start its run within ${TIMEOUT_SECONDS}s" "$cid"
+}
+
 # configure_transmission.py only writes settings.json once it has parsed the
 # env and applied every override, so the override being there means it ran
 # to completion.
@@ -80,12 +96,14 @@ cid=$(start_container)
 CONTAINERS="$CONTAINERS $cid"
 wait_until_started "$cid"
 check_configure_ran "$cid"
+wait_for_fetch_run "$cid"
 
 echo "== RUN_AS_NON_ROOT=true PUID=1234 PGID=1234 startup"
 cid=$(start_container -e RUN_AS_NON_ROOT=true -e PUID=1234 -e PGID=1234)
 CONTAINERS="$CONTAINERS $cid"
 wait_until_started "$cid"
 check_configure_ran "$cid"
+wait_for_fetch_run "$cid"
 owner=$(docker exec "$cid" stat -c %u:%g /config)
 [ "$owner" = "1234:1234" ] || fail "/config owned by $owner, expected 1234:1234" "$cid"
 daemon_uid=$(docker exec "$cid" sh -c 'stat -c %u /proc/$(pgrep -x transmission-daemon)')

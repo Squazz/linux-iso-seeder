@@ -33,7 +33,7 @@ def make_torrent(name):
         "name": name,
         "length": len(data),
         "piece length": 16384,
-        "pieces": hashlib.sha1(data).digest(),
+        "pieces": hashlib.sha1(data, usedforsecurity=False).digest(),
     }
     return torrent_scrape.bencode({"info": info})
 
@@ -49,7 +49,7 @@ def wait_for(description, predicate):
 
 
 def main():
-    ft.configure_logging("/tmp")
+    ft.configure_logging("/tmp")  # noqa: S108 - a throwaway CI container
     if not ft.wait_for_transmission_rpc(timeout=TIMEOUT_SECONDS):
         raise SystemExit("FAILED: Transmission RPC never came up")
 
@@ -71,7 +71,8 @@ def main():
     )
 
     ft.log_seed_ratios_via_http(auth=config.rpc_auth)
-    with open(os.path.join("/tmp", ft.RATIO_LOG_FILE_NAME), encoding="utf-8") as f:
+    ratio_log = os.path.join("/tmp", ft.RATIO_LOG_FILE_NAME)  # noqa: S108 - as above
+    with open(ratio_log, encoding="utf-8") as f:
         if name not in f.read():
             raise SystemExit("FAILED: torrent missing from the RPC ratio log")
 

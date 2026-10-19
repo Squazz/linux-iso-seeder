@@ -161,7 +161,7 @@ class ComputeInfoHashTests(unittest.TestCase):
             + b"e"
         )
 
-        expected = hashlib.sha1(info_bytes).digest()
+        expected = hashlib.sha1(info_bytes, usedforsecurity=False).digest()
         self.assertEqual(ts.compute_info_hash(torrent_bytes), expected)
 
     def test_raises_when_info_missing(self):
@@ -750,7 +750,7 @@ class ScrapeTorrentTests(unittest.TestCase):
         self.addCleanup(os.remove, path)
         with os.fdopen(fd, "wb") as f:
             f.write(torrent_bytes)
-        return path, hashlib.sha1(info_bytes).digest()
+        return path, hashlib.sha1(info_bytes, usedforsecurity=False).digest()
 
     def test_uses_udp_tracker_when_it_succeeds(self):
         path, info_hash = self._write_torrent(

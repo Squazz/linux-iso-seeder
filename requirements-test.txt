@@ -1,6 +1,8 @@
-requests
-beautifulsoup4
-# The container gets this from Alpine's py3-transmission-rpc; keep the pin at
-# the version alpine:latest ships (`apk info py3-transmission-rpc`) so the
-# test doubles in tests/helpers.py are checked against the same API.
+# The container gets these from Alpine's py3-* packages. Keep every pin at
+# the version alpine:latest ships (`apk list py3-requests py3-beautifulsoup4
+# py3-transmission-rpc`) and bump them together, so the pip test job runs
+# what the image runs and the test doubles in tests/helpers.py are checked
+# against the same transmission-rpc API.
+requests==2.33.1
+beautifulsoup4==4.15.0
 transmission-rpc==7.0.11

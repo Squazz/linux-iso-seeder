@@ -2,16 +2,30 @@
 # the scripts directly with Alpine's python3 (see Dockerfile).
 
 [tool.ruff]
-# Alpine's python3 at the time of writing; also what CI's "3.x" must stay
-# compatible with.
+# The oldest Python the scripts still support. The container runs Alpine's
+# python3 (3.14 on alpine:latest as of 2026-10), which CI pins too.
 target-version = "py312"
 
 [tool.ruff.lint]
+# The defaults plus flake8-bandit (S), so new security smells fail CI.
+extend-select = ["S"]
 ignore = [
     # Broad `except Exception` is the error-handling design here: each
     # distro fetcher, cleanup step and tracker scrape must log and carry on
     # rather than abort the whole daily run (see the __main__ block).
     "BLE001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    # unittest asserts via self.assert*, but a bare assert to narrow a type
+    # for mypy (e.g. a module spec) is fine in a test.
+    "S101",
+    # Fake RPC credentials and the 0.0.0.0 SSRF case are test inputs.
+    "S104",
+    "S106",
+    # Runs sys.executable on this repo's own scripts, with no shell.
+    "S603",
 ]
 
 [tool.mypy]

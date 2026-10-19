@@ -35,9 +35,20 @@ sh scripts/smoke_test.sh linux-iso-seeder:smoke
 
 The smoke test starts the image with `--network none`, both as root and
 with `RUN_AS_NON_ROOT=true`, and checks that `configure_transmission.py`
-applied its overrides, that `transmission-daemon` is running, and that every
-module imports. When `alpine:latest` moves to a new `py3-transmission-rpc`,
-bump the `transmission-rpc` pin in `requirements-test.txt` to match.
+applied its overrides, that `transmission-daemon` is running, that the
+daily `fetch_torrents.py` run started, and that every module imports.
+
+When `alpine:latest` moves to new `python3` or `py3-*` versions, bump the
+pins in `requirements-test.txt` and CI's `python-version` in
+`.github/workflows/docker-image.yml` to match.
+
+The `test` job also lints the shell scripts and the Dockerfile with pinned
+images. To run them locally:
+
+```sh
+docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 entrypoint.sh scripts/*.sh
+docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+```
 
 ## Upstream drift
 

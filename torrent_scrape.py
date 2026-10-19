@@ -132,7 +132,8 @@ def compute_info_hash(torrent_bytes):
     metainfo, _ = bdecode(torrent_bytes)
     if not isinstance(metainfo, dict) or b"info" not in metainfo:
         raise BencodeError("Not a valid .torrent file: missing 'info' dictionary")
-    return hashlib.sha1(bencode(metainfo[b"info"])).digest()
+    # BitTorrent v1 defines the info hash as SHA-1; it identifies, not secures.
+    return hashlib.sha1(bencode(metainfo[b"info"]), usedforsecurity=False).digest()
 
 
 def get_announce_urls(torrent_bytes):

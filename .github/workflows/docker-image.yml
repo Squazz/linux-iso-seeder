@@ -37,7 +37,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: "3.x"
+        # alpine:latest's python3 minor; bump with requirements-test.txt.
+        python-version: "3.14"
 
     - name: Install dev dependencies
       run: pip install -r requirements-dev.txt
@@ -50,6 +51,12 @@ jobs:
 
     - name: Type-check
       run: mypy
+
+    - name: Lint shell scripts
+      run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 entrypoint.sh scripts/*.sh
+
+    - name: Lint Dockerfile
+      run: docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
 
     - name: Run tests
       run: coverage run -m unittest discover -s tests -v
