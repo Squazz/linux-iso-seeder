@@ -1,2 +1,6 @@
 requests
 beautifulsoup4
+# The container gets this from Alpine's py3-transmission-rpc; keep the pin at
+# the version alpine:latest ships (`apk info py3-transmission-rpc`) so the
+# test doubles in tests/helpers.py are checked against the same API.
+transmission-rpc==7.0.11

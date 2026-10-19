@@ -21,16 +21,10 @@ import runpy
 import shutil
 import socket
 import sys
-import types
 import unittest
 import unittest.mock
 from datetime import date
 from unittest.mock import MagicMock
-
-if "transmission_rpc" not in sys.modules:
-    stub = types.ModuleType("transmission_rpc")
-    stub.Client = MagicMock()
-    sys.modules["transmission_rpc"] = stub
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(REPO_ROOT, "fetch_torrents.py")
@@ -75,7 +69,7 @@ class FakeResponse:
 
 
 def torrent(name, id_, ratio):
-    return types.SimpleNamespace(name=name, id=id_, ratio=ratio, added_date=None)
+    return helpers.FakeTorrent(name, id_, ratio=ratio)
 
 
 class FakeWorld:

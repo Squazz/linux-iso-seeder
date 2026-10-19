@@ -5,10 +5,13 @@ Not a test module itself (doesn't match the test*.py discovery pattern);
 this as `import helpers`.
 """
 
+import inspect
 import os
 import shutil
 import tempfile
 import unittest.mock
+
+import transmission_rpc
 
 # Env vars production code reads at call time. A developer who happens to
 # have any of these exported (e.g. SKIP_RATIO_CHECK=true) must not be able
@@ -61,22 +64,57 @@ def make_temp_dir(testcase, prefix):
     return path
 
 
+def FakeTorrent(name, id_, ratio=0.0, added_date=0):
+    """A real transmission_rpc.Torrent holding the RPC fields production
+    code reads (via .name, .id, .ratio, .added_date), so a test can't rely
+    on an attribute the library doesn't have. `added_date` is a Unix time."""
+    return transmission_rpc.Torrent(
+        fields={
+            "id": id_,
+            "name": name,
+            "uploadRatio": ratio,
+            "addedDate": added_date,
+        }
+    )
+
+
+# Captured at import: a test may patch transmission_rpc.Client itself (e.g.
+# to hand a FakeTransmission to a runpy'd script).
+_REAL_CLIENT = transmission_rpc.Client
+
+
+def _bind_to_client(method_name, args, kwargs):
+    """The arguments of a call to transmission_rpc.Client.<method_name>, by
+    parameter name with defaults filled in. Raises TypeError for a call the
+    real (pinned) Client wouldn't accept."""
+    signature = inspect.signature(getattr(_REAL_CLIENT, method_name))
+    bound = signature.bind(None, *args, **kwargs)
+    bound.apply_defaults()
+    return bound.arguments
+
+
 class FakeTransmission:
     """In-memory stand-in for transmission_rpc.Client: get_torrents()
     returns what it currently holds, remove_torrent() drops that torrent.
-    `calls` records both, in order, for tests that care about sequencing."""
+    `calls` records both, in order, for tests that care about sequencing.
+
+    Every call is bound against the real Client's signature first, so an
+    argument the pinned library wouldn't accept raises TypeError here too
+    (see tests/test_transmission_double.py)."""
 
     def __init__(self, torrents=()):
         self.torrents = list(torrents)
         self.calls = []
 
-    def get_torrents(self):
+    def get_torrents(self, *args, **kwargs):
+        _bind_to_client("get_torrents", args, kwargs)
         self.calls.append("get_torrents")
         return list(self.torrents)
 
-    def remove_torrent(self, ids, delete_data=False):
-        self.calls.append(("remove_torrent", ids, delete_data))
-        self.torrents = [t for t in self.torrents if t.id != ids]
+    def remove_torrent(self, *args, **kwargs):
+        call = _bind_to_client("remove_torrent", args, kwargs)
+        self.calls.append(("remove_torrent", call["ids"], call["delete_data"]))
+        self.torrents = [t for t in self.torrents if t.id != call["ids"]]
 
     @property
     def names(self):

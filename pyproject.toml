@@ -18,12 +18,6 @@ ignore = [
 python_version = "3.12"
 files = ["fetch_torrents.py", "torrent_scrape.py", "configure_transmission.py"]
 
-[[tool.mypy.overrides]]
-# Installed from Alpine's py3-transmission-rpc in the container; not a test
-# dependency, so there's nothing for mypy to read locally or in CI.
-module = "transmission_rpc"
-ignore_missing_imports = true
-
 [tool.coverage.run]
 branch = true
 source_pkgs = ["fetch_torrents", "torrent_scrape", "configure_transmission"]

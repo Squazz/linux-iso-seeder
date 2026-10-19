@@ -1,9 +1,8 @@
 """Tests for fetch_torrents.py.
 
-fetch_torrents.py imports transmission_rpc, which the container installs
-from Alpine's py3-transmission-rpc and isn't a test dependency, so this file
-stubs it in sys.modules before importing the module. Importing it touches no
-files (logging is only set up by configure_logging()).
+Importing fetch_torrents touches no files (logging is only set up by
+configure_logging()). transmission_rpc is the real library, pinned in
+requirements-test.txt to the version Alpine's py3-transmission-rpc ships.
 
 Run with: python -m unittest discover -s tests
 """
@@ -18,18 +17,13 @@ import types
 import unittest
 import unittest.mock
 from datetime import UTC, date, timedelta
-from unittest.mock import MagicMock
-
-if "transmission_rpc" not in sys.modules:
-    stub = types.ModuleType("transmission_rpc")
-    stub.Client = MagicMock()
-    sys.modules["transmission_rpc"] = stub
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import helpers
+import transmission_rpc.constants
 
 import fetch_torrents as ft
 
@@ -43,7 +37,14 @@ def setUpModule():
     unittest.addModuleCleanup(patcher.stop)
 
 
-class FakeTorrent:
+FakeTorrent = helpers.FakeTorrent
+
+
+class DuckTorrent:
+    """A torrent-shaped object a real transmission_rpc.Torrent can't be -
+    ratio None, or added_date None/a float/a datetime - only for exercising
+    the defensive getattr()/`or 0.0` branches in production code."""
+
     def __init__(self, name, id_, ratio=0.0, added_date=None):
         self.name = name
         self.id = id_
@@ -51,7 +52,7 @@ class FakeTorrent:
         self.added_date = added_date
 
     def __repr__(self):
-        return f"FakeTorrent({self.name!r}, ratio={self.ratio})"
+        return f"DuckTorrent({self.name!r}, ratio={self.ratio})"
 
 
 def fixed_date(today):
@@ -222,7 +223,7 @@ class PlanCleanupTests(unittest.TestCase):
 
     def test_missing_or_none_ratio_counts_as_zero(self):
         no_attr = types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=2)
-        none_ratio = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None)
+        none_ratio = DuckTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None)
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
             no_attr,
@@ -331,8 +332,8 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
         # Real Transmission torrents always carry added_date; this just
         # guards _devuan_sort_key() against a hypothetical missing attribute.
         torrents = [
-            FakeTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None),
-            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=None),
+            DuckTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None),
+            DuckTorrent("devuan_excalibur", 2, ratio=2.0, added_date=None),
         ]
 
         to_remove, _ = ft.plan_cleanup(torrents)
@@ -340,10 +341,10 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
         self.assertEqual(len(to_remove), 1)
 
     def test_release_without_added_date_sorts_as_oldest(self):
-        undated = FakeTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None)
+        undated = DuckTorrent("devuan_daedalus", 1, ratio=2.0, added_date=None)
         torrents = [
             undated,
-            FakeTorrent("devuan_excalibur", 2, ratio=2.0, added_date=0.5),
+            DuckTorrent("devuan_excalibur", 2, ratio=2.0, added_date=0.5),
         ]
 
         to_remove, _ = ft.plan_cleanup(torrents)
@@ -353,14 +354,14 @@ class PlanCleanupDevuanGroupingTests(unittest.TestCase):
     def test_datetime_added_dates_are_ordered_by_timestamp(self):
         from datetime import datetime
 
-        older = FakeTorrent(
+        older = DuckTorrent(
             "devuan_daedalus",
             1,
             ratio=2.0,
             added_date=datetime(2026, 1, 1, tzinfo=UTC),
         )
         torrents = [
-            FakeTorrent(
+            DuckTorrent(
                 "devuan_excalibur",
                 2,
                 ratio=2.0,
@@ -909,11 +910,7 @@ class ImportOpensNoFilesTests(unittest.TestCase):
     def test_import_leaves_the_log_dir_untouched(self):
         log_dir = helpers.make_temp_dir(self, "fetch_torrents_import_")
         script = (
-            "import sys, types\n"
-            "from unittest.mock import MagicMock\n"
-            "stub = types.ModuleType('transmission_rpc')\n"
-            "stub.Client = MagicMock()\n"
-            "sys.modules['transmission_rpc'] = stub\n"
+            "import sys\n"
             f"sys.path.insert(0, {REPO_ROOT!r})\n"
             "import fetch_torrents as ft\n"
             "ft.logger.warning('logged before configure_logging()')\n"
@@ -1870,7 +1867,7 @@ class PlanStagnationCleanupTests(unittest.TestCase):
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
             types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=2),
-            FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None),
+            DuckTorrent("ubuntu-23.10-desktop-amd64.iso", 3, ratio=None),
         ]
         history = {
             name: [{"date": (today - timedelta(days=40)).isoformat(), "ratio": -0.5}]
@@ -2906,7 +2903,7 @@ class MakeClientFactoryTests(unittest.TestCase):
 
     def _connect(self, env):
         config = ft.load_config(env)
-        with unittest.mock.patch.object(ft, "Client") as client_cls:
+        with unittest.mock.patch.object(ft, "Client", autospec=True) as client_cls:
             client = ft.make_client_factory(config)()
         return client_cls, client
 
@@ -2940,7 +2937,7 @@ class MakeClientFactoryTests(unittest.TestCase):
         )
 
     def test_factory_connects_only_when_called(self):
-        with unittest.mock.patch.object(ft, "Client") as client_cls:
+        with unittest.mock.patch.object(ft, "Client", autospec=True) as client_cls:
             factory = ft.make_client_factory(ft.load_config({}))
 
         client_cls.assert_not_called()
@@ -2963,6 +2960,78 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
 
         def json(self):
             return {"arguments": {"torrents": []}}
+
+    def test_requests_follow_the_transmission_rpc_protocol(self):
+        # The pinned transmission_rpc's own tables of methods and torrent-get
+        # fields stand in for the RPC spec, so a renamed field fails here.
+        with unittest.mock.patch.object(
+            ft.requests,
+            "post",
+            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+        ) as mock_post:
+            ft.log_seed_ratios_via_http(auth=("alice", "hunter2"))
+
+        session_call, get_call = mock_post.call_args_list
+        self.assertEqual(
+            session_call,
+            unittest.mock.call("http://localhost:9091/transmission/rpc", timeout=15),
+        )
+        self.assertEqual(
+            get_call,
+            unittest.mock.call(
+                "http://localhost:9091/transmission/rpc",
+                json={
+                    "method": "torrent-get",
+                    "arguments": {"fields": ["name", "uploadRatio"]},
+                },
+                headers={"X-Transmission-Session-Id": "abc"},
+                auth=("alice", "hunter2"),
+                timeout=15,
+            ),
+        )
+        payload = get_call.kwargs["json"]
+        self.assertEqual(
+            payload["method"], transmission_rpc.constants.RpcMethod.TorrentGet.value
+        )
+        self.assertLessEqual(
+            set(payload["arguments"]["fields"]),
+            set(transmission_rpc.constants.TORRENT_GET_ARGS),
+        )
+
+    def test_logs_ratios_highest_first_with_none_as_zero(self):
+        response = self.FakeTorrentGetResponse()
+        response.json = lambda: {
+            "arguments": {
+                "torrents": [
+                    {"name": "low.iso", "uploadRatio": 0.5},
+                    {"name": "unset.iso", "uploadRatio": None},
+                    {"name": "high.iso", "uploadRatio": 2.25},
+                ]
+            }
+        }
+        with (
+            unittest.mock.patch.object(
+                ft.requests,
+                "post",
+                side_effect=[self.FakeSessionIdResponse(), response],
+            ),
+            self.assertLogs(ft.logger, level="INFO") as logs,
+        ):
+            ft.log_seed_ratios_via_http(auth=None)
+
+        ratio_lines = [
+            r.getMessage() for r in logs.records if r.getMessage().startswith("[ratio]")
+        ]
+        self.assertEqual(
+            ratio_lines,
+            [
+                "[ratio] RATIOS START",
+                f"[ratio] {'high.iso':<50} → 2.250",
+                f"[ratio] {'low.iso':<50} → 0.500",
+                f"[ratio] {'unset.iso':<50} → 0.000",
+                "[ratio] RATIOS END",
+            ],
+        )
 
     def test_session_id_request_has_a_timeout(self):
         with unittest.mock.patch.object(
@@ -3263,7 +3332,7 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
     def test_missing_or_none_ratio_sorts_as_zero(self):
         half = FakeTorrent("ubuntu-22.10-desktop-amd64.iso", 2, ratio=0.5)
         no_attr = types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=3)
-        none_ratio = FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 4, ratio=None)
+        none_ratio = DuckTorrent("ubuntu-23.10-desktop-amd64.iso", 4, ratio=None)
         torrents = [
             FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1),
             half,

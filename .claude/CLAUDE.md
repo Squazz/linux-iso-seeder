@@ -3,7 +3,7 @@
 Testing rules and the import-stubbing pattern live in the root [CLAUDE.md](../CLAUDE.md); this file only records dev-team toolchain conventions.
 
 ## Stack
-- Python 3 (runs in an Alpine container; `transmission_rpc` is apk-only)
+- Python 3 (runs in an Alpine container; `transmission_rpc` comes from apk there, pinned from PyPI for tests)
 - Docker (`Dockerfile`, `entrypoint.sh`)
 - Tests: stdlib `unittest` (`tests/`)
 

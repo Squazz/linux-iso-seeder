@@ -33,12 +33,14 @@ CI runs this same command on every push and PR (`.github/workflows/docker-image.
 
 ## Why the test setup looks the way it does
 
-`fetch_torrents.py` is written to run inside the container: it imports
-`transmission_rpc` (an apk-only package, not pip-installable).
-`tests/test_fetch_torrents.py` stubs `transmission_rpc` via `sys.modules`
-before importing the module, so tests run without a container or a live
-Transmission daemon. Follow that pattern for any new test file that needs to
-import `fetch_torrents`.
+`fetch_torrents.py` is written to run inside the container, which installs
+`transmission_rpc` from Alpine's `py3-transmission-rpc`. Tests use the same
+version from PyPI (`transmission-rpc`, pinned in `requirements-test.txt`;
+bump the pin when `alpine:latest` moves), so they run without a container
+or a live Transmission daemon. Never talk to a real `Client` in a test: use
+`tests/helpers.py` `FakeTransmission` and `FakeTorrent`, which are checked
+against the pinned library's `Client` signatures and `Torrent` fields (see
+`tests/test_transmission_double.py`), so they can't drift from it.
 
 Importing the module opens no files: log handlers are only attached by
 `configure_logging()`, which the `__main__` block calls. Tests that need it
@@ -56,7 +58,7 @@ functions (taking plain data in, returning plain data out) separate from
 functions that perform I/O (RPC calls, network requests, file writes) — see
 `plan_cleanup()` vs. `cleanup_old_versions()` for the pattern.
 
-Test-only dependencies (currently just `requests` and `beautifulsoup4`,
-needed to import the module — `unittest` itself is stdlib) live in
+Test-only dependencies (`requests`, `beautifulsoup4` and `transmission-rpc`,
+needed to import the modules — `unittest` itself is stdlib) live in
 `requirements-test.txt`, separate from the apk packages the container
 actually runs with.
