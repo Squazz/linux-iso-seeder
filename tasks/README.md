@@ -13,19 +13,23 @@ so search for the function name if they have drifted.
 
 ## Targets ("a better place")
 
-Re-measured on 2026-10-19 after tasks 10–26 (task 27): 383 tests green.
-Mutation scores are honest (string-literal-only survivors excluded). They
-come from full mutmut 2.5.1 runs with the whole suite as the runner.
+Re-measured on 2026-10-19 at 209292c after round 2 (task 38): 493 tests
+green. Mutation scores are honest: string-literal-only survivors (log and
+error text) are excluded, and a timeout counts as a kill. They come from
+full mutmut 2.5.1 runs over all three modules, with the whole suite as the
+runner. The task 27 numbers are kept for comparison.
 
-| Metric | Baseline (84761d3) | Target | Now |
-| --- | --- | --- | --- |
-| Mutation score, critical `fetch_torrents.py` functions¹ | 70.9% | ≥ 90% | **100%** (258/258) |
-| Mutation score, critical `torrent_scrape.py` functions | 82.6% | ≥ 90% | **100%** (247/247, every function) |
-| Mutation score, `configure_transmission.py` | 89.8% | — | 96.7% (87/90) |
-| Mutation score, all of `fetch_torrents.py` | — | — | 88.6% (915/1033) |
-| Branch coverage, `fetch_torrents.py` | 75% | ≥ 90% | **96%** (total 96.8%; CI `fail_under = 94`) |
-| CI gates | unittest only | unittest + ruff + mypy + container smoke | **met**: also the in-image unit suite, hostile env, coverage ratchet |
-| Scraper drift detection | none | recorded pages in the merge check + a scheduled live job | **met**: `tests/test_scrapers.py` + `.github/workflows/drift.yml` |
+| Metric | Baseline (84761d3) | Target | Task 27 | Now (209292c) |
+| --- | --- | --- | --- | --- |
+| Mutation score, critical `fetch_torrents.py` functions¹ | 70.9% | ≥ 90% | 100% (258/258) | **100%** |
+| Mutation score, critical `torrent_scrape.py` functions | 82.6% | ≥ 90% | 100% (247/247) | **100%** |
+| Mutation score, all of `fetch_torrents.py` | — | — | 88.6% (915/1033) | **99.3%** (1040/1047) |
+| Mutation score, all of `torrent_scrape.py` | — | — | — | **99.6%** (248/249) |
+| Mutation score, `configure_transmission.py` | 89.8% | — | 96.7% (87/90) | **96.8%** (90/93) |
+| Branch coverage, total | — | — | 96.8% | **99.1%** (CI `fail_under = 97`) |
+| Branch coverage, `fetch_torrents.py` | 75% | ≥ 90% | 96% | **99.2%** |
+| CI gates | unittest only | unittest + ruff + mypy + container smoke | met | **met**, plus ruff `S`, shellcheck, hadolint, a smoke check that the daily fetch run starts, and CI Python and deps pinned to Alpine's |
+| Scraper drift detection | none | recorded pages in the merge check + a scheduled live job | met | **met**; `scripts/live_check.py` itself is now tested offline |
 
 ¹ The ratio gate, the cleanup planners and the parsers they rely on:
 `should_fetch_torrent`, `_should_fetch_devuan`, `parse_version_type`,
@@ -34,17 +38,25 @@ come from full mutmut 2.5.1 runs with the whole suite as the runner.
 `update_ratio_history`, `plan_disk_pressure_cleanup`, `has_unmet_demand`,
 `should_recheck_old_release`, `_safe_watch_path`, `filter_low_demand`.
 
-Remaining survivors (not critical logic, left as follow-ups) are mostly in
-the I/O and orchestration layer:
-- `run` (9), `_fetch_latest` (5), `_check_old_releases` (2)
-- `check_old_releases_for_demand` (21), `evaluate_old_release_demand` (7)
-- `enforce_disk_usage_limit` (10), `cleanup_stagnant_torrents` (5),
-  `cleanup_old_versions` (3)
-- `configure_logging` (6), `parse_log_level` (3), `wait_for_transmission_rpc` (6)
-- the `save_*` temp-file handling (2 each)
+Every remaining behavioural survivor is an accepted equivalent (listed under
+"Accepted equivalent mutants" below):
+- `fetch_torrents.py` (7): `logger.propagate = None`, the two
+  `.get("seeders", 0)` defaults, the three `getattr(torrent, "ratio", 0.0)`
+  defaults, and `break` → `continue` in `enforce_disk_usage_limit`.
+- `torrent_scrape.py` (1): `usedforsecurity=False` → `True` on the info-hash
+  SHA-1, which only differs on a FIPS-restricted OpenSSL build.
+- `configure_transmission.py` (3): `save_settings`' `indent` and
+  `sort_keys`, plus the `__main__` guard on the last line, which mutmut
+  leaves untested.
 
-The list is in a scratch run, not the repo: rerun `mutmut run` and
-`mutmut results` to see the current set.
+Farley Score was not re-measured; it was 8.41 at 7080bbd. Rerun
+`/test-health` for a fresh report.
+
+The survivor list is in a scratch run, not the repo: rerun `mutmut run` and
+`mutmut results` to see the current set. Run it with
+`PYTHONDONTWRITEBYTECODE=1` (mutmut rewrites files in place, and a mutant
+that keeps the file size can otherwise run from a stale `.pyc`), and on
+Windows with `PYTHONUTF8=1` if output is redirected to a file.
 
 ## Order
 
@@ -104,7 +116,7 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 | 35 | [Consolidate fixtures and the path-global seam](35-fixture-consolidation.md) | P3 | NO_REFACTOR → REFACTOR_REQUIRED | 34 | done |
 | 36 | [Remaining `fetch_torrents.py` mutation survivors](36-remaining-mutation-survivors.md) | P3 | NO_REFACTOR | — | done |
 | 37 | [Toolchain: smoke test, shellcheck/hadolint, ruff S, pins](37-toolchain-and-q4.md) | P2 | CI | — | done |
-| 38 | [Re-measure, raise the coverage ratchet, record the baseline](38-remeasure-and-ratchet.md) | P3 | — | 28–37 | open |
+| 38 | [Re-measure, raise the coverage ratchet, record the baseline](38-remeasure-and-ratchet.md) | P3 | — | 28–37 | done |
 
 ### Accepted equivalent mutants (task 36)
 
@@ -119,6 +131,9 @@ mutants) counts as clean:
 - `break` → `continue` once `enforce_disk_usage_limit` is under the
   threshold: every later candidate fails the same check, so the only
   difference is extra disk-usage reads.
+- `usedforsecurity=False` → `True` on `compute_info_hash`'s SHA-1 (task 38):
+  identical except on a FIPS-restricted OpenSSL, where `True` would refuse
+  SHA-1. The flag just says the hash isn't a security control.
 
 In `configure_transmission.py` (task 31), `save_settings`'s `indent=4` and
 `sort_keys=True` are accepted too. transmission-daemon owns settings.json and

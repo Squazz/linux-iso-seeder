@@ -13,7 +13,7 @@ Testing rules and the import-stubbing pattern live in the root [CLAUDE.md](../CL
 - Typecheck: `mypy` (files and settings in `pyproject.toml`)
 - CI's `test` job runs ruff check (defaults + bandit `S`), ruff format --check, mypy, shellcheck and hadolint before the tests; tool versions are pinned in `requirements-dev.txt`, the shellcheck/hadolint images in `.github/workflows/docker-image.yml` (commands in CONTRIBUTING.md)
 - Coverage: `coverage run -m unittest discover -s tests` then `coverage report` (branch coverage; config in `pyproject.toml`, which also sets the `fail_under` ratchet CI enforces)
-- Mutation: `mutmut run` (mutmut<3; config in `pyproject.toml`, see CONTRIBUTING.md)
+- Mutation: `mutmut run` (mutmut<3; config in `pyproject.toml`, see CONTRIBUTING.md; run with `PYTHONDONTWRITEBYTECODE=1`)
 - Dev deps: `pip install -r requirements-dev.txt` (includes `requirements-test.txt`)
 
 ## Active agent templates

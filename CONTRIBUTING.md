@@ -79,7 +79,10 @@ mutmut show <id>      # show one mutant's diff
 ```
 
 mutmut edits the source files in place while it runs, so run it on a clean
-working tree (or a copy of the repo). A full run takes a while (~40 minutes on
+working tree (or a copy of the repo, e.g. a `git worktree`), with
+`PYTHONDONTWRITEBYTECODE=1`: a mutant that keeps the file's size can
+otherwise be run from a stale `.pyc`. On Windows, also set `PYTHONUTF8=1`
+when redirecting its output to a file. A full run takes a while (~40 minutes on
 Windows).
 
 ### Handling surviving mutants
