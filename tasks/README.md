@@ -71,3 +71,40 @@ The list is in a scratch run, not the repo: rerun `mutmut run` and
 
 All tasks are done. `tests/test_fetch_torrents.py`, which the task files refer to,
 was split by concern in task 26 (see CLAUDE.md for the new module list).
+
+## Round 2 (from the 2026-10-19 test-health review)
+
+Source: `.dev-team-reports/test-health-2026-10-19.md` and
+`.dev-team-reports/test-design-2026-10-19.md` (local, gitignored). Farley Score was 8.41
+across 383 tests at 7080bbd.
+
+The review's top five items were done straight away, without task files:
+
+| Item | Commit |
+| --- | --- |
+| `FakeDisk` honours `delete_data`; disk-pressure and stagnation boundaries pinned | 90c7f8f |
+| Old-release check tested sociably (real evaluation, faked network only) | db38abe |
+| Daily-run counters, timing, disk report, RPC credentials | b4d010a |
+| Logging routing, `parse_log_level`, always-log prefix contract | aa81ef3 |
+
+Re-measured at aa81ef3: 423 tests green, 99% branch coverage. `fetch_torrents.py`
+mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
+258/258. `torrent_scrape.py` is at 100% and `configure_transmission.py` at 96.7%
+(87/90), both unchanged.
+
+| # | Task | Priority | Class | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| 28 | [Make `wait_for_transmission_rpc` testable and test it](28-rpc-wait-seam.md) | P2 | REFACTOR_REQUIRED | — | open |
+| 29 | [Inject the UDP transaction id; assert wire payloads](29-udp-transaction-id-seam.md) | P3 | REFACTOR_REQUIRED | — | open |
+| 30 | [Test `scripts/live_check.py` beyond `problems()`](30-live-check-tests.md) | P2 | REFACTOR_REQUIRED | — | open |
+| 31 | [`configure_transmission`: hermetic default path, boundaries](31-configure-transmission-gaps.md) | P3 | NO_REFACTOR | — | open |
+| 32 | [Atomic `.torrent` writes](32-atomic-torrent-writes.md) | P2 (bug) | NO_REFACTOR | — | open |
+| 33 | [`scrape_torrent` fall-through branches and SSRF edges](33-scrape-torrent-branches-and-ssrf.md) | P2 | NO_REFACTOR | — | open |
+| 34 | [Mechanical test tidy-up](34-mechanical-test-tidy-up.md) | P3 | NO_REFACTOR | — | open |
+| 35 | [Consolidate fixtures and the path-global seam](35-fixture-consolidation.md) | P3 | NO_REFACTOR → REFACTOR_REQUIRED | 34 | open |
+| 36 | [Remaining `fetch_torrents.py` mutation survivors](36-remaining-mutation-survivors.md) | P3 | NO_REFACTOR | — | open |
+| 37 | [Toolchain: smoke test, shellcheck/hadolint, ruff S, pins](37-toolchain-and-q4.md) | P2 | CI | — | open |
+| 38 | [Re-measure, raise the coverage ratchet, record the baseline](38-remeasure-and-ratchet.md) | P3 | — | 28–37 | open |
+
+Suggested order: 32 (a real bug), then 28, 30 and 33 (resilience and drift-job trust),
+then 37, then 36, then the clean-up tasks 29, 31, 34 and 35, and finally 38.
