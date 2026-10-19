@@ -623,12 +623,12 @@ class OldReleaseRunTests(RunTestCase):
         with open(self.world.state_path(filename), "w", encoding="utf-8") as f:
             json.dump(data, f)
 
-    def _check(self, candidates, **env):
+    def _check(self, candidates, fetchers=(), **env):
         with unittest.mock.patch.dict(
             ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: dict(candidates)}, clear=True
         ):
             return self._run(
-                fetchers=(),
+                fetchers=fetchers,
                 FETCH_TORRENTS_DISTROS="kali",
                 FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
                 FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS="4",
@@ -637,6 +637,24 @@ class OldReleaseRunTests(RunTestCase):
                 FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="10",
                 **env,
             )
+
+    def test_every_always_log_prefix_matches_a_message_the_run_emits(self):
+        # FETCH_TORRENTS_ALWAYS_LOG lets lines through by prefix, so a
+        # reworded message would silently stop showing at the default level.
+        # This run hits every prefixed message: a distro skipped and one
+        # fetched, an old release added, and the ratio query.
+        wanted = self._candidate(3, "installer", 6, 10)
+
+        _summary, messages = self._check(
+            [wanted], fetchers=(("arch", dict), ("kali", dict))
+        )
+
+        for prefix in ft.get_always_log_prefixes():
+            with self.subTest(prefix=prefix):
+                self.assertTrue(
+                    any(m.startswith(prefix) for m in messages),
+                    f"no message starts with {prefix!r}",
+                )
 
     def test_config_and_saved_state_drive_the_check(self):
         recent = self._candidate(1, "installer", 50, 1)
@@ -825,7 +843,7 @@ class FormatRunSummaryTests(unittest.TestCase):
             "Old releases (FETCH_TORRENTS_CHECK_OLD_RELEASES): 2 added, 6 skipped.",
         )
 
-    def test_still_starts_with_run_complete_for_always_log_filter(self):
+    def test_is_let_through_by_the_always_log_filter(self):
         summary = ft.format_run_summary(
             elapsed=1.0,
             success_count=0,
@@ -835,7 +853,14 @@ class FormatRunSummaryTests(unittest.TestCase):
             old_added=0,
             old_skipped=0,
         )
-        self.assertTrue(summary.startswith("Run complete in"))
+        record = logging.LogRecord(
+            "fetch_torrents", logging.INFO, __file__, 0, summary, None, None
+        )
+        always_log = ft.ImportantMessageFilter(
+            logging.ERROR, ft.get_always_log_prefixes()
+        )
+
+        self.assertIs(always_log.filter(record), True)
 
 
 class LoadConfigTests(unittest.TestCase):

@@ -5,6 +5,7 @@ next run's ratio gate.
 Run with: python -m unittest discover -s tests
 """
 
+import io
 import json
 import logging
 import logging.handlers
@@ -151,6 +152,112 @@ class ConfigureLoggingTests(unittest.TestCase):
         )
         self.assertIn(other, ft.logger.handlers)
         self.assertTrue(all(h not in ft.logger.handlers for h in first))
+
+
+class ParseLogLevelTests(unittest.TestCase):
+    def test_values(self):
+        for value, expected in (
+            (None, logging.WARNING),  # unset
+            ("", logging.WARNING),
+            ("   ", logging.WARNING),
+            ("10", 10),
+            ("debug", logging.DEBUG),
+            (" Error ", logging.ERROR),
+            ("bogus", logging.WARNING),
+            ("²", logging.WARNING),  # isdigit(), but not an int
+        ):
+            env = {} if value is None else {"LEVEL": value}
+            with self.subTest(value=value):
+                self.assertEqual(
+                    ft.parse_log_level("LEVEL", logging.WARNING, env=env), expected
+                )
+
+
+class LogRoutingTests(unittest.TestCase):
+    """Where configure_logging() sends each record: "[ratio]" lines only to
+    the ratio log; everything else to stderr and fetch_torrents.log at the
+    configured level, except that with FETCH_TORRENTS_ALWAYS_LOG (on by
+    default) progress lines starting with an always-log prefix get through
+    whatever the level."""
+
+    def _route(self, **env):
+        """Configures logging with env, emits one record of each kind and
+        returns (stderr lines, fetch_torrents.log lines, ratio log lines),
+        each without the timestamp prefix."""
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_routing_")
+        stream_handler, file_handler, ratio_handler = configure_logging_for_test(
+            self, log_dir, **env
+        )
+        stderr = io.StringIO()
+        stream_handler.setStream(stderr)
+
+        ft.logger.debug("plain debug")
+        ft.logger.info("plain info")
+        ft.logger.warning("plain warning")
+        ft.logger.info("Fetching latest arch torrents...")
+        ft.logger.info("[ratio] RATIOS START")
+        ft.logger.debug("[ratio] debug ratio")
+        for handler in (stream_handler, file_handler, ratio_handler):
+            handler.flush()
+
+        def lines(text):
+            return [line.split(" ", 2)[2] for line in text.splitlines()]
+
+        with open(os.path.join(log_dir, "fetch_torrents.log"), encoding="utf-8") as f:
+            main_log = lines(f.read())
+        with open(
+            os.path.join(log_dir, "fetch_torrents_ratios.log"), encoding="utf-8"
+        ) as f:
+            ratio_log = lines(f.read())
+        return lines(stderr.getvalue()), main_log, ratio_log
+
+    def test_defaults_log_info_and_up_plus_always_log_lines(self):
+        stderr, main_log, ratio_log = self._route()
+
+        expected = [
+            "INFO: plain info",
+            "WARNING: plain warning",
+            "INFO: Fetching latest arch torrents...",
+        ]
+        self.assertEqual(stderr, expected)
+        self.assertEqual(main_log, expected)
+        self.assertEqual(ratio_log, ["INFO: [ratio] RATIOS START"])
+
+    def test_always_log_lines_get_through_a_higher_level(self):
+        stderr, main_log, _ = self._route(FETCH_TORRENTS_LOG_LEVEL="WARNING")
+
+        expected = ["WARNING: plain warning", "INFO: Fetching latest arch torrents..."]
+        self.assertEqual(stderr, expected)
+        self.assertEqual(main_log, expected)
+
+    def test_always_log_off_applies_the_level_to_everything(self):
+        stderr, main_log, _ = self._route(
+            LOG_LEVEL="WARNING", FETCH_TORRENTS_ALWAYS_LOG="false"
+        )
+
+        self.assertEqual(stderr, ["WARNING: plain warning"])
+        self.assertEqual(main_log, ["WARNING: plain warning"])
+
+    def test_fetch_torrents_log_level_takes_precedence_over_log_level(self):
+        _, main_log, _ = self._route(
+            FETCH_TORRENTS_LOG_LEVEL="DEBUG", LOG_LEVEL="ERROR"
+        )
+
+        self.assertEqual(main_log[0], "DEBUG: plain debug")
+
+    def test_lines_carry_a_timestamp_and_the_logger_does_not_propagate(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_routing_")
+        _, file_handler, _ = configure_logging_for_test(self, log_dir)
+
+        ft.logger.warning("plain warning")
+        file_handler.flush()
+
+        with open(os.path.join(log_dir, "fetch_torrents.log"), encoding="utf-8") as f:
+            self.assertRegex(
+                f.read(),
+                r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} WARNING: plain warning\n$",
+            )
+        self.assertFalse(ft.logger.propagate)
 
 
 class LogSeedRatiosViaHttpTests(unittest.TestCase):
