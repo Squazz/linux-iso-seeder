@@ -124,6 +124,28 @@ class BdecodeBencodeTests(unittest.TestCase):
         self.assertEqual(encoded, b"d5:applei2e5:zebrai1ee")
 
 
+class BencodeStrTests(unittest.TestCase):
+    def test_str_encodes_as_utf8_byte_string(self):
+        self.assertEqual(ts.bencode("abc"), b"3:abc")
+        # Length is in encoded bytes, not characters.
+        self.assertEqual(ts.bencode("æ"), b"2:" + "æ".encode())
+
+    def test_str_keys_encode_like_bytes_keys(self):
+        self.assertEqual(
+            ts.bencode({"cow": b"moo", "spam": 1}),
+            ts.bencode({b"cow": b"moo", b"spam": 1}),
+        )
+
+    def test_mixed_keys_are_sorted_by_byte_value(self):
+        # "B" (0x42) sorts before "a" (0x61) by byte value.
+        self.assertEqual(ts.bencode({"a": 1, b"B": 2}), b"d1:Bi2e1:ai1ee")
+
+    def test_unsupported_types_raise(self):
+        for value in (True, 1.5, None, ("tuple",)):
+            with self.subTest(value=value), self.assertRaises(ts.BencodeError):
+                ts.bencode(value)
+
+
 class ComputeInfoHashTests(unittest.TestCase):
     def test_matches_sha1_of_raw_info_bytes(self):
         info_bytes = (
@@ -191,6 +213,30 @@ class GetAnnounceUrlsTests(unittest.TestCase):
             ts.get_announce_urls(torrent_bytes), ["http://only.example.com/announce"]
         )
 
+    def test_primary_announce_missing_from_the_list_goes_first(self):
+        torrent_bytes = (
+            b"d"
+            + bstr("announce")
+            + bstr("http://primary.example.com/announce")
+            + bstr("announce-list")
+            + b"ll"
+            + bstr("http://a.example.com/announce")
+            + b"el"
+            + bstr("http://b.example.com/announce")
+            + b"ee"
+            + bstr("info")
+            + b"de"
+            + b"e"
+        )
+        self.assertEqual(
+            ts.get_announce_urls(torrent_bytes),
+            [
+                "http://primary.example.com/announce",
+                "http://a.example.com/announce",
+                "http://b.example.com/announce",
+            ],
+        )
+
 
 class DeriveScrapeUrlTests(unittest.TestCase):
     def test_examples_from_the_scrape_convention(self):
@@ -203,6 +249,11 @@ class DeriveScrapeUrlTests(unittest.TestCase):
                 "http://example.com/a/scrape?x2%0644",
             ),
             ("http://example.com/a", None),
+            # Only the first 'announce' in the segment is substituted.
+            (
+                "http://example.com/announce_announce",
+                "http://example.com/scrape_announce",
+            ),
         ]
         for announce_url, expected in cases:
             with self.subTest(announce_url=announce_url):
@@ -245,6 +296,14 @@ class ParseScrapeResponseTests(unittest.TestCase):
         )
         stats = ts.parse_scrape_response(response, info_hash)
         self.assertEqual(stats, {"seeders": 33, "leechers": 73, "completed": 9})
+
+    def test_missing_counts_default_to_zero(self):
+        info_hash = b"A" * 20
+        response = b"d5:filesd" + bstr(info_hash) + b"dee" + b"e"
+        self.assertEqual(
+            ts.parse_scrape_response(response, info_hash),
+            {"seeders": 0, "leechers": 0, "completed": 0},
+        )
 
     def test_returns_none_when_hash_absent(self):
         response = b"d5:filesdee" + b"e"
@@ -324,6 +383,27 @@ class BuildParseUdpConnectRequestTests(unittest.TestCase):
         with self.assertRaises(ts.UdpTrackerError):
             ts.parse_udp_connect_response(b"\x00" * 8, transaction_id=42)
 
+    def test_short_response_reports_its_length(self):
+        with self.assertRaisesRegex(ts.UdpTrackerError, r"too short \(15 bytes\)"):
+            ts.parse_udp_connect_response(b"\x00" * 15, transaction_id=42)
+
+    def test_trailing_bytes_after_connect_response_are_ignored(self):
+        response = _connect_response(transaction_id=42, connection_id=7) + b"xx"
+        self.assertEqual(ts.parse_udp_connect_response(response, transaction_id=42), 7)
+
+    def test_error_action_with_empty_message_is_still_a_tracker_error(self):
+        # Exactly 8 bytes: action + transaction id, no message text.
+        with self.assertRaisesRegex(ts.UdpTrackerError, r"^Tracker error: $"):
+            ts.parse_udp_connect_response(
+                _error_response(transaction_id=42, message=""), transaction_id=42
+            )
+
+    def test_error_action_for_another_transaction_is_not_reported_as_ours(self):
+        response = _error_response(transaction_id=99, message="not for you")
+        with self.assertRaises(ts.UdpTrackerError) as ctx:
+            ts.parse_udp_connect_response(response, transaction_id=42)
+        self.assertNotIn("not for you", str(ctx.exception))
+
     def test_tracker_error_action_raises_with_message(self):
         response = _error_response(transaction_id=42, message="bad request")
         with self.assertRaises(ts.UdpTrackerError) as ctx:
@@ -376,6 +456,20 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
         with self.assertRaises(ts.UdpTrackerError):
             ts.parse_udp_scrape_response(b"\x00" * 4, transaction_id=7)
 
+    def test_response_one_byte_short_of_one_hash_raises(self):
+        response = _scrape_response(7, seeders=1, completed=1, leechers=1)[:19]
+        with self.assertRaisesRegex(ts.UdpTrackerError, r"too short \(19 bytes\)"):
+            ts.parse_udp_scrape_response(response, transaction_id=7)
+
+    def test_trailing_bytes_after_first_hash_are_ignored(self):
+        response = (
+            _scrape_response(7, seeders=1, completed=2, leechers=3) + b"\x00" * 12
+        )
+        self.assertEqual(
+            ts.parse_udp_scrape_response(response, transaction_id=7),
+            {"seeders": 1, "leechers": 3, "completed": 2},
+        )
+
     def test_tracker_error_action_raises_with_message(self):
         response = _error_response(transaction_id=7, message="scrape not supported")
         with self.assertRaises(ts.UdpTrackerError) as ctx:
@@ -399,7 +493,7 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
             transaction_id=0x00000001, connection_id=0xCAFEBABE
         )
         scrape_resp = _scrape_response(
-            transaction_id=0x00000001, seeders=5, completed=2, leechers=3
+            transaction_id=0x00000002, seeders=5, completed=2, leechers=3
         )
         fake_sock = self._make_fake_socket(
             [
@@ -411,7 +505,7 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
         with (
             unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
             unittest.mock.patch.object(
-                ts.os, "urandom", return_value=b"\x00\x00\x00\x01"
+                ts.os, "urandom", side_effect=[b"\x00\x00\x00\x01", b"\x00\x00\x00\x02"]
             ),
         ):
             stats = ts.scrape_udp_tracker(
@@ -420,7 +514,10 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
 
         self.assertEqual(stats, {"seeders": 5, "leechers": 3, "completed": 2})
         fake_sock.settimeout.assert_called_once_with(5)
-        self.assertEqual(fake_sock.sendto.call_count, 2)
+        self.assertEqual(
+            [call.args[1] for call in fake_sock.sendto.call_args_list],
+            [("tracker.example.com", 1337)] * 2,
+        )
         # Second (scrape) request must carry the connection_id from the connect response.
         scrape_request_bytes = fake_sock.sendto.call_args_list[1][0][0]
         connection_id_sent, action_sent = struct.unpack(
@@ -429,6 +526,37 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
         self.assertEqual(connection_id_sent, 0xCAFEBABE)
         self.assertEqual(action_sent, 2)
         fake_sock.close.assert_called_once()
+
+    def test_scrape_response_echoing_the_connect_id_raises(self):
+        info_hash = b"A" * 20
+        fake_sock = self._make_fake_socket(
+            [
+                (_connect_response(transaction_id=1, connection_id=9), None),
+                (_scrape_response(1, seeders=5, completed=2, leechers=3), None),
+            ]
+        )
+
+        with (
+            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
+            unittest.mock.patch.object(
+                ts.os, "urandom", side_effect=[b"\x00\x00\x00\x01", b"\x00\x00\x00\x02"]
+            ),
+            self.assertRaisesRegex(ts.UdpTrackerError, "mismatch in scrape response"),
+        ):
+            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
+
+        fake_sock.close.assert_called_once()
+
+    def test_default_timeout_is_15_seconds(self):
+        fake_sock = self._make_fake_socket(TimeoutError("timed out"))
+
+        with (
+            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
+            self.assertRaises(socket.timeout),
+        ):
+            ts.scrape_udp_tracker("tracker.example.com", 1337, b"A" * 20)
+
+        fake_sock.settimeout.assert_called_once_with(15)
 
     def test_connect_transaction_mismatch_raises_and_closes_socket(self):
         info_hash = b"A" * 20
@@ -479,6 +607,21 @@ class IsDisallowedIpTests(unittest.TestCase):
 
     def test_public_ipv6_is_allowed(self):
         self.assertFalse(ts._is_disallowed_ip("2001:4860:4860::8888"))
+
+
+class ResolveAddressesTests(unittest.TestCase):
+    def test_returns_the_ip_of_every_getaddrinfo_entry(self):
+        infos = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+            (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800::1", 0, 0, 0)),
+        ]
+        with unittest.mock.patch.object(
+            ts.socket, "getaddrinfo", return_value=infos
+        ) as getaddrinfo:
+            addresses = ts._resolve_addresses("tracker.example.com")
+
+        self.assertEqual(addresses, ["93.184.216.34", "2606:2800::1"])
+        getaddrinfo.assert_called_once_with("tracker.example.com", None)
 
 
 class IsSafeScrapeHostTests(unittest.TestCase):
@@ -576,6 +719,7 @@ class ScrapeTorrentTests(unittest.TestCase):
             result = ts.scrape_torrent(path)
 
         mock_udp_scrape.assert_called_once()
+        self.assertEqual(mock_udp_scrape.call_args.kwargs["timeout"], 15)
         mock_get.assert_not_called()
         self.assertEqual(result["seeders"], 5)
         self.assertEqual(result["leechers"], 7)

@@ -182,6 +182,9 @@ UDP_TRACKER_PROTOCOL_ID = (
 UDP_ACTION_CONNECT = 0
 UDP_ACTION_SCRAPE = 2
 UDP_ACTION_ERROR = 3
+# Comfortably larger than any single-hash response (20 bytes) or error
+# message, so any value >= that size behaves identically.
+UDP_RECV_BUFFER_BYTES = 2048  # pragma: no mutate
 
 
 def parse_udp_tracker_url(announce_url):
@@ -267,7 +270,7 @@ def scrape_udp_tracker(host, port, info_hash, timeout=15):
 
         connect_transaction_id = _random_transaction_id()
         sock.sendto(build_udp_connect_request(connect_transaction_id), addr)
-        data, _ = sock.recvfrom(2048)
+        data, _ = sock.recvfrom(UDP_RECV_BUFFER_BYTES)
         connection_id = parse_udp_connect_response(data, connect_transaction_id)
 
         scrape_transaction_id = _random_transaction_id()
@@ -275,7 +278,7 @@ def scrape_udp_tracker(host, port, info_hash, timeout=15):
             build_udp_scrape_request(connection_id, scrape_transaction_id, info_hash),
             addr,
         )
-        data, _ = sock.recvfrom(2048)
+        data, _ = sock.recvfrom(UDP_RECV_BUFFER_BYTES)
         return parse_udp_scrape_response(data, scrape_transaction_id)
     finally:
         sock.close()
