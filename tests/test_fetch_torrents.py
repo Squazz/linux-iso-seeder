@@ -278,6 +278,10 @@ class ShouldFetchTorrentRatioKeyTests(unittest.TestCase):
     actually reports (which include the arch suffix and .iso extension),
     for all supported distros."""
 
+    def setUp(self):
+        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
+        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
+
     def test_finds_previous_version_and_honors_low_ratio_ubuntu(self):
         ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.5}
         self.assertFalse(
@@ -347,6 +351,10 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
     the ratio gate for exactly the versions cleanup already gave up on.
     removed_history (record_removal()'s output) is the fallback source."""
 
+    def setUp(self):
+        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
+        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
+
     def test_falls_back_to_removed_history_ratio_when_not_live(self):
         removed_history = {
             "ubuntu-23.10-desktop-amd64.iso": {
@@ -399,6 +407,23 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
             )
         )
 
+    def test_low_live_ratio_is_not_overridden_by_high_removed_history(self):
+        removed_history = {
+            "ubuntu-23.10-desktop-amd64.iso": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 1.5,
+            }
+        }
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.4}
+        self.assertFalse(
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios,
+                removed_history=removed_history,
+            )
+        )
+
     def test_removed_history_entry_without_ratio_is_ignored(self):
         # Legacy entries recorded before this field existed have no 'ratio'
         # key - must not crash, and must not count as a usable prior version.
@@ -438,6 +463,10 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
     for it - see distro_patterns), so should_fetch_torrent() instead gates
     fetching a new Devuan release on the ratio achieved by whichever Devuan
     release we currently hold, using the same 1.0 floor as other distros."""
+
+    def setUp(self):
+        # Pinned explicitly: SKIP_RATIO_CHECK=true would make every case True.
+        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
 
     def test_no_previous_devuan_release_fetches(self):
         self.assertTrue(ft.should_fetch_torrent("devuan_excalibur", ratios={}))
@@ -483,6 +512,131 @@ class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
                 "devuan_excalibur", ratios={}, removed_history=removed_history
             )
         )
+
+
+class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
+    """The 1.0 floor is inclusive, only strictly older versions count as the
+    "previous" one, and the branches that bypass the gate entirely."""
+
+    def setUp(self):
+        helpers.use_isolated_env(self, SKIP_RATIO_CHECK="false")
+
+    def test_previous_ratio_exactly_at_floor_allows_fetch(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 1.0}
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_previous_ratio_just_below_floor_blocks_fetch(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.999}
+        self.assertFalse(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_devuan_previous_ratio_exactly_at_floor_allows_fetch(self):
+        self.assertTrue(
+            ft.should_fetch_torrent("devuan_excalibur", {"devuan_daedalus": 1.0})
+        )
+
+    def test_devuan_previous_ratio_just_below_floor_blocks_fetch(self):
+        self.assertFalse(
+            ft.should_fetch_torrent("devuan_excalibur", {"devuan_daedalus": 0.999})
+        )
+
+    def test_only_newer_versions_on_record_fetches(self):
+        # A newer release with a low ratio isn't a "previous" one, so there
+        # is nothing to gate on.
+        ratios = {"ubuntu-24.10-desktop-amd64.iso": 0.1}
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_same_version_on_record_is_not_its_own_predecessor(self):
+        ratios = {"ubuntu-24.04-desktop-amd64.iso": 0.1}
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_highest_older_version_decides_not_any_older_version(self):
+        ratios = {
+            "ubuntu-22.04-desktop-amd64.iso": 5.0,
+            "ubuntu-23.10-desktop-amd64.iso": 0.4,
+        }
+        self.assertFalse(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_other_architecture_ratio_is_not_consulted(self):
+        ratios = {"ubuntu-23.10-desktop-arm64.iso": 0.1}
+        self.assertTrue(
+            ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+        )
+
+    def test_devuan_ignores_non_devuan_ratios(self):
+        ratios = {"debian-12.4.0-amd64-DVD-1.iso": 5.0, "devuan_daedalus": 0.4}
+        self.assertFalse(ft.should_fetch_torrent("devuan_excalibur", ratios))
+
+    def test_devuan_removed_history_for_the_same_release_is_not_a_predecessor(self):
+        removed_history = {
+            "devuan_excalibur": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.1,
+            }
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent(
+                "devuan_excalibur", ratios={}, removed_history=removed_history
+            )
+        )
+
+    def test_devuan_live_ratio_beats_removed_history(self):
+        removed_history = {
+            "devuan_chimaera": {
+                "removed_date": "2026-01-01",
+                "reason": "stagnant",
+                "ratio": 0.1,
+            }
+        }
+        self.assertTrue(
+            ft.should_fetch_torrent(
+                "devuan_excalibur",
+                {"devuan_daedalus": 1.5},
+                removed_history=removed_history,
+            )
+        )
+
+    def test_skip_ratio_check_fetches_despite_low_previous_ratio(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.1}
+        with helpers.isolated_env(SKIP_RATIO_CHECK="TRUE"):
+            self.assertTrue(
+                ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+            )
+
+    def test_unknown_distro_fetches(self):
+        ratios = {"slackware-15.0-install-dvd.iso": 0.1}
+        self.assertTrue(
+            ft.should_fetch_torrent("slackware-15.1-install-dvd.iso", ratios)
+        )
+
+    def test_unparseable_name_of_known_distro_fetches_and_logs_error(self):
+        ratios = {"ubuntu-23.10-desktop-amd64.iso": 0.1}
+        with self.assertLogs(ft.logger, level="ERROR") as logs:
+            result = ft.should_fetch_torrent("ubuntu-noble-desktop-amd64.iso", ratios)
+
+        self.assertTrue(result)
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("ubuntu-noble-desktop-amd64.iso", logs.output[0])
+
+    def test_unparseable_stored_ratio_entry_is_skipped(self):
+        ratios = {
+            "ubuntu-mantic-desktop-amd64.iso": 0.1,
+            "ubuntu-23.10-desktop-amd64.iso": 1.5,
+        }
+        with self.assertLogs(ft.logger, level="WARNING"):
+            self.assertTrue(
+                ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
+            )
 
 
 class RatioLogSurvivesRestartTests(unittest.TestCase):
