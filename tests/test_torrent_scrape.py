@@ -185,7 +185,7 @@ class BuildScrapeRequestUrlTests(unittest.TestCase):
         self.assertIn("?x=1&info_hash=", url)
 
     def test_percent_encoding_roundtrips(self):
-        from urllib.parse import urlsplit, parse_qsl, unquote_to_bytes
+        from urllib.parse import unquote_to_bytes, urlsplit
 
         info_hash = bytes(range(20))
         url = ts.build_scrape_request_url("http://example.com/scrape", info_hash)
@@ -400,17 +400,16 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
             unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
             unittest.mock.patch.object(
                 ts.os, "urandom", return_value=b"\x00\x00\x00\x01"
-            ),
+            ),self.assertRaises(ts.UdpTrackerError)
         ):
-            with self.assertRaises(ts.UdpTrackerError):
-                ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
+            ts.scrape_udp_tracker("tracker.example.com", 1337, info_hash, timeout=5)
 
         fake_sock.close.assert_called_once()
 
     def test_socket_timeout_propagates(self):
         info_hash = b"A" * 20
         fake_sock = unittest.mock.Mock()
-        fake_sock.recvfrom.side_effect = socket.timeout("timed out")
+        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
 
         with unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock):
             with self.assertRaises(socket.timeout):

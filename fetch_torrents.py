@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-import os
-import re
 import json
-import requests
 import logging
 import logging.handlers
-import tempfile
-import time
+import os
+import re
 import shutil
 import socket
+import tempfile
+import time
 from datetime import date
+
+import requests
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
 

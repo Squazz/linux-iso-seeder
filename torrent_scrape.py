@@ -17,7 +17,7 @@ import ipaddress
 import os
 import socket
 import struct
-from urllib.parse import urlsplit, urlunsplit, quote_from_bytes
+from urllib.parse import quote_from_bytes, urlsplit, urlunsplit
 
 import requests
 
@@ -32,7 +32,6 @@ class UdpTrackerError(ValueError):
     action) - callers should catch it the same as any other scrape
     failure and move on to the next tracker."""
 
-    pass
 
 
 def bdecode(data, index=0):
