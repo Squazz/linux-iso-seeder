@@ -196,7 +196,14 @@ class WarnIfOpenWithoutAuthTests(unittest.TestCase):
             {"rpc-whitelist-enabled": True, "rpc-whitelist": "*"}
         )
 
-        self.assertIsNotNone(warning)
+        self.assertEqual(
+            warning,
+            "TRANSMISSION_RPC_WHITELIST is set but TRANSMISSION_RPC_USERNAME/"
+            "TRANSMISSION_RPC_PASSWORD are not - the web UI/RPC endpoint is "
+            "reachable from that whitelist with no login required, and "
+            "Transmission has no read-only RPC mode. Set both env vars to "
+            "require authentication.",
+        )
 
     def test_no_warning_when_auth_also_required(self):
         warning = ct.warn_if_open_without_auth(
@@ -229,32 +236,6 @@ class ApplyOverridesTests(unittest.TestCase):
         self.assertEqual(merged["peer-port"], 51413)
         self.assertEqual(merged["rpc-whitelist"], "10.0.0.*")
         self.assertTrue(merged["rpc-whitelist-enabled"])
-
-
-class SettingsFilePersistenceTests(unittest.TestCase):
-    def test_round_trips_through_disk(self):
-        tmp_dir = helpers.make_temp_dir(self, "configure_transmission_")
-        path = os.path.join(tmp_dir, "settings.json")
-        settings = {"rpc-whitelist": "10.0.0.*"}
-
-        ct.save_settings(path, settings)
-        loaded = ct.load_settings(path)
-
-        self.assertEqual(loaded, settings)
-
-    def test_missing_file_returns_empty_settings(self):
-        tmp_dir = helpers.make_temp_dir(self, "configure_transmission_")
-        path = os.path.join(tmp_dir, "does-not-exist.json")
-
-        self.assertEqual(ct.load_settings(path), {})
-
-    def test_corrupt_file_returns_empty_settings_instead_of_raising(self):
-        tmp_dir = helpers.make_temp_dir(self, "configure_transmission_")
-        path = os.path.join(tmp_dir, "settings.json")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{not valid json")
-
-        self.assertEqual(ct.load_settings(path), {})
 
 
 class MainTests(unittest.TestCase):

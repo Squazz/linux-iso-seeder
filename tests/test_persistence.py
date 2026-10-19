@@ -1,14 +1,20 @@
-"""Tests for the JSON state files the daily run keeps between runs.
+"""Tests for the JSON state files kept between runs: fetch_torrents' ratio
+history, removed-torrent history and old-release check state, and
+configure_transmission's settings.json. All four share one contract
+(JsonStoreContract), so a store can't quietly drift from the others.
 
 Run with: python -m unittest discover -s tests
 """
 
+import contextlib
+import io
 import os
 import unittest
-import unittest.mock
+from typing import ClassVar
 
 import helpers
 
+import configure_transmission as ct
 import fetch_torrents as ft
 
 
@@ -16,87 +22,114 @@ def setUpModule():
     helpers.isolate_module()
 
 
-class RatioHistoryPersistenceTests(unittest.TestCase):
-    """load_ratio_history()/save_ratio_history() must round-trip cleanly and
-    tolerate a missing or corrupt file rather than crashing a run."""
+class JsonStoreContract:
+    """Mixed into one TestCase per store. A store must round-trip, treat a
+    missing file as empty, and treat a corrupt one as empty *and say so*
+    (rather than crash the run), and saving must leave only the file."""
+
+    filename = ""
+    sample: ClassVar[dict] = {}
+    corrupt_report = ""  # start of what a corrupt file makes the store report
+
+    def load(self, path):
+        raise NotImplementedError
+
+    def save(self, path, data):
+        raise NotImplementedError
+
+    def load_reporting(self, path):
+        """load(path), plus whatever it reported, as text."""
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            data = self.load(path)
+        return data, "\n".join(r.getMessage() for r in logs.records)
+
+    def setUp(self):
+        self.dir = helpers.make_temp_dir(self, "persistence_")
+        self.path = os.path.join(self.dir, self.filename)
 
     def test_round_trips_through_disk(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
-        path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
-        history = {
-            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]
-        }
+        self.save(self.path, self.sample)
 
-        ft.save_ratio_history(path, history)
-        loaded = ft.load_ratio_history(path)
+        self.assertEqual(self.load(self.path), self.sample)
 
-        self.assertEqual(loaded, history)
+    def test_missing_file_loads_as_empty(self):
+        self.assertEqual(self.load(os.path.join(self.dir, "does-not-exist.json")), {})
 
-    def test_missing_file_returns_empty_history(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
-        path = os.path.join(tmp_dir, "does-not-exist.json")
-
-        self.assertEqual(ft.load_ratio_history(path), {})
-
-    def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_ratio_history_")
-        path = os.path.join(tmp_dir, "fetch_torrents_ratio_history.json")
-        with open(path, "w", encoding="utf-8") as f:
+    def test_corrupt_file_loads_as_empty_and_says_so(self):
+        with open(self.path, "w", encoding="utf-8") as f:
             f.write("{not valid json")
 
-        self.assertEqual(ft.load_ratio_history(path), {})
+        data, report = self.load_reporting(self.path)
+
+        self.assertEqual(data, {})
+        self.assertTrue(
+            report.startswith(f"{self.corrupt_report} {self.path} ("), report
+        )
+        self.assertIn("starting fresh", report)
+
+    def test_saving_again_replaces_the_file_and_leaves_nothing_else(self):
+        self.save(self.path, {"stale": 1})
+        self.save(self.path, self.sample)
+
+        self.assertEqual(self.load(self.path), self.sample)
+        self.assertEqual(os.listdir(self.dir), [self.filename])
 
 
-class OldReleaseCheckStatePersistenceTests(unittest.TestCase):
-    def test_round_trips_through_disk(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
-        path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
-        state = {"x": {"last_checked": "2026-01-08", "leechers": 0}}
+class RatioHistoryPersistenceTests(JsonStoreContract, unittest.TestCase):
+    filename = "fetch_torrents_ratio_history.json"
+    sample: ClassVar[dict] = {
+        "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]
+    }
+    corrupt_report = "Could not read ratio history at"
 
-        ft.save_old_release_check_state(path, state)
-        loaded = ft.load_old_release_check_state(path)
+    def load(self, path):
+        return ft.load_ratio_history(path)
 
-        self.assertEqual(loaded, state)
-
-    def test_missing_file_returns_empty_state(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
-        path = os.path.join(tmp_dir, "does-not-exist.json")
-
-        self.assertEqual(ft.load_old_release_check_state(path), {})
-
-    def test_corrupt_file_returns_empty_state_instead_of_raising(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_old_release_state_")
-        path = os.path.join(tmp_dir, "fetch_torrents_old_release_check_state.json")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{not valid json")
-
-        self.assertEqual(ft.load_old_release_check_state(path), {})
+    def save(self, path, data):
+        ft.save_ratio_history(path, data)
 
 
-class RemovedHistoryPersistenceTests(unittest.TestCase):
-    def test_round_trips_through_disk(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
-        path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
-        history = {"x": {"removed_date": "2026-02-01", "reason": "stagnant"}}
+class RemovedHistoryPersistenceTests(JsonStoreContract, unittest.TestCase):
+    filename = "fetch_torrents_removed_history.json"
+    sample: ClassVar[dict] = {"x": {"removed_date": "2026-02-01", "reason": "stagnant"}}
+    corrupt_report = "Could not read removed-torrent history at"
 
-        ft.save_removed_history(path, history)
-        loaded = ft.load_removed_history(path)
+    def load(self, path):
+        return ft.load_removed_history(path)
 
-        self.assertEqual(loaded, history)
+    def save(self, path, data):
+        ft.save_removed_history(path, data)
 
-    def test_missing_file_returns_empty_history(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
-        path = os.path.join(tmp_dir, "does-not-exist.json")
 
-        self.assertEqual(ft.load_removed_history(path), {})
+class OldReleaseCheckStatePersistenceTests(JsonStoreContract, unittest.TestCase):
+    filename = "fetch_torrents_old_release_check_state.json"
+    sample: ClassVar[dict] = {"x": {"last_checked": "2026-01-08", "leechers": 0}}
+    corrupt_report = "Could not read old-release check state at"
 
-    def test_corrupt_file_returns_empty_history_instead_of_raising(self):
-        tmp_dir = helpers.make_temp_dir(self, "fetch_torrents_removed_history_")
-        path = os.path.join(tmp_dir, "fetch_torrents_removed_history.json")
-        with open(path, "w", encoding="utf-8") as f:
-            f.write("{not valid json")
+    def load(self, path):
+        return ft.load_old_release_check_state(path)
 
-        self.assertEqual(ft.load_removed_history(path), {})
+    def save(self, path, data):
+        ft.save_old_release_check_state(path, data)
+
+
+class SettingsFilePersistenceTests(JsonStoreContract, unittest.TestCase):
+    filename = "settings.json"
+    sample: ClassVar[dict] = {"rpc-whitelist": "10.0.0.*", "peer-limit-global": 200}
+    corrupt_report = "configure_transmission: could not read"
+
+    def load(self, path):
+        return ct.load_settings(path)
+
+    def save(self, path, data):
+        ct.save_settings(path, data)
+
+    def load_reporting(self, path):
+        # Runs before logging exists in the container, so it reports on stderr.
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            data = self.load(path)
+        return data, stderr.getvalue().strip()
 
 
 if __name__ == "__main__":

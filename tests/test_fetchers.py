@@ -34,9 +34,30 @@ class FetchUbuntuLtsNamingTests(unittest.TestCase):
         with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_ubuntu_lts()
 
-        self.assertTrue(results)
-        self.assertIn("ubuntu-24.04-desktop-amd64.iso", results)
-        self.assertIn("ubuntu-24.04-live-server-amd64.iso", results)
+        self.assertEqual(
+            results,
+            {
+                "ubuntu-24.04-desktop-amd64.iso": (
+                    "https://releases.ubuntu.com/noble/ubuntu-24.04-desktop-amd64.iso.torrent"
+                ),
+                "ubuntu-24.04-live-server-amd64.iso": (
+                    "https://releases.ubuntu.com/noble/"
+                    "ubuntu-24.04-live-server-amd64.iso.torrent"
+                ),
+                "lubuntu-24.04-desktop-amd64.iso": (
+                    "https://cdimage.ubuntu.com/lubuntu/releases/noble/release/"
+                    "lubuntu-24.04-desktop-amd64.iso.torrent"
+                ),
+                "xubuntu-24.04-desktop-amd64.iso": (
+                    "https://torrent.ubuntu.com/xubuntu/releases/noble/release/desktop/"
+                    "xubuntu-24.04-desktop-amd64.iso.torrent"
+                ),
+                "xubuntu-24.04-minimal-amd64.iso": (
+                    "https://torrent.ubuntu.com/xubuntu/releases/noble/release/minimal/"
+                    "xubuntu-24.04-minimal-amd64.iso.torrent"
+                ),
+            },
+        )
 
 
 class FetchDebianStableNamingTests(unittest.TestCase):
@@ -198,9 +219,15 @@ class FetchKaliOldVersionsTests(unittest.TestCase):
         with unittest.mock.patch.object(ft.requests, "get", return_value=response):
             results = ft.fetch_kali_old_versions()
 
-        self.assertTrue(results)
-        self.assertTrue(any("2026.1" in name for name in results))
-        self.assertFalse(any("2026.2" in name for name in results))
+        # The URL templates themselves are pinned in tests/test_scrapers.py;
+        # what matters here is which version they're built for.
+        self.assertEqual(
+            results,
+            {
+                os.path.basename(url).removesuffix(".torrent"): url
+                for url in ft._kali_torrent_urls("2026.1")
+            },
+        )
 
     def test_single_version_folder_returns_nothing(self):
         html = '<html><body><a href="current/">current</a><a href="kali-2026.2/">kali-2026.2</a></body></html>'

@@ -274,7 +274,7 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
                 ratios={},
                 removed_history=removed_history,
             )
-        self.assertTrue(result)
+        self.assertIs(result, True)
 
     def test_skipped_removed_history_entry_does_not_hide_later_ones(self):
         removed_history = {
@@ -473,7 +473,7 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
         with self.assertLogs(ft.logger, level="ERROR") as logs:
             result = ft.should_fetch_torrent("ubuntu-noble-desktop-amd64.iso", ratios)
 
-        self.assertTrue(result)
+        self.assertIs(result, True)
         self.assertEqual(len(logs.records), 1)
         self.assertIn("ubuntu-noble-desktop-amd64.iso", logs.output[0])
 

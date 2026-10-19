@@ -241,7 +241,19 @@ class PlanCleanupTests(unittest.TestCase):
             to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents)
 
         self.assertEqual((to_remove, to_keep_low_ratio), ([], []))
-        self.assertEqual(len(logs.records), 2)
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                (
+                    "Skipping ubuntu-noble-desktop-amd64.iso during cleanup due to "
+                    "parse error: Invalid version string 'noble'"
+                ),
+                (
+                    "Skipping ubuntu-mantic-desktop-amd64.iso during cleanup due to "
+                    "parse error: Invalid version string 'mantic'"
+                ),
+            ],
+        )
 
 
 class PlanCleanupDevuanGroupingTests(unittest.TestCase):

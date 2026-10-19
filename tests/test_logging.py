@@ -5,6 +5,7 @@ next run's ratio gate.
 Run with: python -m unittest discover -s tests
 """
 
+import json
 import logging
 import logging.handlers
 import os
@@ -158,16 +159,17 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
     credentials configure_transmission.py configured the daemon with when
     the caller doesn't explicitly override auth."""
 
-    class FakeSessionIdResponse:
-        def __init__(self):
-            self.headers = {"X-Transmission-Session-Id": "abc"}
+    @staticmethod
+    def session_id_response():
+        return helpers.fake_response(
+            status=409, headers={"X-Transmission-Session-Id": "abc"}
+        )
 
-    class FakeTorrentGetResponse:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"arguments": {"torrents": []}}
+    @staticmethod
+    def torrent_get_response(torrents=()):
+        return helpers.fake_response(
+            json.dumps({"arguments": {"torrents": list(torrents)}})
+        )
 
     def test_requests_follow_the_transmission_rpc_protocol(self):
         # The pinned transmission_rpc's own tables of methods and torrent-get
@@ -175,7 +177,7 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         with unittest.mock.patch.object(
             ft.requests,
             "post",
-            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+            side_effect=[self.session_id_response(), self.torrent_get_response()],
         ) as mock_post:
             ft.log_seed_ratios_via_http(auth=("alice", "hunter2"))
 
@@ -207,21 +209,18 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         )
 
     def test_logs_ratios_highest_first_with_none_as_zero(self):
-        response = self.FakeTorrentGetResponse()
-        response.json = lambda: {
-            "arguments": {
-                "torrents": [
-                    {"name": "low.iso", "uploadRatio": 0.5},
-                    {"name": "unset.iso", "uploadRatio": None},
-                    {"name": "high.iso", "uploadRatio": 2.25},
-                ]
-            }
-        }
+        response = self.torrent_get_response(
+            [
+                {"name": "low.iso", "uploadRatio": 0.5},
+                {"name": "unset.iso", "uploadRatio": None},
+                {"name": "high.iso", "uploadRatio": 2.25},
+            ]
+        )
         with (
             unittest.mock.patch.object(
                 ft.requests,
                 "post",
-                side_effect=[self.FakeSessionIdResponse(), response],
+                side_effect=[self.session_id_response(), response],
             ),
             self.assertLogs(ft.logger, level="INFO") as logs,
         ):
@@ -245,12 +244,12 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         with unittest.mock.patch.object(
             ft.requests,
             "post",
-            side_effect=[self.FakeSessionIdResponse(), self.FakeTorrentGetResponse()],
+            side_effect=[self.session_id_response(), self.torrent_get_response()],
         ) as mock_post:
             ft.log_seed_ratios_via_http()
 
         first_call_kwargs = mock_post.call_args_list[0].kwargs
-        self.assertIn("timeout", first_call_kwargs)
+        self.assertEqual(first_call_kwargs, {"timeout": 15})
 
     def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
         with (
@@ -265,8 +264,8 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 ft.requests,
                 "post",
                 side_effect=[
-                    self.FakeSessionIdResponse(),
-                    self.FakeTorrentGetResponse(),
+                    self.session_id_response(),
+                    self.torrent_get_response(),
                 ],
             ) as mock_post,
         ):
@@ -282,8 +281,8 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 ft.requests,
                 "post",
                 side_effect=[
-                    self.FakeSessionIdResponse(),
-                    self.FakeTorrentGetResponse(),
+                    self.session_id_response(),
+                    self.torrent_get_response(),
                 ],
             ) as mock_post,
         ):
@@ -305,8 +304,8 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 ft.requests,
                 "post",
                 side_effect=[
-                    self.FakeSessionIdResponse(),
-                    self.FakeTorrentGetResponse(),
+                    self.session_id_response(),
+                    self.torrent_get_response(),
                 ],
             ) as mock_post,
         ):
