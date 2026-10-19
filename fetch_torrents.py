@@ -1039,8 +1039,19 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
         auth = (username, password) if username and password else None
 
     logger.info("Querying Transmission RPC for seed ratios...")
-    r = requests.post(rpc_url, timeout=15)
-    headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
+    r = requests.post(rpc_url, auth=auth, timeout=15)
+
+    if r.status_code != 409:
+        r.raise_for_status()
+
+    session_id = r.headers.get("X-Transmission-Session-Id")
+    if not session_id:
+        raise RuntimeError(
+            f"Transmission RPC did not return X-Transmission-Session-Id "
+            f"(HTTP {r.status_code})"
+        )
+
+    headers = {"X-Transmission-Session-Id": session_id}
     payload = {
         "method": "torrent-get",
         "arguments": {"fields": ["name", "uploadRatio"]}
