@@ -13,29 +13,36 @@ so search for the function name if they have drifted.
 
 ## Targets ("a better place")
 
-Re-measured on 2026-10-19 at 209292c after round 2 (task 38): 493 tests
-green. Mutation scores are honest: string-literal-only survivors (log and
-error text) are excluded, and a timeout counts as a kill. They come from
-full mutmut 2.5.1 runs over all three modules, with the whole suite as the
-runner. The task 27 numbers are kept for comparison.
+Re-measured on 2026-10-21 at 6d38346 after round 3 (task 50): 522 tests
+green (515 at 6d38346 plus the 7 task 50 added). A timeout counts as a
+kill. The scores come from full mutmut 2.5.1 runs over all three modules,
+with the whole suite as the runner. The task 27 and task 38 numbers are
+kept for comparison.
 
 Since task 41 only literals inside log calls and exception messages are
 excluded. Any other literal survivor (a URL scheme, a separator, a codec
 error handler, a default value) is triaged like a behavioural one: test it,
 simplify the code, or accept it below as an equivalent with a reason. The
-numbers here used the older, wider rule; task 50 re-measures with this one.
+task 27 and 38 columns used the older, wider rule (every string-literal
+survivor excluded), so the round-3 scores are stricter, not worse: every
+survivor they count is an accepted equivalent.
 
-| Metric | Baseline (84761d3) | Target | Task 27 | Now (209292c) |
-| --- | --- | --- | --- | --- |
-| Mutation score, critical `fetch_torrents.py` functions¹ | 70.9% | ≥ 90% | 100% (258/258) | **100%** |
-| Mutation score, critical `torrent_scrape.py` functions | 82.6% | ≥ 90% | 100% (247/247) | **100%** |
-| Mutation score, all of `fetch_torrents.py` | — | — | 88.6% (915/1033) | **99.3%** (1040/1047) |
-| Mutation score, all of `torrent_scrape.py` | — | — | — | **99.6%** (248/249) |
-| Mutation score, `configure_transmission.py` | 89.8% | — | 96.7% (87/90) | **96.8%** (90/93) |
-| Branch coverage, total | — | — | 96.8% | **99.1%** (CI `fail_under = 97`) |
-| Branch coverage, `fetch_torrents.py` | 75% | ≥ 90% | 96% | **99.2%** |
-| CI gates | unittest only | unittest + ruff + mypy + container smoke | met | **met**, plus ruff `S`, shellcheck, hadolint, a smoke check that the daily fetch run starts, and CI Python and deps pinned to Alpine's |
-| Scraper drift detection | none | recorded pages in the merge check + a scheduled live job | met | **met**; `scripts/live_check.py` itself is now tested offline |
+`fetch_torrents.py` was measured with task 50's tests and its two
+simplifications on top of 6d38346. The other two modules didn't change, so
+their runs are at 6d38346.
+
+| Metric | Baseline (84761d3) | Target | Task 27 | Task 38 (209292c) | Now (6d38346, 2026-10-21) |
+| --- | --- | --- | --- | --- | --- |
+| Mutation score, critical `fetch_torrents.py` functions¹ | 70.9% | ≥ 90% | 100% (258/258) | 100% | **99.2%** (259/261) |
+| Mutation score, critical `torrent_scrape.py` functions | 82.6% | ≥ 90% | 100% (247/247) | 100% | **99.2%** (252/254, the whole module) |
+| Mutation score, all of `fetch_torrents.py` | — | — | 88.6% (915/1033) | 99.3% (1040/1047) | **99.0%** (1063/1074) |
+| Mutation score, all of `torrent_scrape.py` | — | — | — | 99.6% (248/249) | **99.2%** (252/254) |
+| Mutation score, `configure_transmission.py` | 89.8% | — | 96.7% (87/90) | 96.8% (90/93) | **91.8%** (90/98) |
+| Branch coverage, total | — | — | 96.8% | 99.1% (CI `fail_under = 97`) | **100%** (CI `fail_under = 99`) |
+| Branch coverage, `fetch_torrents.py` | 75% | ≥ 90% | 96% | 99.2% | **100%** |
+| Tests / Farley Score | 229 / 8.5 | — | 383 / 8.41 | 493 / 8.33 (at 01b77ce) | **522** / **8.40** (515 tests, at 6d38346) |
+| CI gates | unittest only | unittest + ruff + mypy + container smoke | met | met, plus ruff `S`, shellcheck, hadolint, a smoke check that the daily fetch run starts, and CI Python and deps pinned to Alpine's | **met**, plus actionlint; the pushed image is the tested one |
+| Scraper drift detection | none | recorded pages in the merge check + a scheduled live job | met | met; `scripts/live_check.py` itself is tested offline | **met**; the drift jobs' Python is pinned |
 
 ¹ The ratio gate, the cleanup planners and the parsers they rely on:
 `should_fetch_torrent`, `_should_fetch_devuan`, `parse_version_type`,
@@ -44,19 +51,33 @@ numbers here used the older, wider rule; task 50 re-measures with this one.
 `update_ratio_history`, `plan_disk_pressure_cleanup`, `has_unmet_demand`,
 `should_recheck_old_release`, `_safe_watch_path`, `filter_low_demand`.
 
-Every remaining behavioural survivor is an accepted equivalent (listed under
+Every survivor counted above is an accepted equivalent (listed under
 "Accepted equivalent mutants" below):
-- `fetch_torrents.py` (7): `logger.propagate = None`, the two
+- `fetch_torrents.py` (11): `logger.propagate = None`, the two
   `.get("seeders", 0)` defaults, the three `getattr(torrent, "ratio", 0.0)`
-  defaults, and `break` → `continue` in `enforce_disk_usage_limit`.
-- `torrent_scrape.py` (1): `usedforsecurity=False` → `True` on the info-hash
-  SHA-1, which only differs on a FIPS-restricted OpenSSL build.
-- `configure_transmission.py` (3): `save_settings`' `indent` and
-  `sort_keys`, plus the `__main__` guard on the last line, which mutmut
-  leaves untested.
+  defaults, `break` → `continue` in `enforce_disk_usage_limit`, and (new
+  under the narrowed rule) the `""` defaults in `parse_log_level` and
+  `parse_int` and the two halves of `_old_version_candidates`' Devuan group
+  key. The last two are the critical-set survivors.
+- `torrent_scrape.py` (2): `usedforsecurity=False` → `True` on the info-hash
+  SHA-1, which only differs on a FIPS-restricted OpenSSL build, and
+  `safe=""` → `safe="XXXX"` in `build_scrape_request_url`.
+- `configure_transmission.py` (8): `save_settings`' `indent` and
+  `sort_keys`, the five `""` defaults (task 41), and the `__main__` guard on
+  the last line, which mutmut leaves untested.
 
-Farley Score was not re-measured; it was 8.41 at 7080bbd. Rerun
-`/test-health` for a fresh report.
+The narrowed rule's re-measure (task 50) found 18 non-message literal
+survivors in `fetch_torrents.py`. 14 were real gaps, now tested: which
+fetcher and old-release discovery each distro is wired to, the field name
+each invalid numeric setting is reported and enforced under, no warning for
+an unset `FETCH_TORRENTS_DISTROS`, the `/logs` default and the logger's
+name. Two were removed by simplifying the code: the temp file's unused
+`.torrent` suffix and `enforce_disk_usage_limit`'s `download_path` default,
+which `run()` always overrides. The other four are the new equivalents
+above. The other two modules had no new survivors beyond message text.
+
+Farley Score is 8.40 across 515 tests at 6d38346 (from the `/test-health`
+re-run, `.dev-team-reports/test-health-2026-10-21-r3.md`, local).
 
 The survivor list is in a scratch run, not the repo: rerun `mutmut run` and
 `mutmut results` to see the current set. Run it with
@@ -157,10 +178,23 @@ and `_parse_bool`, and the `env.get(..., "")` defaults for
 `TRANSMISSION_PORT_FORWARDING`. `"XXXX"` is not a positive integer or
 `true`/`false`, so it is ignored exactly as `""` is.
 
+Task 50 added four `fetch_torrents.py` equivalents under the narrowed rule:
+- `env.get(env_var, "")` → `"XXXX"` in `parse_log_level` and `parse_int`:
+  `"XXXX"` is neither a level name nor an integer, so both fall back to the
+  default exactly as `""` does. (`parse_bool`'s and
+  `parse_supported_distros`' are not equivalent and are tested.)
+- `("devuan", "")` → `("XXdevuanXX", "")` or `("devuan", "XXXX")` as
+  `_old_version_candidates`' Devuan group key: the key only collects the
+  Devuan releases into one group and is never read back. Devuan torrents
+  skip the per-distro grouping, so no other group can share it.
+
 Task 36 removed three other equivalents by simplifying the code, so mutmut
 no longer generates them: Arch's `max(..., key=...)` became `max()`, Fedora's
 two parsers share one de-duplicating `_fedora_workstation_torrents()`, and the
-duplicated zero-size-disk guard moved into `_used_percent()`.
+duplicated zero-size-disk guard moved into `_used_percent()`. Task 50 removed
+two more: the old-release check's temp file lost its unused `.torrent`
+suffix, and `enforce_disk_usage_limit`'s `download_path` became a required
+keyword, since `run()` always passes it.
 
 Suggested order: 32 (a real bug), then 28, 30 and 33 (resilience and drift-job trust),
 then 37, then 36, then the clean-up tasks 29, 31, 34 and 35, and finally 38.
@@ -188,10 +222,23 @@ hides real gaps (tasks 40 and 41).
 | 47 | [Consolidate tests: oversized scenarios, conditional logic, HTTP fakes](47-test-consolidation.md) | P3 | NO_REFACTOR | 43 | done |
 | 48 | [CI leftovers: drift-job Python pin, actionlint](48-ci-leftovers.md) | P3 | CI | — | done |
 | 49 | [Offline tests for `record_fixtures.py` / `transmission_roundtrip.py`](49-offline-tests-for-fixture-scripts.md) | P3 | REFACTOR_REQUIRED | — | done |
-| 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49, 51 | open |
+| 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49, 51 | done |
 | 51 | [A failing old-release check must not abort the daily run](51-guard-old-release-step.md) | P2 (bug) | NO_REFACTOR | — | done |
 
 Task 51 came from a review of this branch's production changes, not from the test-health report.
+
+Task 50 recorded the new numbers under "Targets" above. It also added
+[docs/seeding-policy.md](../docs/seeding-policy.md), the business-readable
+seeding policy (Q2). Each rule there names the tests that pin it, and
+`tests/test_repo_hygiene.py` fails if a named test no longer exists. The
+`/test-health` re-run (`.dev-team-reports/test-health-2026-10-21-r3.md`,
+local) compared with r2 as follows:
+- Farley Score went from 8.33 to 8.40, and Exemplary tests from 40 to 82.
+- Branch coverage reached 100%, and every r2 CD-pipeline gap is closed.
+- Test-design findings fell from 38 to 28, with all five r2 errors fixed.
+- What's left is local hygiene: a missing `double-waiver` marker on the
+  `scrape_torrent` double in `tests/helpers.py`, and `test_record_fixtures`
+  patching `record` because `main()` has no `record=` seam.
 
 Suggested order: 39 (untested bits reach users), then 51 (a bad setting silently disables cleanup), then 40 and 41 (a hidden scrape gap
 and the rule that hid it), 42, 43 then 44 and 47, 45, 46, 49 and 48, and finally 50.

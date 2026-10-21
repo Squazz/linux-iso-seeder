@@ -61,6 +61,10 @@ by default:
 
 3. **Transmission-daemon runs continuously**, seeding all loaded torrents.
 
+When exactly an ISO is fetched, kept, removed or re-seeded is listed in
+[docs/seeding-policy.md](docs/seeding-policy.md), with the test that pins
+each rule.
+
 ---
 
 ## 📦 **Volumes**

@@ -399,6 +399,52 @@ class RunTests(RunTestCase):
         )
         self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
 
+    def test_invalid_stagnation_setting_skips_cleanup_and_continues(self):
+        self.world.hold_current_and_superseded_ubuntu()
+
+        for env_var in (
+            "CLEANUP_STAGNATION_WINDOW_DAYS",
+            "CLEANUP_STAGNATION_MIN_RATIO_DELTA",
+        ):
+            with self.subTest(env_var=env_var):
+                _summary, messages = self._run(
+                    FETCH_TORRENTS_DISTROS="arch", **{env_var: "-"}
+                )
+
+                self.assertNothingRemoved()
+                self.assertRegex(
+                    "\n".join(messages),
+                    f"(?m)^Could not clean up old versions: {env_var}: ",
+                )
+                self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
+
+    def test_default_fetchers_cover_every_distro_with_its_own_fetcher(self):
+        self.assertEqual(
+            dict(ft.DEFAULT_FETCHERS),
+            {
+                "ubuntu": ft.fetch_ubuntu_lts,
+                "debian": ft.fetch_debian_stable,
+                "kali": ft.fetch_kali_latest,
+                "arch": ft.fetch_arch_latest,
+                "mint": ft.fetch_linuxmint_cinnamon,
+                "fedora": ft.fetch_fedora_workstation,
+                "devuan": ft.fetch_devuan_latest,
+            },
+        )
+        self.assertEqual(
+            sorted(name for name, _fetch in ft.DEFAULT_FETCHERS),
+            sorted(ft.ALL_DISTROS),
+        )
+
+    def test_old_releases_are_discovered_for_kali_and_fedora(self):
+        self.assertEqual(
+            ft.OLD_RELEASE_DISCOVERY,
+            {
+                "kali": ft.fetch_kali_old_versions,
+                "fedora": ft.fetch_fedora_workstation_old_versions,
+            },
+        )
+
     def test_disk_usage_limit_runs_after_cleanup(self):
         self.world.hold_current_and_superseded_ubuntu(superseded_ratio=0.1)
         self.world.disk_used_percent = 99
@@ -780,22 +826,27 @@ class OldReleaseRunTests(RunTestCase):
     def test_invalid_old_release_setting_skips_the_check_and_continues(self):
         self.world.hold_current_and_superseded_ubuntu()
 
-        summary, messages = self._run(
-            FETCH_TORRENTS_DISTROS="arch",
-            FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
-            FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="weekly",
-            CLEANUP_KEEP_ONLY_LATEST_VERSION="true",
-        )
+        for env_var in (
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO",
+            "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS",
+        ):
+            with self.subTest(env_var=env_var):
+                summary, messages = self._run(
+                    FETCH_TORRENTS_DISTROS="arch",
+                    FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
+                    CLEANUP_KEEP_ONLY_LATEST_VERSION="true",
+                    **{env_var: "weekly"},
+                )
 
-        self.assertRegex(
-            "\n".join(messages),
-            r"(?m)^Could not check old releases: "
-            r"FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS: ",
-        )
-        self.assertRunCarriedOn(messages)
-        # Failed before producing counts: reported as "check not run".
-        self.assertEqual((summary.old_added, summary.old_skipped), (None, None))
-        self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
+                self.assertRegex(
+                    "\n".join(messages),
+                    f"(?m)^Could not check old releases: {env_var}: ",
+                )
+                self.assertRunCarriedOn(messages)
+                # Failed before producing counts: reported as "check not run".
+                self.assertEqual((summary.old_added, summary.old_skipped), (None, None))
+                self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
 
     def test_failing_to_save_the_check_state_still_reports_the_counts(self):
         self.world.hold_current_and_superseded_ubuntu()

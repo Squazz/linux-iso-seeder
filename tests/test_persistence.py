@@ -170,14 +170,14 @@ class StateFileLocationTests(unittest.TestCase):
             ),
         )
 
-    def _watch_dir_on_import(self, **env):
-        """ft.watch_dir as a fresh interpreter importing the module under
+    def _on_import(self, attribute, **env):
+        """ft.<attribute> as a fresh interpreter importing the module under
         `env` sees it (this process imported it long ago)."""
         script = (
             "import sys\n"
             f"sys.path.insert(0, {helpers.REPO_ROOT!r})\n"
             "import fetch_torrents as ft\n"
-            "print(ft.watch_dir)\n"
+            f"print(ft.{attribute})\n"
         )
         result = subprocess.run(
             [sys.executable, "-W", "ignore", "-c", script],
@@ -191,11 +191,19 @@ class StateFileLocationTests(unittest.TestCase):
         return result.stdout.rstrip("\n")
 
     def test_torrents_are_written_to_the_watch_volume_by_default(self):
-        self.assertEqual(self._watch_dir_on_import(), "/watch")
+        self.assertEqual(
+            self._on_import(
+                "watch_dir",
+            ),
+            "/watch",
+        )
+
+    def test_state_and_logs_go_to_the_logs_volume_by_default(self):
+        self.assertEqual(self._on_import("log_dir"), "/logs")
 
     def test_fetch_torrents_watch_dir_moves_the_watch_dir(self):
         self.assertEqual(
-            self._watch_dir_on_import(FETCH_TORRENTS_WATCH_DIR="/srv/torrents"),
+            self._on_import("watch_dir", FETCH_TORRENTS_WATCH_DIR="/srv/torrents"),
             "/srv/torrents",
         )
 

@@ -957,7 +957,7 @@ def evaluate_old_release_demand(
     try:
         # Closed before scraping: scrape_torrent() reopens it by name, which
         # Windows refuses while the file is still open.
-        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = tmp.name
             tmp.write(torrent_bytes)
         scrape_result = torrent_scrape.scrape_torrent(tmp_path, timeout=timeout)
@@ -1379,7 +1379,7 @@ def enforce_disk_usage_limit(
     *,
     today,
     disk_usage=shutil.disk_usage,
-    download_path="/downloads",
+    download_path,
 ):
     """Runs after the normal cleanup pass. Only checks disk usage at all
     when enabled (threshold_percent > 0), and only calls client_factory()

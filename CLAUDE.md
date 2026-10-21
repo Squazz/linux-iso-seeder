@@ -84,7 +84,8 @@ their network, output directory and clock are injected (polling loops take
 `clock=`/`sleep=`, faked with `helpers.FakeClock`).
 `test_helpers.py` tests the doubles in `tests/helpers.py` themselves;
 `test_repo_hygiene.py` checks the repository itself (shebang files are
-executable in git).
+executable in git, and every test `docs/seeding-policy.md` names exists, so
+rename a test there too when you rename it).
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from

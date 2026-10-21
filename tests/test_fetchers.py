@@ -84,6 +84,11 @@ class ParseSupportedDistrosTests(unittest.TestCase):
             result = ft.parse_supported_distros()
         self.assertEqual(result, DEFAULT_DISTROS)
 
+    def test_unset_or_blank_is_the_default_without_a_warning(self):
+        for env in ({}, {"FETCH_TORRENTS_DISTROS": "  "}):
+            with self.subTest(env=env), self.assertNoLogs(ft.logger):
+                self.assertEqual(ft.parse_supported_distros(env=env), DEFAULT_DISTROS)
+
     def test_explicit_opt_in_distros_are_honored(self):
         with unittest.mock.patch.dict(
             os.environ, {"FETCH_TORRENTS_DISTROS": "arch,devuan"}

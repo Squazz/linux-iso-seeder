@@ -174,6 +174,12 @@ class ResetLoggingTests(unittest.TestCase):
         self.assertEqual(ft.logger.handlers, list(handlers))
 
 
+class LoggerNameTests(unittest.TestCase):
+    def test_the_module_logs_under_the_fetch_torrents_name(self):
+        # So logging can be configured by name from outside the module.
+        self.assertIs(logging.getLogger("fetch_torrents"), ft.logger)
+
+
 class ParseLogLevelTests(unittest.TestCase):
     def test_values(self):
         for value, expected in (
