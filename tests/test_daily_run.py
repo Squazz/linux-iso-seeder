@@ -459,6 +459,24 @@ class RunTests(RunTestCase):
             self.world.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"]
         )
 
+    def test_failing_ratio_query_is_logged_and_the_run_carries_on(self):
+        self.world.rpc.error_status = 500
+        self.world.hold_current_and_superseded_ubuntu()
+
+        _summary, messages = self._run(
+            FETCH_TORRENTS_DISTROS="arch", CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
+        )
+
+        self.assertRegex(
+            "\n".join(messages),
+            r"(?m)^Could not query Transmission: 500 Server Error",
+        )
+        self.assertEqual([m for m in messages if m.startswith("[ratio]")], [])
+        self.assertEqual(
+            self.world.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"]
+        )
+        self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
+
     def test_seed_ratios_are_logged_for_the_next_run(self):
         self.world.transmission.torrents = [torrent("archlinux-2026.08.01", 1, 0.664)]
 

@@ -184,7 +184,7 @@ hides real gaps (tasks 40 and 41).
 | 43 | [Remove first-party doubling; drop the LOW_VALUE test](43-remove-first-party-doubling.md) | P2 | NO_REFACTOR | — | done |
 | 44 | [Make `log_seed_ratios_via_http`'s `auth` required](44-require-rpc-auth.md) | P3 | REFACTOR_REQUIRED | 43 | done |
 | 45 | [`scrape_torrent` seams for resolution and UDP scrape](45-scrape-torrent-seams.md) | P3 | REFACTOR_REQUIRED | 42 | done |
-| 46 | [The last untested error paths; raise the ratchet](46-remaining-error-paths.md) | P3 | NO_REFACTOR | — | open |
+| 46 | [The last untested error paths; raise the ratchet](46-remaining-error-paths.md) | P3 | NO_REFACTOR | — | done |
 | 47 | [Consolidate tests: oversized scenarios, conditional logic, HTTP fakes](47-test-consolidation.md) | P3 | NO_REFACTOR | 43 | done |
 | 48 | [CI leftovers: drift-job Python pin, actionlint](48-ci-leftovers.md) | P3 | CI | — | open |
 | 49 | [Offline tests for `record_fixtures.py` / `transmission_roundtrip.py`](49-offline-tests-for-fixture-scripts.md) | P3 | REFACTOR_REQUIRED | — | open |

@@ -7,6 +7,7 @@ download_torrent().
 Run with: python -m unittest discover -s tests
 """
 
+import errno
 import os
 import unittest
 import unittest.mock
@@ -301,6 +302,27 @@ class DownloadTorrentAtomicWriteTests(unittest.TestCase):
         with open(dest, "rb") as f:
             self.assertEqual(f.read(), b"d8:announce3:urle" * 64)
         self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
+
+    def test_failing_to_remove_the_partial_file_reports_the_write_error(self):
+        # The cleanup's own error must not mask why the write failed.
+        real_remove = os.remove
+
+        def remove(path):
+            if os.fspath(path).endswith(".part"):
+                raise PermissionError(errno.EACCES, "Permission denied", path)
+            real_remove(path)
+
+        with (
+            helpers.disk_full_open(ft),
+            unittest.mock.patch.object(ft.os, "remove", remove),
+            self.assertLogs(ft.logger, level="ERROR") as logs,
+        ):
+            status = self._download()
+
+        self.assertEqual(status, "failed")
+        self.assertEqual(len(logs.records), 1)
+        self.assertIn("No space left on device", logs.records[0].getMessage())
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f".{self.NAME}.torrent.part"])
 
     def test_partial_file_is_never_named_like_a_torrent(self):
         # Whatever exists mid-write must not match transmission's *.torrent

@@ -39,10 +39,10 @@ omit = ["tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Ratchet: about 2 points under the measured total (99.13% on 2026-10-19,
-# task 38), so coverage can only go up. Raise it as coverage improves; never
-# lower it to get a change through.
-fail_under = 97
+# Ratchet: about 1 point under the measured total (100.00% on 2026-10-21,
+# task 46, on Windows and on Linux with CI's Python), so coverage can only go
+# up. Raise it as coverage improves; never lower it to get a change through.
+fail_under = 99
 
 [tool.mutmut]
 # mutmut<3 (see requirements-dev.txt). It edits these files in place while

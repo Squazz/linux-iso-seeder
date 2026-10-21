@@ -688,6 +688,34 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
 
         self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
 
+    def test_unremovable_watch_file_is_reported_and_cleanup_carries_on(self):
+        # A directory under the .torrent file's name can't be os.remove()d.
+        old_path = os.path.join(
+            self.tmp_watch_dir, "ubuntu-23.10-desktop-amd64.iso.torrent"
+        )
+        os.mkdir(old_path)
+        transmission = self._transmission()
+
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            ft.cleanup_old_versions(
+                transmission, today=date(2026, 8, 1), skip_ratio_check=True
+            )
+
+        self.assertEqual(transmission.names, ["ubuntu-24.04-desktop-amd64.iso"])
+        self.assertIn(
+            "ubuntu-23.10-desktop-amd64.iso",
+            ft.load_removed_history(ft.removed_history_file),
+        )
+        self.assertTrue(os.path.isdir(old_path))
+        self.assertEqual(
+            [
+                r.getMessage().split(": ")[0]
+                for r in logs.records
+                if r.getMessage().startswith("Could not remove")
+            ],
+            ["Could not remove watch-folder file for ubuntu-23.10-desktop-amd64.iso"],
+        )
+
     def test_cleanup_old_versions_keeps_versions_below_min_ratio(self):
         transmission = helpers.FakeTransmission(
             [

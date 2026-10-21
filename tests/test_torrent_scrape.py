@@ -112,6 +112,10 @@ class BdecodeBencodeTests(unittest.TestCase):
         with self.assertRaisesRegex(ts.BencodeError, "declares 10 bytes"):
             ts.bdecode(b"d4:info10:shorte")
 
+    def test_bdecode_dict_with_a_non_string_key_raises(self):
+        with self.assertRaisesRegex(ts.BencodeError, "Dict keys must be byte strings"):
+            ts.bdecode(b"di1e3:mooe")
+
     def test_bdecode_string_ending_exactly_at_end_of_data_is_accepted(self):
         self.assertEqual(ts.bdecode(b"4:spam"), (b"spam", 6))
 
@@ -207,6 +211,25 @@ class GetAnnounceUrlsTests(unittest.TestCase):
                 "http://a.example.com/announce",
                 "http://b.example.com/announce",
             ],
+        )
+
+    def test_announce_list_alone_is_de_duplicated_in_tier_order(self):
+        torrent_bytes = (
+            b"d"
+            + bstr("announce-list")
+            + b"ll"
+            + bstr("http://a.example.com/announce")
+            + bstr("http://b.example.com/announce")
+            + b"el"
+            + bstr("http://a.example.com/announce")
+            + b"ee"
+            + bstr("info")
+            + b"de"
+            + b"e"
+        )
+        self.assertEqual(
+            ts.get_announce_urls(torrent_bytes),
+            ["http://a.example.com/announce", "http://b.example.com/announce"],
         )
 
     def test_falls_back_to_bare_announce(self):

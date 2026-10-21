@@ -228,7 +228,9 @@ class FakeTransmissionRpc:
     refused with a 409 carrying that id. A torrent-get with it records its
     auth in `auths` and lists `transmission`'s torrents, with just the
     requested fields. A method or field the pinned transmission_rpc doesn't
-    know raises ValueError. `calls` records every post, as mock.call()s."""
+    know raises ValueError. `calls` records every post, as mock.call()s.
+    Set `error_status` (e.g. 500) to fail every request past the handshake
+    with that status."""
 
     URL = "http://localhost:9091/transmission/rpc"
     SESSION_ID = "sid"
@@ -237,6 +239,7 @@ class FakeTransmissionRpc:
         self.transmission = transmission
         self.calls = []
         self.auths = []
+        self.error_status = None
 
     def post(self, url, **kwargs):
         self.calls.append(unittest.mock.call(url, **kwargs))
@@ -249,6 +252,8 @@ class FakeTransmissionRpc:
                 url=url,
                 headers={"X-Transmission-Session-Id": self.SESSION_ID},
             )
+        if self.error_status is not None:
+            return fake_response(b"error", status=self.error_status, url=url)
         payload = kwargs.get("json") or {}
         method = payload.get("method")
         RpcMethod = transmission_rpc.constants.RpcMethod

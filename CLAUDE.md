@@ -54,7 +54,8 @@ Which distros have old-release discovery is injected the same way
 so tests pass a mapping instead of patching `OLD_RELEASE_DISCOVERY`.
 Env vars are read once by `load_config(env)`. Transmission's HTTP RPC (the
 ratio log) is faked with `helpers.FakeTransmissionRpc` as `requests.post`:
-409 plus session id first, like the daemon, recording each call's auth.
+409 plus session id first, like the daemon, recording each call's auth
+(its `error_status` fails every request past that handshake).
 The file locations are module globals read at import
 (`FETCH_TORRENTS_LOG_DIR`, `FETCH_TORRENTS_WATCH_DIR`); in-process tests
 point them at temp dirs with `helpers.use_watch_dir(self)` and

@@ -69,6 +69,19 @@ class JsonStoreContract:
         )
         self.assertIn("starting fresh", report)
 
+    def test_unreadable_file_loads_as_empty_and_says_so(self):
+        # A directory in the file's place: open() fails with an OSError
+        # (IsADirectoryError on Linux, PermissionError on Windows).
+        os.mkdir(self.path)
+
+        data, report = self.load_reporting(self.path)
+
+        self.assertEqual(data, {})
+        self.assertTrue(
+            report.startswith(f"{self.corrupt_report} {self.path} ("), report
+        )
+        self.assertIn("starting fresh", report)
+
     def test_saving_again_replaces_the_file_and_leaves_nothing_else(self):
         self.save(self.path, {"stale": 1})
         self.save(self.path, self.sample)

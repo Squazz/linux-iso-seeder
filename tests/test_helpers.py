@@ -193,6 +193,15 @@ class FakeTransmissionRpcTests(unittest.TestCase):
             ):
                 self.rpc.post(RPC_URL, json=payload, headers=headers, timeout=15)
 
+    def test_error_status_fails_requests_past_the_handshake(self):
+        self.rpc.error_status = 500
+        headers = self._session_headers()
+
+        response = self.rpc.post(RPC_URL, json=TORRENT_GET, headers=headers, timeout=15)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(self.rpc.auths, [])
+
     def test_other_urls_are_not_found(self):
         response = self.rpc.post("http://localhost:9091/rpc", timeout=15)
 

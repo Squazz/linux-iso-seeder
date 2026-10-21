@@ -283,6 +283,40 @@ class ShouldFetchTorrentRemovedHistoryFallbackTests(unittest.TestCase):
             )
         )
 
+    def test_removed_history_for_another_architecture_is_not_consulted(self):
+        removed_history = helpers.removed("ubuntu-23.10-desktop-arm64.iso", 0.1)
+        self.assertTrue(
+            ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
+        )
+
+    def test_unparseable_removed_history_entry_is_skipped_with_a_warning(self):
+        removed_history = {
+            **helpers.removed("ubuntu-mantic-desktop-amd64.iso", 0.1),
+            **helpers.removed("ubuntu-23.10-desktop-amd64.iso", 1.5),
+        }
+        with self.assertLogs(ft.logger, level="WARNING") as logs:
+            result = ft.should_fetch_torrent(
+                "ubuntu-24.04-desktop-amd64.iso",
+                ratios={},
+                removed_history=removed_history,
+            )
+
+        self.assertIs(result, True)
+        self.assertEqual(len(logs.records), 1)
+        self.assertTrue(
+            logs.records[0]
+            .getMessage()
+            .startswith(
+                "Skipping removed-history ratio entry "
+                "ubuntu-mantic-desktop-amd64.iso due to parse error: "
+            ),
+            logs.records[0].getMessage(),
+        )
+
 
 class ShouldFetchTorrentDevuanRatioGateTests(unittest.TestCase):
     """Devuan has no per-name version to compare (get_distro() returns None
@@ -378,6 +412,19 @@ class ShouldFetchTorrentBoundaryTests(unittest.TestCase):
         self.assertTrue(
             ft.should_fetch_torrent("ubuntu-24.04-desktop-amd64.iso", ratios)
         )
+
+    def test_other_distros_ratios_are_passed_over_silently(self):
+        # Not even parsed: they'd never parse as this distro's names, and
+        # warning about every one of them each run would be noise.
+        ratios = {
+            "debian-12.4.0-amd64-DVD-1.iso": 0.1,
+            "slackware-15.0-install-dvd.iso": 0.1,
+            "archlinux-2026.08.01-x86_64.iso": 1.5,
+        }
+        with self.assertNoLogs(ft.logger, level="WARNING"):
+            result = ft.should_fetch_torrent("archlinux-2026.09.01-x86_64.iso", ratios)
+
+        self.assertIs(result, True)
 
     def test_devuan_ignores_non_devuan_ratios(self):
         ratios = {"debian-12.4.0-amd64-DVD-1.iso": 5.0, "devuan_daedalus": 0.4}
