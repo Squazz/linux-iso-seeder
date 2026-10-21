@@ -310,16 +310,17 @@ def _resolve_addresses(hostname):
     return [info[4][0] for info in socket.getaddrinfo(hostname, None)]
 
 
-def _is_safe_scrape_host(hostname):
+def _is_safe_scrape_host(hostname, resolve):
     """False (fail closed) if hostname is missing, fails to resolve, or
     resolves to any disallowed address. Guards against a compromised or
     malicious .torrent's announce URL pointing the scrape request at an
     internal service (e.g. cloud metadata, this container's own Transmission
-    RPC) instead of a real tracker."""
+    RPC) instead of a real tracker. resolve(hostname) is the DNS lookup
+    (scrape_torrent passes its own)."""
     if not hostname:
         return False
     try:
-        addresses = _resolve_addresses(hostname)
+        addresses = resolve(hostname)
     except OSError:
         return False
     return bool(addresses) and not any(_is_disallowed_ip(ip) for ip in addresses)
@@ -350,12 +351,19 @@ def parse_scrape_response(data, info_hash):
     }
 
 
-def scrape_torrent(torrent_path, timeout=15):
+def scrape_torrent(
+    torrent_path,
+    timeout=15,
+    *,
+    resolve=_resolve_addresses,
+    udp_scrape=scrape_udp_tracker,
+):
     """Reads a .torrent file and queries its trackers for seeder/leecher
-    counts without joining the swarm. Tries each HTTP(S) tracker in order
-    until one returns usable stats. Returns {'tracker', 'seeders',
-    'leechers', 'completed'}, or None if no tracker could be scraped
-    (all UDP-only, all unreachable, or none had stats for this hash)."""
+    counts without joining the swarm. Tries each UDP or HTTP(S) tracker in
+    order until one returns usable stats. Returns {'tracker', 'seeders',
+    'leechers', 'completed'}, or None if no tracker could be scraped (all
+    unusable, unreachable, or none had stats for this hash). resolve (DNS)
+    and udp_scrape (the BEP 15 round trip) are injectable for tests."""
     with open(torrent_path, "rb") as f:
         torrent_bytes = f.read()
 
@@ -365,10 +373,10 @@ def scrape_torrent(torrent_path, timeout=15):
         udp_target = parse_udp_tracker_url(announce_url)
         if udp_target is not None:
             host, port = udp_target
-            if not _is_safe_scrape_host(host):
+            if not _is_safe_scrape_host(host, resolve):
                 continue
             try:
-                stats = scrape_udp_tracker(host, port, info_hash, timeout=timeout)
+                stats = udp_scrape(host, port, info_hash, timeout=timeout)
             except Exception:  # noqa: S112 - any failing tracker: try the next one
                 continue
             return {"tracker": f"udp://{host}:{port}", **stats}
@@ -376,7 +384,7 @@ def scrape_torrent(torrent_path, timeout=15):
         scrape_url = derive_scrape_url(announce_url)
         if not scrape_url:
             continue
-        if not _is_safe_scrape_host(urlsplit(scrape_url).hostname):
+        if not _is_safe_scrape_host(urlsplit(scrape_url).hostname, resolve):
             continue
 
         request_url = build_scrape_request_url(scrape_url, info_hash)
