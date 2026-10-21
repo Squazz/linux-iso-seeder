@@ -24,8 +24,9 @@ When making changes to the fetch logic or features:
 
 ## Testing the image
 
-CI checks the built image before anything is pushed. To run the same checks
-locally (Docker required):
+CI checks the built image before anything is pushed, then pushes that same
+image (no rebuild) and pulls each pushed tag back to check it is the image
+that was tested. To run the same checks locally (Docker required):
 
 ```sh
 docker build --target test .                 # unit suite on the image's apk packages
