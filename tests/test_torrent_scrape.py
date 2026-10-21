@@ -258,6 +258,13 @@ class DeriveScrapeUrlTests(unittest.TestCase):
                 "http://example.com/a/scrape?x2%0644",
             ),
             ("http://example.com/a", None),
+            ("https://example.com/announce", "https://example.com/scrape"),
+            (
+                "https://example.com/x/announce.php?a=1",
+                "https://example.com/x/scrape.php?a=1",
+            ),
+            # 'announce' only counts in the last path segment.
+            ("http://example.com/announce/x", None),
             # Only the first 'announce' in the segment is substituted.
             (
                 "http://example.com/announce_announce",
@@ -325,6 +332,11 @@ class ParseScrapeResponseTests(unittest.TestCase):
     def test_raises_on_failure_reason(self):
         response = b"d14:failure reason7:blockede"
         with self.assertRaisesRegex(ts.BencodeError, "^blocked$"):
+            ts.parse_scrape_response(response, b"A" * 20)
+
+    def test_non_utf8_failure_reason_is_still_reported_readably(self):
+        response = b"d14:failure reason5:bad \xffe"
+        with self.assertRaisesRegex(ts.BencodeError, "^bad \ufffd$"):
             ts.parse_scrape_response(response, b"A" * 20)
 
 
@@ -475,6 +487,11 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
         with self.assertRaisesRegex(
             ts.UdpTrackerError, "Unexpected action 0 in scrape response"
         ):
+            ts.parse_udp_scrape_response(response, transaction_id=7)
+
+    def test_non_utf8_tracker_error_is_still_reported_readably(self):
+        response = struct.pack(">II", 3, 7) + b"bad \xff"
+        with self.assertRaisesRegex(ts.UdpTrackerError, "^Tracker error: bad \ufffd$"):
             ts.parse_udp_scrape_response(response, transaction_id=7)
 
     def test_short_response_raises_with_its_length(self):

@@ -162,7 +162,7 @@ hides real gaps (tasks 40 and 41).
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 39 | [Push the image that was tested, not a rebuild](39-ship-the-tested-image.md) | P1 | CI | — | done |
-| 40 | [https scrape URLs and non-UTF-8 tracker failure reasons](40-https-scrape-and-non-utf8-failures.md) | P2 | NO_REFACTOR | — | open |
+| 40 | [https scrape URLs and non-UTF-8 tracker failure reasons](40-https-scrape-and-non-utf8-failures.md) | P2 | NO_REFACTOR | — | done |
 | 41 | [Only exclude message-text literals from the mutation score](41-narrow-literal-exclusion-rule.md) | P3 | docs | 40 | open |
 | 42 | [Network guard refuses UDP and DNS; stop the stderr leak](42-seal-the-network-guard.md) | P2 | NO_REFACTOR | — | open |
 | 43 | [Remove first-party doubling; drop the LOW_VALUE test](43-remove-first-party-doubling.md) | P2 | NO_REFACTOR | — | open |
