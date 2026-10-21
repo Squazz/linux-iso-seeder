@@ -182,7 +182,7 @@ hides real gaps (tasks 40 and 41).
 | 41 | [Only exclude message-text literals from the mutation score](41-narrow-literal-exclusion-rule.md) | P3 | docs | 40 | done |
 | 42 | [Network guard refuses UDP and DNS; stop the stderr leak](42-seal-the-network-guard.md) | P2 | NO_REFACTOR | — | done |
 | 43 | [Remove first-party doubling; drop the LOW_VALUE test](43-remove-first-party-doubling.md) | P2 | NO_REFACTOR | — | done |
-| 44 | [Make `log_seed_ratios_via_http`'s `auth` required](44-require-rpc-auth.md) | P3 | REFACTOR_REQUIRED | 43 | open |
+| 44 | [Make `log_seed_ratios_via_http`'s `auth` required](44-require-rpc-auth.md) | P3 | REFACTOR_REQUIRED | 43 | done |
 | 45 | [`scrape_torrent` seams for resolution and UDP scrape](45-scrape-torrent-seams.md) | P3 | REFACTOR_REQUIRED | 42 | open |
 | 46 | [The last untested error paths; raise the ratchet](46-remaining-error-paths.md) | P3 | NO_REFACTOR | — | open |
 | 47 | [Consolidate tests: oversized scenarios, conditional logic, HTTP fakes](47-test-consolidation.md) | P3 | NO_REFACTOR | 43 | open |

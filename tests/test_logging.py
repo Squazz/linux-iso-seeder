@@ -263,9 +263,9 @@ class LogRoutingTests(unittest.TestCase):
 
 class LogSeedRatiosViaHttpTests(unittest.TestCase):
     """log_seed_ratios_via_http() must not hang the daily run forever on a
-    stalled Transmission response, and must authenticate with whatever
-    credentials configure_transmission.py configured the daemon with when
-    the caller doesn't explicitly override auth."""
+    stalled Transmission response, and must authenticate with exactly the
+    auth its caller passes (the run's own credential handling is tested in
+    test_daily_run.py)."""
 
     def setUp(self):
         self.transmission = helpers.FakeTransmission()
@@ -322,7 +322,9 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
             ],
         )
 
-    def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
+    def test_none_auth_sends_no_credentials_even_if_the_env_has_them(self):
+        # The run passes config.rpc_auth, read once by load_config(); None
+        # means "no auth", not "go back to os.environ".
         with unittest.mock.patch.dict(
             os.environ,
             {
@@ -330,48 +332,9 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 "TRANSMISSION_RPC_PASSWORD": "hunter2",
             },
         ):
-            ft.log_seed_ratios_via_http()
-
-        self.assertEqual(self.rpc.auths, [("alice", "hunter2")])
-
-    def test_no_auth_when_credentials_unset(self):
-        with helpers.isolated_env():
-            ft.log_seed_ratios_via_http()
+            ft.log_seed_ratios_via_http(auth=None)
 
         self.assertEqual(self.rpc.auths, [None])
-
-    def test_explicit_auth_argument_still_wins(self):
-        with unittest.mock.patch.dict(
-            os.environ,
-            {
-                "TRANSMISSION_RPC_USERNAME": "alice",
-                "TRANSMISSION_RPC_PASSWORD": "hunter2",
-            },
-        ):
-            ft.log_seed_ratios_via_http(auth=("bob", "other"))
-
-        self.assertEqual(self.rpc.auths, [("bob", "other")])
-
-
-class RpcCredentialFallbackTests(unittest.TestCase):
-    """Without an explicit auth, log_seed_ratios_via_http() authenticates
-    only when both TRANSMISSION_RPC_USERNAME and _PASSWORD are set."""
-
-    def _auth_sent(self, **env):
-        rpc = helpers.FakeTransmissionRpc(helpers.FakeTransmission())
-        with (
-            helpers.isolated_env(**env),
-            unittest.mock.patch.object(ft.requests, "post", rpc.post),
-        ):
-            ft.log_seed_ratios_via_http()
-        (auth,) = rpc.auths
-        return auth
-
-    def test_username_without_password_sends_no_auth(self):
-        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_USERNAME="alice"))
-
-    def test_password_without_username_sends_no_auth(self):
-        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_PASSWORD="hunter2"))
 
 
 if __name__ == "__main__":
