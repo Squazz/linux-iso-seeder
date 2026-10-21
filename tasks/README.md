@@ -242,3 +242,16 @@ local) compared with r2 as follows:
 
 Suggested order: 39 (untested bits reach users), then 51 (a bad setting silently disables cleanup), then 40 and 41 (a hidden scrape gap
 and the rule that hid it), 42, 43 then 44 and 47, 45, 46, 49 and 48, and finally 50.
+
+## Round 3 follow-ups
+
+Issues the round-3 agents found and left alone because they were outside their tasks or need a live run.
+
+| # | Task | Priority | Class | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| 52 | [Ratio logging must work when RPC credentials are set](52-rpc-handshake-auth.md) | P2 (suspected bug) | NO_REFACTOR | — | open |
+| 53 | [Lint and test workflow-only changes in CI](53-lint-workflow-only-changes.md) | P3 | CI | — | open |
+| 54 | [Verify the build-once release flow on GitHub](54-verify-release-flow-on-ci.md) | P2 | CI (manual) | 39, 48 | open |
+| 55 | [Round-3 hygiene leftovers: `record=` seam, tracker double marker](55-record-fixtures-main-seam.md) | P3 | REFACTOR_REQUIRED | 49 | open |
+
+Suggested order: 54 as soon as the round-3 PR runs, then 52 (step 1 decides whether it is a bug at all), 53, and 55.
