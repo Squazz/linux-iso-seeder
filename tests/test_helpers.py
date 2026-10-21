@@ -199,6 +199,51 @@ class FakeTransmissionRpcTests(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class FakeHttpTests(unittest.TestCase):
+    PAGE = "https://example.org/page"
+
+    def test_serves_routed_responses_and_records_each_request(self):
+        page = helpers.fake_response(b"hello")
+        http = helpers.FakeHttp({self.PAGE: page})
+
+        self.assertIs(http.get(self.PAGE + "#top", timeout=30), page)
+        self.assertIs(http.get(self.PAGE), page)
+
+        self.assertEqual(http.requests, [(self.PAGE, 30), (self.PAGE, None)])
+        self.assertEqual(http.requested, [self.PAGE, self.PAGE])
+        self.assertEqual(http.unexpected, [])
+
+    def test_unrouted_urls_get_a_404_and_are_flagged(self):
+        http = helpers.FakeHttp()
+
+        response = http.get(self.PAGE, timeout=30)
+
+        self.assertEqual(response.status_code, 404)
+        with self.assertRaises(ft.requests.HTTPError):
+            response.raise_for_status()
+        self.assertEqual(http.unexpected, [self.PAGE])
+
+    def test_a_routed_exception_is_raised(self):
+        http = helpers.FakeHttp({self.PAGE: ConnectionError("down")})
+
+        with self.assertRaisesRegex(ConnectionError, "down"):
+            http.get(self.PAGE, timeout=30)
+        self.assertEqual(http.requested, [self.PAGE])
+
+    def test_recorded_pages_prefer_overrides_to_the_recordings(self):
+        pages = helpers.RecordedPages()
+        url = next(iter(pages.pages))
+        override = helpers.fake_response(b"override")
+
+        recorded = pages.get(url, timeout=30)
+        pages.routes[url] = override
+
+        self.assertEqual(recorded.status_code, 200)
+        self.assertNotEqual(recorded.content, b"override")
+        self.assertIs(pages.get(url, timeout=30), override)
+        self.assertEqual(pages.unexpected, [])
+
+
 class PathFixtureTests(unittest.TestCase):
     """use_watch_dir()/use_state_files() point fetch_torrents' module path
     globals at fresh temp files for one test, and put them back after."""

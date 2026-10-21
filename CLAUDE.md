@@ -44,7 +44,7 @@ against the pinned library's `Client` signatures and `Torrent` fields (see
 
 Importing the module opens no files: log handlers are only attached by
 `configure_logging()`, which the `__main__` block calls. Tests that need it
-should restore the logger afterwards (see `configure_logging_for_test()`).
+undo it with `addCleanup(ft.reset_logging)` (see `configure_logging_for_test()`).
 The daily run itself is `run(config, client_factory=..., today=...)` with
 its I/O (Transmission client, clock, disk usage) injected, so it is tested
 directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
@@ -66,8 +66,11 @@ root on `sys.path`) and a `setUpModule()` calling `helpers.isolate_module()`:
 that scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*` etc. so they
 can't change test outcomes, and refuses any real network connection, UDP
 datagram or DNS lookup. HTTP is faked with `helpers.fake_response()` (a real
-`requests.Response`) or
-`helpers.RecordedPages` (pages captured by `scripts/record_fixtures.py`).
+`requests.Response`), served as `requests.get` by `helpers.FakeHttp` (a
+url -> response routes dict, 404 for anything else, recording each
+request) or its subclasses `helpers.RecordedPages` (pages captured by
+`scripts/record_fixtures.py`) and `helpers.OldReleaseTracker` (which also
+fakes the tracker scrape for the old-release check).
 `fetch_torrents` tests are split by concern: `test_ratio_gate.py`,
 `test_fetchers.py`, `test_scrapers.py`, `test_cleanup.py`,
 `test_persistence.py`, `test_logging.py`, `test_old_release_demand.py`,

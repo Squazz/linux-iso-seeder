@@ -102,8 +102,22 @@ def get_always_log_prefixes():
 logger = logging.getLogger("fetch_torrents")
 # Silent until configure_logging() runs, so importing this module (tests,
 # other scripts) neither writes log files nor falls back to stderr.
-_configured_handlers: list[logging.Handler] = [logging.NullHandler()]
-logger.addHandler(_configured_handlers[0])
+_SILENT_HANDLER = logging.NullHandler()
+_configured_handlers: list[logging.Handler] = [_SILENT_HANDLER]
+logger.addHandler(_SILENT_HANDLER)
+
+
+def reset_logging():
+    """Undo configure_logging(): detach and close every handler on `logger`
+    and leave it as importing this module did - silent, at level NOTSET and
+    propagating."""
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    _configured_handlers[:] = [_SILENT_HANDLER]
+    logger.addHandler(_SILENT_HANDLER)
+    logger.setLevel(logging.NOTSET)
+    logger.propagate = True
 
 
 def configure_logging(log_dir, env=None):

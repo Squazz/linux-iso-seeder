@@ -164,66 +164,6 @@ class ShouldRecheckOldReleaseTests(unittest.TestCase):
         )
 
 
-class OldReleaseTracker:
-    """Plays both network boundaries of the old-release check: requests.get
-    for the candidate's .torrent (`routes`: url -> response, or an exception
-    to raise; anything else is a 404) and torrent_scrape.scrape_torrent,
-    which answers from `swarms` (torrent bytes -> scrape result, or an
-    exception to raise) by reading the file it was handed - so the real
-    evaluate_old_release_demand() runs in between. Records every request,
-    and every scrape's (bytes, path, timeout)."""
-
-    def __init__(self):
-        self.routes = {}
-        self.swarms = {}
-        self.requests = []
-        self.scrapes = []
-
-    def candidate(self, name, swarm):
-        """Serves name's .torrent and gives it `swarm` (a scrape result,
-        None for "no tracker answered", or an exception); returns its url."""
-        url = f"https://cdimage.example/{name}.torrent"
-        body = f"{name} metadata".encode()
-        self.routes[url] = helpers.fake_response(body)
-        self.swarms[body] = swarm
-        return url
-
-    def get(self, url, timeout=None):
-        self.requests.append((url, timeout))
-        answer = self.routes.get(url, helpers.fake_response(status=404))
-        if isinstance(answer, Exception):
-            raise answer
-        return answer
-
-    def scrape_torrent(self, path, timeout=15):
-        with open(path, "rb") as f:
-            body = f.read()
-        self.scrapes.append((body, path, timeout))
-        swarm = self.swarms[body]
-        if isinstance(swarm, Exception):
-            raise swarm
-        return swarm
-
-    def patch(self, testcase):
-        for target, name, fake in (
-            (ft.requests, "get", self.get),
-            # boundary double: opens UDP/HTTP tracker sockets
-            (ft.torrent_scrape, "scrape_torrent", self.scrape_torrent),
-        ):
-            patcher = unittest.mock.patch.object(target, name, side_effect=fake)
-            patcher.start()
-            testcase.addCleanup(patcher.stop)
-
-
-def swarm(leechers, seeders):
-    return {
-        "tracker": "udp://tracker.example:6969",
-        "seeders": seeders,
-        "leechers": leechers,
-        "completed": 0,
-    }
-
-
 class EvaluateOldReleaseDemandBoundaryTests(unittest.TestCase):
     """What evaluate_old_release_demand() hands the network: the download
     request, and a temporary on-disk copy of the .torrent for the tracker
@@ -233,7 +173,7 @@ class EvaluateOldReleaseDemandBoundaryTests(unittest.TestCase):
     BODY = b"kali-linux-2025.4-installer-amd64.iso metadata"
 
     def setUp(self):
-        self.tracker = OldReleaseTracker()
+        self.tracker = helpers.OldReleaseTracker()
         self.tracker.patch(self)
 
     def _evaluate(self, url, **kwargs):
@@ -247,18 +187,18 @@ class EvaluateOldReleaseDemandBoundaryTests(unittest.TestCase):
         )
 
     def test_scrapes_a_temporary_copy_that_is_removed_afterwards(self):
-        url = self.tracker.candidate(self.NAME, swarm(6, 10))
+        url = self.tracker.candidate(self.NAME, helpers.swarm(6, 10))
 
         result = self._evaluate(url)
 
-        self.assertEqual(result, (True, self.BODY, swarm(6, 10)))
+        self.assertEqual(result, (True, self.BODY, helpers.swarm(6, 10)))
         self.assertEqual(self.tracker.requests, [(url, 30)])
         [(body, path, timeout)] = self.tracker.scrapes
         self.assertEqual((body, timeout), (self.BODY, 15))
         self.assertFalse(os.path.exists(path))
 
     def test_scrape_timeout_is_passed_through(self):
-        url = self.tracker.candidate(self.NAME, swarm(6, 10))
+        url = self.tracker.candidate(self.NAME, helpers.swarm(6, 10))
 
         self._evaluate(url, timeout=3)
 
@@ -279,7 +219,7 @@ class EvaluateOldReleaseDemandBoundaryTests(unittest.TestCase):
         self.assertFalse(os.path.exists(path))
 
     def test_temp_file_that_cannot_be_created_counts_as_unknown_demand(self):
-        url = self.tracker.candidate(self.NAME, swarm(6, 10))
+        url = self.tracker.candidate(self.NAME, helpers.swarm(6, 10))
 
         with (
             unittest.mock.patch.object(
@@ -359,7 +299,7 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp_watch_dir = helpers.use_watch_dir(self)
-        self.tracker = OldReleaseTracker()
+        self.tracker = helpers.OldReleaseTracker()
         self.tracker.patch(self)
 
     def _check(self, discovery, distros=("kali",), **overrides):
@@ -390,17 +330,17 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
         missing = kali(3, "everything")
         wanted_a, wanted_b = kali(4), kali(4, "live")
         candidates = {
-            removed_a: self.tracker.candidate(removed_a, swarm(50, 1)),
-            removed_b: self.tracker.candidate(removed_b, swarm(50, 1)),
+            removed_a: self.tracker.candidate(removed_a, helpers.swarm(50, 1)),
+            removed_b: self.tracker.candidate(removed_b, helpers.swarm(50, 1)),
             unsafe: "https://cdimage.example/evil.torrent",
-            present: self.tracker.candidate(present, swarm(50, 1)),
-            recent: self.tracker.candidate(recent, swarm(50, 1)),
-            thin: self.tracker.candidate(thin, swarm(5, 20)),
-            zero: self.tracker.candidate(zero, swarm(9, 0)),
+            present: self.tracker.candidate(present, helpers.swarm(50, 1)),
+            recent: self.tracker.candidate(recent, helpers.swarm(50, 1)),
+            thin: self.tracker.candidate(thin, helpers.swarm(5, 20)),
+            zero: self.tracker.candidate(zero, helpers.swarm(9, 0)),
             unknown: self.tracker.candidate(unknown, None),
             missing: "https://cdimage.example/missing.torrent",
-            wanted_a: self.tracker.candidate(wanted_a, swarm(6, 10)),
-            wanted_b: self.tracker.candidate(wanted_b, swarm(30, 2)),
+            wanted_a: self.tracker.candidate(wanted_a, helpers.swarm(6, 10)),
+            wanted_b: self.tracker.candidate(wanted_b, helpers.swarm(30, 2)),
         }
         with open(os.path.join(self.tmp_watch_dir, f"{present}.torrent"), "wb") as f:
             f.write(b"already seeding")
@@ -493,7 +433,7 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
         # allow_zero_seeders=True: a zero-seeder swarm can count as demand,
         # but 2 leechers is still under the 4-leecher floor.
         name = kali(3)
-        candidates = {name: self.tracker.candidate(name, swarm(2, 0))}
+        candidates = {name: self.tracker.candidate(name, helpers.swarm(2, 0))}
 
         with self.assertLogs(ft.logger, level="INFO") as logs:
             added, skipped, _ = self._check(
@@ -514,7 +454,7 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
 
     def test_rechecks_after_7_days_by_default(self):
         name = kali(3)
-        candidates = {name: self.tracker.candidate(name, swarm(6, 10))}
+        candidates = {name: self.tracker.candidate(name, helpers.swarm(6, 10))}
         check_state = {name: {"last_checked": "2026-01-01", "leechers": 0}}
 
         # Checked exactly 7 days ago; _check() leaves recheck_interval_days
@@ -525,7 +465,7 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
 
     def test_today_and_saved_state_default_to_now_and_empty(self):
         name = kali(3)
-        candidates = {name: self.tracker.candidate(name, swarm(2, 10))}
+        candidates = {name: self.tracker.candidate(name, helpers.swarm(2, 10))}
 
         with unittest.mock.patch.object(
             ft, "date", helpers.fixed_date(date(2026, 3, 14))
@@ -555,7 +495,7 @@ class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
 
     def setUp(self):
         self.tmp_watch_dir = helpers.use_watch_dir(self)
-        self.tracker = OldReleaseTracker()
+        self.tracker = helpers.OldReleaseTracker()
         self.tracker.patch(self)
 
     def _check(self, candidates):
@@ -573,7 +513,9 @@ class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
         )
 
     def _wanted(self, *names):
-        return {name: self.tracker.candidate(name, swarm(30, 1)) for name in names}
+        return {
+            name: self.tracker.candidate(name, helpers.swarm(30, 1)) for name in names
+        }
 
     def test_failed_write_leaves_no_file_and_is_not_recorded(self):
         with (

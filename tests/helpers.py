@@ -368,15 +368,48 @@ def fake_response(body=b"", status=200, url="", headers=None):
     return response
 
 
-class RecordedPages:
-    """A requests.get stand-in serving tests/fixtures/pages (captured by
+class FakeHttp:
+    """A requests.get stand-in answering from `routes`: url -> response, or
+    an exception to raise. Any other URL is recorded in `unexpected` and
+    answered with a 404. Records every request's (url, timeout) in
+    `requests`; `requested` lists just the URLs. A fragment never reaches
+    the server, so URLs are matched and recorded without it."""
+
+    def __init__(self, routes=None):
+        self.routes = dict(routes or {})
+        self.requests = []
+        self.unexpected = []
+
+    @property
+    def requested(self):
+        return [url for url, _timeout in self.requests]
+
+    def _answer(self, url):
+        """The routed answer for `url`, or None for a 404."""
+        return self.routes.get(url)
+
+    def get(self, url, timeout=None, **kwargs):
+        url = urldefrag(url).url
+        self.requests.append((url, timeout))
+        answer = self._answer(url)
+        if answer is None:
+            self.unexpected.append(url)
+            return fake_response(b"not found", status=404, url=url)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+class RecordedPages(FakeHttp):
+    """A FakeHttp serving tests/fixtures/pages (captured by
     scripts/record_fixtures.py), keyed by the URL in each .meta.json.
 
-    `overrides` maps a URL to a response, or to an exception to raise.
-    Any other URL is recorded in `unexpected` and answered with a 404, so a
-    test can assert the scraper asked for nothing it wasn't expected to."""
+    `overrides` are routes that take precedence over the recordings. Any
+    other URL lands in `unexpected` (and gets a 404), so a test can assert
+    the scraper asked for nothing it wasn't expected to."""
 
     def __init__(self, overrides=None):
+        super().__init__(overrides)
         self.pages = {}
         for meta_path in glob.glob(os.path.join(PAGES_DIR, "*", "*.meta.json")):
             with open(meta_path, encoding="utf-8") as f:
@@ -386,24 +419,71 @@ class RecordedPages:
                 path for path in glob.glob(stem + ".*") if path != meta_path
             )
             self.pages[url] = body_path
-        self.overrides = dict(overrides or {})
-        self.requested = []
-        self.unexpected = []
 
-    def get(self, url, timeout=None, **kwargs):
-        # A fragment never reaches the server, so match without it.
-        url = urldefrag(url).url
-        self.requested.append(url)
-        if url in self.overrides:
-            override = self.overrides[url]
-            if isinstance(override, BaseException):
-                raise override
-            return override
+    def _answer(self, url):
+        if url in self.routes:
+            return self.routes[url]
         if url in self.pages:
             with open(self.pages[url], "rb") as f:
                 return fake_response(f.read(), url=url)
-        self.unexpected.append(url)
-        return fake_response(b"not recorded", status=404, url=url)
+        return None
+
+
+def swarm(leechers, seeders):
+    """A tracker scrape result, as torrent_scrape.scrape_torrent() returns
+    it."""
+    return {
+        "tracker": "udp://tracker.example:6969",
+        "seeders": seeders,
+        "leechers": leechers,
+        "completed": 0,
+    }
+
+
+class OldReleaseTracker(FakeHttp):
+    """Plays both network boundaries of the old-release check: requests.get
+    for the candidate's .torrent (FakeHttp) and torrent_scrape.scrape_torrent,
+    which answers from `swarms` (torrent bytes -> scrape result, or an
+    exception to raise) by reading the file it was handed - so the real
+    evaluate_old_release_demand() runs in between. Records every scrape's
+    (bytes, path, timeout) in `scrapes`."""
+
+    def __init__(self):
+        super().__init__()
+        self.swarms = {}
+        self.scrapes = []
+
+    def candidate(self, name, swarm):
+        """Serves name's .torrent and gives it `swarm` (a scrape result,
+        None for "no tracker answered", or an exception); returns its url."""
+        url = f"https://cdimage.example/{name}.torrent"
+        body = f"{name} metadata".encode()
+        self.routes[url] = fake_response(body, url=url)
+        self.swarms[body] = swarm
+        return url
+
+    def scrape_torrent(self, path, timeout=15):
+        with open(path, "rb") as f:
+            body = f.read()
+        self.scrapes.append((body, path, timeout))
+        swarm = self.swarms[body]
+        if isinstance(swarm, Exception):
+            raise swarm
+        return swarm
+
+    def patch(self, testcase):
+        """Makes this tracker fetch_torrents' requests.get and
+        torrent_scrape.scrape_torrent for the rest of `testcase`."""
+        import fetch_torrents
+
+        _patch_for_test(testcase, fetch_torrents.requests, "get", self.get)
+        # boundary double: opens UDP/HTTP tracker sockets
+        _patch_for_test(
+            testcase,
+            fetch_torrents.torrent_scrape,
+            "scrape_torrent",
+            self.scrape_torrent,
+        )
 
 
 # Every image fetch_kali_latest()/fetch_kali_old_versions() offer for a

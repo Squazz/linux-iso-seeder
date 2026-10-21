@@ -930,45 +930,43 @@ class ScrapeTorrentTests(unittest.TestCase):
         tracker B answers. A's failure must not end the search."""
         good = "http://good.example.com/announce"
         dead = "http://dead.example.com/announce"
-        # case -> (A's announce URL, what A answers: a response, an
-        # exception to raise, or None if A must never be requested)
+        # case -> (A's announce URL, A's answer: a response or an exception
+        # to raise, and the trackers requested, in order)
         cases = {
-            "connection error": (dead, ConnectionError("nope")),
-            "HTTP status error": (dead, helpers.fake_response(status=500)),
+            "connection error": (dead, ConnectionError("nope"), ("A", "B")),
+            "HTTP status error": (dead, helpers.fake_response(status=500), ("A", "B")),
             "failure reason": (
                 dead,
                 helpers.fake_response(b"d14:failure reason11:not allowede"),
+                ("A", "B"),
             ),
-            "no stats for this hash": (dead, tracker_response(OTHER_HASH, 9, 9)),
-            "no announce segment": ("http://dead.example.com/tracker", None),
+            "no stats for this hash": (
+                dead,
+                tracker_response(OTHER_HASH, 9, 9),
+                ("A", "B"),
+            ),
+            "no announce segment": ("http://dead.example.com/tracker", None, ("B",)),
         }
-        for case, (announce, dead_answer) in cases.items():
+        for case, (announce, dead_answer, requested) in cases.items():
             with self.subTest(case):
                 path, info_hash = self._write_torrent([announce, good])
                 query = "/scrape?info_hash=" + percent_encoded(info_hash)
-                dead_url = "http://dead.example.com" + query
-                good_url = "http://good.example.com" + query
+                urls = {
+                    "A": "http://dead.example.com" + query,
+                    "B": "http://good.example.com" + query,
+                }
+                http = helpers.FakeHttp(
+                    {
+                        urls["A"]: dead_answer,
+                        urls["B"]: tracker_response(info_hash, 1, 2, completed=3),
+                    }
+                )
 
-                answers = {good_url: tracker_response(info_hash, 1, 2, completed=3)}
-
-                def fake_get(
-                    url, timeout=None, answers=answers, dead_answer=dead_answer
-                ):
-                    if url in answers:
-                        return answers[url]
-                    if isinstance(dead_answer, Exception):
-                        raise dead_answer
-                    return dead_answer
-
-                with unittest.mock.patch.object(
-                    ts.requests, "get", side_effect=fake_get
-                ) as mock_get:
+                with unittest.mock.patch.object(ts.requests, "get", http.get):
                     result = ts.scrape_torrent(path, timeout=3)
 
-                requested = [good_url] if dead_answer is None else [dead_url, good_url]
                 self.assertEqual(
-                    mock_get.call_args_list,
-                    [unittest.mock.call(url, timeout=3) for url in requested],
+                    http.requests, [(urls[tracker], 3) for tracker in requested]
                 )
                 self.assertEqual(
                     result,

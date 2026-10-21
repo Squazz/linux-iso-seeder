@@ -1,6 +1,7 @@
-"""Tests for choosing and downloading releases: each fetch_* scraper's
-candidate naming (hand-written pages; tests/test_scrapers.py replays
-recorded ones), FETCH_TORRENTS_DISTROS, the low-demand filter and
+"""Tests for choosing and downloading releases: the fetch_* scrapers'
+selection on hand-written pages a recording can't express (unsorted rows,
+99 vs 100, duplicates, missing links; tests/test_scrapers.py replays the
+recorded pages), FETCH_TORRENTS_DISTROS, the low-demand filter and
 download_torrent().
 
 Run with: python -m unittest discover -s tests
@@ -23,114 +24,6 @@ def setUpModule():
 # change to either has to be made here on purpose.
 DEFAULT_DISTROS = ["ubuntu", "debian", "kali", "mint", "fedora"]
 ALL_DISTROS_TEXT = "ubuntu, debian, kali, arch, mint, fedora, devuan"
-
-
-class FetchUbuntuLtsNamingTests(unittest.TestCase):
-    """The names fetch_ubuntu_lts() uses as dict keys are also what gets
-    passed to should_fetch_torrent() before download, so they must match the
-    shape of the names Transmission later reports for those same torrents
-    (real arch suffix + .iso extension) — see
-    tasks/02-ratio-key-mismatch-ubuntu-debian.md."""
-
-    def test_candidate_names_include_arch_and_iso_suffix(self):
-        meta_release = "Dist: noble\nVersion: 24.04\nSupported: 1\n"
-
-        response = helpers.fake_response(meta_release)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_ubuntu_lts()
-
-        self.assertEqual(
-            results,
-            {
-                "ubuntu-24.04-desktop-amd64.iso": (
-                    "https://releases.ubuntu.com/noble/ubuntu-24.04-desktop-amd64.iso.torrent"
-                ),
-                "ubuntu-24.04-live-server-amd64.iso": (
-                    "https://releases.ubuntu.com/noble/"
-                    "ubuntu-24.04-live-server-amd64.iso.torrent"
-                ),
-                "lubuntu-24.04-desktop-amd64.iso": (
-                    "https://cdimage.ubuntu.com/lubuntu/releases/noble/release/"
-                    "lubuntu-24.04-desktop-amd64.iso.torrent"
-                ),
-                "xubuntu-24.04-desktop-amd64.iso": (
-                    "https://torrent.ubuntu.com/xubuntu/releases/noble/release/desktop/"
-                    "xubuntu-24.04-desktop-amd64.iso.torrent"
-                ),
-                "xubuntu-24.04-minimal-amd64.iso": (
-                    "https://torrent.ubuntu.com/xubuntu/releases/noble/release/minimal/"
-                    "xubuntu-24.04-minimal-amd64.iso.torrent"
-                ),
-            },
-        )
-
-
-class FetchDebianStableNamingTests(unittest.TestCase):
-    """Mirrors FetchUbuntuLtsNamingTests for Debian: the dict key must keep
-    the .iso extension so it matches Transmission's reported torrent name."""
-
-    def test_candidate_name_keeps_iso_suffix(self):
-        html = '<html><body><a href="debian-12.5.0-amd64-DVD-1.iso.torrent">link</a></body></html>'
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_debian_stable()
-
-        self.assertIn("debian-12.5.0-amd64-DVD-1.iso", results)
-
-
-class FetchLinuxMintCinnamonNamingTests(unittest.TestCase):
-    """The dict key fetch_linuxmint_cinnamon() uses must match the 'name'
-    field embedded in the actual .torrent file (verified against a real
-    download from linuxmint.com: linuxmint-22.3-cinnamon-64bit.iso), so it
-    lines up with what Transmission later reports as torrent.name."""
-
-    def test_candidate_name_matches_torrent_internal_name(self):
-        html = "<title>Download Linux Mint 22.3 - Linux Mint</title>"
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_linuxmint_cinnamon()
-
-        self.assertIn("linuxmint-22.3-cinnamon-64bit.iso", results)
-        self.assertEqual(
-            results["linuxmint-22.3-cinnamon-64bit.iso"],
-            "https://www.linuxmint.com/torrents/linuxmint-22.3-cinnamon-64bit.iso.torrent",
-        )
-
-
-class FetchFedoraWorkstationNamingTests(unittest.TestCase):
-    """The dict key fetch_fedora_workstation() uses must match the 'name'
-    field embedded in the actual .torrent file (verified against a real
-    download from torrent.fedoraproject.org: Fedora-Workstation-Live-x86_64-44,
-    which has no .iso extension), so it lines up with what Transmission later
-    reports as torrent.name."""
-
-    def test_picks_highest_version_per_arch(self):
-        html = (
-            "<html><body>"
-            '<a href="Fedora-Workstation-Live-x86_64-43.torrent">a</a>'
-            '<a href="Fedora-Workstation-Live-x86_64-44.torrent">b</a>'
-            '<a href="Fedora-Workstation-Live-aarch64-43.torrent">c</a>'
-            '<a href="Fedora-Workstation-Live-aarch64-44.torrent">d</a>'
-            "</body></html>"
-        )
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_fedora_workstation()
-
-        self.assertEqual(
-            results,
-            {
-                "Fedora-Workstation-Live-x86_64-44": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-44.torrent",
-                "Fedora-Workstation-Live-aarch64-44": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-44.torrent",
-            },
-        )
 
 
 class FetchArchLatestNamingTests(unittest.TestCase):
@@ -162,80 +55,9 @@ class FetchArchLatestNamingTests(unittest.TestCase):
         )
 
 
-class FetchDevuanLatestNamingTests(unittest.TestCase):
-    """Devuan's get-devuan page links a single release torrent whose
-    filename embeds the current release codename (e.g.
-    devuan_excalibur.torrent, verified against the real download) - the
-    dict key must match that basename since it's also what Transmission
-    later reports as torrent.name."""
-
-    def test_extracts_current_release_torrent(self):
-        html = (
-            '<h2 id="torrent-and-magnet-link">Torrent and Magnet Link</h2><ul>'
-            '<li><a href="https://files.devuan.org/devuan_excalibur.torrent">Release torrent</a></li>'
-            "</ul>"
-        )
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_devuan_latest()
-
-        self.assertEqual(
-            results,
-            {"devuan_excalibur": "https://files.devuan.org/devuan_excalibur.torrent"},
-        )
-
-
-class FetchKaliOldVersionsTests(unittest.TestCase):
-    """fetch_kali_old_versions() discovers the prior release(s) still listed
-    on cdimage.kali.org (a 'current/' symlink plus a small number of
-    'kali-X.Y/' folders), for FETCH_TORRENTS_CHECK_OLD_RELEASES. Only ever
-    used when that flag is enabled - see CheckOldReleasesForDemandTests."""
-
-    def test_returns_only_the_non_newest_versions(self):
-        html = (
-            "<html><body>"
-            '<a href="current/">current</a>'
-            '<a href="kali-2026.1/">kali-2026.1</a>'
-            '<a href="kali-2026.2/">kali-2026.2</a>'
-            "</body></html>"
-        )
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_kali_old_versions()
-
-        self.assertEqual(results, helpers.kali_candidates("2026.1"))
-
-
 class FetchFedoraWorkstationOldVersionsTests(unittest.TestCase):
-    """Mirrors FetchFedoraWorkstationNamingTests, but for the versions
-    fetch_fedora_workstation() discards as not-latest."""
-
-    def test_returns_non_latest_versions_per_arch(self):
-        html = (
-            "<html><body>"
-            '<a href="Fedora-Workstation-Live-x86_64-43.torrent">a</a>'
-            '<a href="Fedora-Workstation-Live-x86_64-44.torrent">b</a>'
-            '<a href="Fedora-Workstation-Live-aarch64-43.torrent">c</a>'
-            '<a href="Fedora-Workstation-Live-aarch64-44.torrent">d</a>'
-            "</body></html>"
-        )
-
-        response = helpers.fake_response(html)
-
-        with unittest.mock.patch.object(ft.requests, "get", return_value=response):
-            results = ft.fetch_fedora_workstation_old_versions()
-
-        self.assertEqual(
-            results,
-            {
-                "Fedora-Workstation-Live-x86_64-43": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-x86_64-43.torrent",
-                "Fedora-Workstation-Live-aarch64-43": "https://torrent.fedoraproject.org/torrents/Fedora-Workstation-Live-aarch64-43.torrent",
-            },
-        )
+    """The recorded page lists two final releases per arch; with only one,
+    there is no old version to offer."""
 
     def test_single_version_per_arch_returns_nothing(self):
         html = '<html><body><a href="Fedora-Workstation-Live-x86_64-44.torrent">a</a></body></html>'

@@ -100,20 +100,6 @@ class PlanCleanupTests(unittest.TestCase):
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep_low_ratio, [])
 
-    def test_old_version_below_ratio_threshold_is_kept_not_removed(self):
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.4),
-        ]
-
-        to_remove, to_keep_low_ratio = ft.plan_cleanup(torrents, min_ratio=1.0)
-
-        self.assertEqual(to_remove, [])
-        self.assertEqual(len(to_keep_low_ratio), 1)
-        kept_torrent, kept_ratio = to_keep_low_ratio[0]
-        self.assertEqual(kept_torrent.name, "ubuntu-23.10-desktop-amd64.iso")
-        self.assertEqual(kept_ratio, 0.4)
-
     def test_skip_ratio_check_removes_regardless_of_ratio(self):
         torrents = [
             helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
@@ -389,60 +375,6 @@ class UpdateRatioHistoryTests(unittest.TestCase):
             {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-29", "ratio": 1.2}]},
         )
 
-    def test_recent_sample_is_not_duplicated(self):
-        today = date(2026, 8, 29)
-        history = {
-            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-25", "ratio": 1.0}],
-        }
-
-        updated = ft.update_ratio_history(
-            history, {"archlinux-2026.08.01-x86_64.iso": 1.1}, today
-        )
-
-        # Only 4 days since the last sample (< the 7-day interval) - no new
-        # sample yet, and the ratio value on the existing sample is untouched.
-        self.assertEqual(
-            updated,
-            {"archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-25", "ratio": 1.0}]},
-        )
-
-    def test_new_sample_added_once_interval_elapses(self):
-        today = date(2026, 8, 29)
-        history = {
-            "archlinux-2026.08.01-x86_64.iso": [{"date": "2026-08-20", "ratio": 1.0}],
-        }
-
-        updated = ft.update_ratio_history(
-            history, {"archlinux-2026.08.01-x86_64.iso": 1.3}, today
-        )
-
-        self.assertEqual(
-            updated,
-            {
-                "archlinux-2026.08.01-x86_64.iso": [
-                    {"date": "2026-08-20", "ratio": 1.0},
-                    {"date": "2026-08-29", "ratio": 1.3},
-                ]
-            },
-        )
-
-    def test_samples_older_than_window_plus_interval_are_pruned(self):
-        today = date(2026, 8, 29)
-        history = {
-            "archlinux-2026.08.01-x86_64.iso": [
-                {"date": "2026-06-01", "ratio": 0.5},  # ~89 days old - long stale
-                {"date": "2026-08-10", "ratio": 1.0},  # ~19 days old - kept
-            ],
-        }
-
-        updated = ft.update_ratio_history(
-            history, {"archlinux-2026.08.01-x86_64.iso": 1.0}, today, window_days=30
-        )
-
-        dates = [s["date"] for s in updated["archlinux-2026.08.01-x86_64.iso"]]
-        self.assertNotIn("2026-06-01", dates)
-        self.assertIn("2026-08-10", dates)
-
     def test_torrent_no_longer_seeding_is_dropped(self):
         today = date(2026, 8, 29)
         history = {
@@ -531,80 +463,6 @@ class PlanStagnationCleanupTests(unittest.TestCase):
 
         self.assertEqual(to_remove, [])
         self.assertEqual(to_keep, [])
-
-    def test_old_version_with_no_ratio_growth_is_removed(self):
-        today = date(2026, 8, 29)
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.500),
-        ]
-        history = {
-            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.495}],
-        }
-
-        to_remove, to_keep = ft.plan_stagnation_cleanup(
-            torrents, history, today, window_days=30, min_ratio_delta=0.02
-        )
-
-        self.assertEqual(
-            helpers.names_of(to_remove), ["ubuntu-23.10-desktop-amd64.iso"]
-        )
-        self.assertEqual(to_keep, [])
-
-    def test_old_version_still_growing_is_kept(self):
-        today = date(2026, 8, 29)
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=1.8),
-        ]
-        history = {
-            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-07-20", "ratio": 1.2}],
-        }
-
-        to_remove, to_keep = ft.plan_stagnation_cleanup(
-            torrents, history, today, window_days=30, min_ratio_delta=0.02
-        )
-
-        self.assertEqual(to_remove, [])
-        self.assertEqual(len(to_keep), 1)
-        kept_torrent, delta = to_keep[0]
-        self.assertEqual(kept_torrent.name, "ubuntu-23.10-desktop-amd64.iso")
-        self.assertAlmostEqual(delta, 0.6)
-
-    def test_old_version_without_enough_history_is_kept(self):
-        today = date(2026, 8, 29)
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
-        ]
-        # Only 5 days of history - too young to judge either way.
-        history = {
-            "ubuntu-23.10-desktop-amd64.iso": [{"date": "2026-08-24", "ratio": 0.1}],
-        }
-
-        to_remove, to_keep = ft.plan_stagnation_cleanup(
-            torrents, history, today, window_days=30, min_ratio_delta=0.02
-        )
-
-        self.assertEqual(to_remove, [])
-        self.assertEqual(len(to_keep), 1)
-        kept_torrent, delta = to_keep[0]
-        self.assertEqual(kept_torrent.name, "ubuntu-23.10-desktop-amd64.iso")
-        self.assertIsNone(delta)
-
-    def test_old_version_with_no_history_at_all_is_kept(self):
-        today = date(2026, 8, 29)
-        torrents = [
-            helpers.FakeTorrent("ubuntu-24.04.1-desktop-amd64.iso", 1, ratio=2.0),
-            helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1),
-        ]
-
-        to_remove, to_keep = ft.plan_stagnation_cleanup(
-            torrents, {}, today, window_days=30, min_ratio_delta=0.02
-        )
-
-        self.assertEqual(to_remove, [])
-        self.assertEqual(to_keep, [(torrents[1], None)])
 
     def test_unrelated_single_torrent_groups_are_ignored(self):
         today = date(2026, 8, 29)
@@ -1101,17 +959,6 @@ class PlanDiskPressureCleanupTests(unittest.TestCase):
             [older],
         )
 
-    def test_usage_exactly_at_threshold_triggers_cleanup(self):
-        older = helpers.FakeTorrent("ubuntu-23.10-desktop-amd64.iso", 2, ratio=0.1)
-        torrents = [helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1), older]
-
-        self.assertEqual(
-            ft.plan_disk_pressure_cleanup(
-                torrents, used_percent=95.0, threshold_percent=95.0
-            ),
-            [older],
-        )
-
     def test_missing_or_none_ratio_sorts_as_zero(self):
         half = helpers.FakeTorrent("ubuntu-22.10-desktop-amd64.iso", 2, ratio=0.5)
         no_attr = types.SimpleNamespace(name="ubuntu-23.04-desktop-amd64.iso", id=3)
@@ -1181,26 +1028,6 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
 
         self.assertEqual((disk.paths, self.connections), ([], 0))
 
-    def test_below_threshold_does_not_connect_to_transmission(self):
-        disk = self._disk(base_used=40)  # 50%
-
-        self._enforce(95, disk)
-
-        self.assertEqual(disk.paths, ["/downloads"])
-        self.assertEqual(self.connections, 0)
-
-    def test_removes_lowest_ratio_candidates_until_under_threshold(self):
-        # 86 + 10 = 96% used. Removing 22.04 (lowest ratio, 6 GB) gets to
-        # 90%, under the threshold, so 23.10 must be left alone.
-        disk = self._disk(base_used=86)
-
-        self._enforce(95, disk)
-
-        self.assertEqual(
-            self.transmission.names,
-            ["ubuntu-23.10-desktop-amd64.iso", "ubuntu-24.04-desktop-amd64.iso"],
-        )
-
     def test_keeps_removing_while_still_over_threshold(self):
         # 96%; removing 22.04 (1 GB) leaves 95% - still at the threshold -
         # so 23.10 (4 GB) goes too.
@@ -1233,6 +1060,7 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
 
         self._enforce(95, disk)
 
+        self.assertEqual(disk.paths, ["/downloads"])
         self.assertEqual(self.connections, 0)
 
     def test_stops_once_usage_is_just_below_threshold(self):

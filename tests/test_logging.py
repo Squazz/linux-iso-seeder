@@ -25,22 +25,7 @@ def setUpModule():
 
 def configure_logging_for_test(testcase, log_dir, **env):
     """ft.configure_logging() with only `env`, undone when the test ends."""
-    saved = (
-        list(ft.logger.handlers),
-        list(ft._configured_handlers),
-        ft.logger.level,
-        ft.logger.propagate,
-    )
-
-    def restore():
-        for handler in ft._configured_handlers:
-            handler.close()
-        ft.logger.handlers[:] = saved[0]
-        ft._configured_handlers[:] = saved[1]
-        ft.logger.setLevel(saved[2])
-        ft.logger.propagate = saved[3]
-
-    testcase.addCleanup(restore)
+    testcase.addCleanup(ft.reset_logging)
     return ft.configure_logging(log_dir, env=env)
 
 
@@ -152,6 +137,41 @@ class ConfigureLoggingTests(unittest.TestCase):
         )
         self.assertIn(other, ft.logger.handlers)
         self.assertEqual([h for h in first if h in ft.logger.handlers], [])
+
+
+class ResetLoggingTests(unittest.TestCase):
+    """reset_logging() undoes configure_logging(), so a test (or anything
+    else that configured logging in-process) can put the logger back the
+    way importing the module left it."""
+
+    def test_closes_the_handlers_and_leaves_the_logger_as_imported(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_reset_")
+        self.addCleanup(ft.reset_logging)
+        stream_handler, file_handler, ratio_handler = ft.configure_logging(
+            log_dir, env={}
+        )
+        stream_handler.setStream(io.StringIO())
+        ft.logger.info("[ratio] RATIOS START")
+
+        ft.reset_logging()
+        ft.logger.warning("after the reset")
+
+        self.assertEqual([type(h) for h in ft.logger.handlers], [logging.NullHandler])
+        self.assertEqual((ft.logger.level, ft.logger.propagate), (logging.NOTSET, True))
+        self.assertIsNone(file_handler.stream)
+        self.assertIsNone(ratio_handler.stream)
+        with open(os.path.join(log_dir, "fetch_torrents.log"), encoding="utf-8") as f:
+            self.assertNotIn("after the reset", f.read())
+
+    def test_a_later_configure_logging_starts_from_scratch(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_reset_")
+        self.addCleanup(ft.reset_logging)
+        ft.configure_logging(log_dir, env={})
+        ft.reset_logging()
+
+        handlers = ft.configure_logging(log_dir, env={})
+
+        self.assertEqual(ft.logger.handlers, list(handlers))
 
 
 class ParseLogLevelTests(unittest.TestCase):
