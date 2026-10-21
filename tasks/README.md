@@ -173,7 +173,7 @@ hides real gaps (tasks 40 and 41).
 | 48 | [CI leftovers: drift-job Python pin, actionlint](48-ci-leftovers.md) | P3 | CI | — | open |
 | 49 | [Offline tests for `record_fixtures.py` / `transmission_roundtrip.py`](49-offline-tests-for-fixture-scripts.md) | P3 | REFACTOR_REQUIRED | — | open |
 | 50 | [Re-measure round 3; optional seeding-policy table](50-remeasure-round-3.md) | P3 | — | 39–49, 51 | open |
-| 51 | [A failing old-release check must not abort the daily run](51-guard-old-release-step.md) | P2 (bug) | NO_REFACTOR | — | open |
+| 51 | [A failing old-release check must not abort the daily run](51-guard-old-release-step.md) | P2 (bug) | NO_REFACTOR | — | done |
 
 Task 51 came from a review of this branch's production changes, not from the test-health report.
 

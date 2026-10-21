@@ -751,17 +751,54 @@ class OldReleaseRunTests(RunTestCase):
         self.assertEqual((summary.old_added, summary.old_skipped), (1, 0))
         self.assertEqual(os.listdir(self.world.watch_dir), [f"{removed[0]}.torrent"])
 
-    def test_invalid_old_release_setting_aborts_the_run(self):
-        # Unlike cleanup and the disk limit, the old-release check has never
-        # been guarded - a bad value fails the run at that point.
-        with self.assertRaisesRegex(
-            ValueError, "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS"
-        ):
-            self._run(
-                FETCH_TORRENTS_DISTROS="arch",
-                FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
-                FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="weekly",
-            )
+    def assertRunCarriedOn(self, messages):
+        """Ratio logging and cleanup still ran after the old-release check."""
+        self.assertIn("[ratio] RATIOS START", messages)
+        self.assertEqual(
+            self.world.transmission.names, ["ubuntu-24.04-desktop-amd64.iso"]
+        )
+
+    def test_invalid_old_release_setting_skips_the_check_and_continues(self):
+        self.world.hold_current_and_superseded_ubuntu()
+
+        summary, messages = self._run(
+            FETCH_TORRENTS_DISTROS="arch",
+            FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
+            FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="weekly",
+            CLEANUP_KEEP_ONLY_LATEST_VERSION="true",
+        )
+
+        self.assertRegex(
+            "\n".join(messages),
+            r"(?m)^Could not check old releases: "
+            r"FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS: ",
+        )
+        self.assertRunCarriedOn(messages)
+        # Failed before producing counts: reported as "check not run".
+        self.assertEqual((summary.old_added, summary.old_skipped), (None, None))
+        self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
+
+    def test_failing_to_save_the_check_state_still_reports_the_counts(self):
+        self.world.hold_current_and_superseded_ubuntu()
+        wanted = self._candidate(3, "installer", 6, 10)
+        # A directory where the state file's temp copy goes: the real open()
+        # fails after the check has counted (and added) the release.
+        os.mkdir(ft.old_release_check_state_file + ".tmp")
+
+        summary, messages = self._check(
+            [wanted], CLEANUP_KEEP_ONLY_LATEST_VERSION="true"
+        )
+
+        self.assertRegex("\n".join(messages), r"(?m)^Could not check old releases: ")
+        self.assertFalse(os.path.exists(ft.old_release_check_state_file))
+        self.assertRunCarriedOn(messages)
+        self.assertEqual((summary.old_added, summary.old_skipped), (1, 0))
+        self.assertEqual(
+            messages[-1],
+            "Run complete in 0.00 seconds. 0 added, 0 existing, 0 not found "
+            "upstream, 0 failed. Old releases (FETCH_TORRENTS_CHECK_OLD_RELEASES): "
+            "1 added, 0 skipped.",
+        )
 
 
 class MainWiringTests(unittest.TestCase):

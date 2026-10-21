@@ -1809,8 +1809,10 @@ def run(
 ):
     """The daily run: fetch new releases (ratio-gated on the previous run's
     ratio log), optionally check old releases for demand, log seed ratios
-    for the next run, clean up, then enforce the disk-usage limit. Each
-    step after fetching logs its own failure and lets the rest carry on."""
+    for the next run, clean up, then enforce the disk-usage limit. Every
+    step after fetching (the old-release check included) logs its own
+    failure and lets the rest carry on; a step that fails part-way keeps
+    whatever it already put in the summary."""
     start_time = now()
     logger.info("Starting torrent fetch run.")
     logger.info("Selected distros for this run: %s", ", ".join(config.distros))
@@ -1825,7 +1827,10 @@ def run(
     _fetch_latest(config, fetchers, ratios, removed_history, summary)
 
     if config.check_old_releases:
-        _check_old_releases(config, today, summary)
+        try:
+            _check_old_releases(config, today, summary)
+        except Exception as exc:
+            logger.error("Could not check old releases: %s", exc)
 
     if wait_for_rpc():
         try:
