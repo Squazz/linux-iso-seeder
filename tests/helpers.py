@@ -438,12 +438,18 @@ def _refuse_network(*args, **kwargs):
 
 
 def block_network():
-    """Makes every real socket connection fail for the rest of the module
-    (call from setUpModule; returns the function that undoes it, for
-    unittest.addModuleCleanup). Mocked sockets are unaffected."""
+    """Makes every real socket connection, UDP datagram and DNS lookup fail
+    for the rest of the module (call from setUpModule; returns the function
+    that undoes it, for unittest.addModuleCleanup). Mocked sockets are
+    unaffected, and a test that patches getaddrinfo itself replaces the
+    guard for that test. socket.create_connection() needs no patch of its
+    own: it resolves through getaddrinfo and then calls connect."""
     patchers = [
         unittest.mock.patch.object(socket.socket, "connect", _refuse_network),
         unittest.mock.patch.object(socket.socket, "connect_ex", _refuse_network),
+        unittest.mock.patch.object(socket.socket, "sendto", _refuse_network),
+        unittest.mock.patch.object(socket, "getaddrinfo", _refuse_network),
+        unittest.mock.patch.object(socket, "gethostbyname", _refuse_network),
     ]
     for patcher in patchers:
         patcher.start()

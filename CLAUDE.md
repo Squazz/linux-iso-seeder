@@ -61,8 +61,9 @@ patching them by hand.
 Every test module starts with `import helpers` (which also puts the repo
 root on `sys.path`) and a `setUpModule()` calling `helpers.isolate_module()`:
 that scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*` etc. so they
-can't change test outcomes, and refuses any real network connection. HTTP is
-faked with `helpers.fake_response()` (a real `requests.Response`) or
+can't change test outcomes, and refuses any real network connection, UDP
+datagram or DNS lookup. HTTP is faked with `helpers.fake_response()` (a real
+`requests.Response`) or
 `helpers.RecordedPages` (pages captured by `scripts/record_fixtures.py`).
 `fetch_torrents` tests are split by concern: `test_ratio_gate.py`,
 `test_fetchers.py`, `test_scrapers.py`, `test_cleanup.py`,

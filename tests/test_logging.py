@@ -247,7 +247,8 @@ class LogRoutingTests(unittest.TestCase):
 
     def test_lines_carry_a_timestamp_and_the_logger_does_not_propagate(self):
         log_dir = helpers.make_temp_dir(self, "fetch_torrents_routing_")
-        _, file_handler, _ = configure_logging_for_test(self, log_dir)
+        stream_handler, file_handler, _ = configure_logging_for_test(self, log_dir)
+        stream_handler.setStream(io.StringIO())
 
         ft.logger.warning("plain warning")
         file_handler.flush()

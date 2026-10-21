@@ -10,12 +10,12 @@ Run with: python -m unittest discover -s tests
 """
 
 import os
+import socket
 import unittest
 import unittest.mock
 from datetime import date
 
 import helpers
-import requests
 import transmission_rpc
 
 import fetch_torrents as ft
@@ -263,8 +263,29 @@ class RemovedTests(unittest.TestCase):
 
 class NetworkGuardTests(unittest.TestCase):
     def test_real_connections_are_refused(self):
+        with (
+            socket.socket() as sock,
+            self.assertRaisesRegex(RuntimeError, "must not open network"),
+        ):
+            sock.connect(("192.0.2.1", 80))
+
+    def test_udp_datagrams_are_refused(self):
+        # A UDP tracker scrape never calls connect().
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock,
+            self.assertRaisesRegex(RuntimeError, "must not open network"),
+        ):
+            sock.sendto(b"x", ("192.0.2.1", 6969))
+
+    def test_dns_lookups_are_refused(self):
         with self.assertRaisesRegex(RuntimeError, "must not open network"):
-            requests.get("http://192.0.2.1/", timeout=1)
+            socket.getaddrinfo("example.com", 80)
+        with self.assertRaisesRegex(RuntimeError, "must not open network"):
+            socket.gethostbyname("example.com")
+
+    def test_create_connection_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "must not open network"):
+            socket.create_connection(("192.0.2.1", 80), timeout=1)
 
 
 if __name__ == "__main__":
