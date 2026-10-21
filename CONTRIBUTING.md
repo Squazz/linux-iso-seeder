@@ -116,6 +116,14 @@ don't assert exact log text. They're expected and are not worth a pragma on
 every log line. Assert the message only where its content matters, for example
 an error that names the bad input.
 
+This exemption covers only literals inside log calls and exception messages.
+Any other string-literal survivor (a URL scheme, a path separator, a codec
+error handler such as `"replace"`, a default value) is triaged like a
+behavioural survivor, using the steps above: test it, simplify the code, or
+accept it as an equivalent with a reason (the accepted list is in
+`tasks/README.md`). Several such survivors in `torrent_scrape.py` hid real
+gaps.
+
 **In CI**, don't gate on zero survivors. Use a score threshold for the critical
 modules, a committed baseline of known survivors (fail only on new ones), or
 mutate only the lines changed in the PR. Run it on a schedule rather than on

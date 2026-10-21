@@ -19,6 +19,12 @@ error text) are excluded, and a timeout counts as a kill. They come from
 full mutmut 2.5.1 runs over all three modules, with the whole suite as the
 runner. The task 27 numbers are kept for comparison.
 
+Since task 41 only literals inside log calls and exception messages are
+excluded. Any other literal survivor (a URL scheme, a separator, a codec
+error handler, a default value) is triaged like a behavioural one: test it,
+simplify the code, or accept it below as an equivalent with a reason. The
+numbers here used the older, wider rule; task 50 re-measures with this one.
+
 | Metric | Baseline (84761d3) | Target | Task 27 | Now (209292c) |
 | --- | --- | --- | --- | --- |
 | Mutation score, critical `fetch_torrents.py` functions¹ | 70.9% | ≥ 90% | 100% (258/258) | **100%** |
@@ -121,8 +127,8 @@ mutation score is 95.4% (1027/1076), up from 88.6%, with the critical set still
 ### Accepted equivalent mutants (task 36)
 
 These `fetch_torrents.py` survivors can't change behaviour, so they're accepted
-rather than tested. A mutmut run that leaves only these (plus string-literal
-mutants) counts as clean:
+rather than tested. A mutmut run that leaves only these (plus literals inside
+log calls and exception messages) counts as clean:
 - `.get("seeders", 0)` defaults in the old-release logging: a scrape result
   always carries `seeders`.
 - `logger.propagate = False` → `None`: logging treats `None` as false.
@@ -134,12 +140,22 @@ mutants) counts as clean:
 - `usedforsecurity=False` → `True` on `compute_info_hash`'s SHA-1 (task 38):
   identical except on a FIPS-restricted OpenSSL, where `True` would refuse
   SHA-1. The flag just says the hash isn't a security control.
+- `safe=""` → `safe="XXXX"` in `torrent_scrape.py`'s
+  `build_scrape_request_url` (task 41): `X` is an unreserved character that
+  `quote_from_bytes` never escapes, so the URL is byte-for-byte the same
+  (and a tracker would decode `%58` and `X` alike anyway).
 
 In `configure_transmission.py` (task 31), `save_settings`'s `indent=4` and
 `sort_keys=True` are accepted too. transmission-daemon owns settings.json and
 rewrites it in its own layout when it saves, so ours is never relied on. The
 fetch_torrents state files are different: only this code writes them, so
 their layout is pinned in `tests/test_persistence.py`.
+
+So are its `""` defaults (task 41): `value or ""` in `_parse_positive_int`
+and `_parse_bool`, and the `env.get(..., "")` defaults for
+`TRANSMISSION_PEER_LIMIT_GLOBAL`, `TRANSMISSION_PEER_LIMIT_PER_TORRENT` and
+`TRANSMISSION_PORT_FORWARDING`. `"XXXX"` is not a positive integer or
+`true`/`false`, so it is ignored exactly as `""` is.
 
 Task 36 removed three other equivalents by simplifying the code, so mutmut
 no longer generates them: Arch's `max(..., key=...)` became `max()`, Fedora's
@@ -163,7 +179,7 @@ hides real gaps (tasks 40 and 41).
 | --- | --- | --- | --- | --- | --- |
 | 39 | [Push the image that was tested, not a rebuild](39-ship-the-tested-image.md) | P1 | CI | — | done |
 | 40 | [https scrape URLs and non-UTF-8 tracker failure reasons](40-https-scrape-and-non-utf8-failures.md) | P2 | NO_REFACTOR | — | done |
-| 41 | [Only exclude message-text literals from the mutation score](41-narrow-literal-exclusion-rule.md) | P3 | docs | 40 | open |
+| 41 | [Only exclude message-text literals from the mutation score](41-narrow-literal-exclusion-rule.md) | P3 | docs | 40 | done |
 | 42 | [Network guard refuses UDP and DNS; stop the stderr leak](42-seal-the-network-guard.md) | P2 | NO_REFACTOR | — | open |
 | 43 | [Remove first-party doubling; drop the LOW_VALUE test](43-remove-first-party-doubling.md) | P2 | NO_REFACTOR | — | open |
 | 44 | [Make `log_seed_ratios_via_http`'s `auth` required](44-require-rpc-auth.md) | P3 | REFACTOR_REQUIRED | 43 | open |
