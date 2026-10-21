@@ -256,7 +256,13 @@ class RunTestCase(unittest.TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _run(self, fetchers=ft.DEFAULT_FETCHERS, now=lambda: 1000.0, **env):
+    def _run(
+        self,
+        fetchers=ft.DEFAULT_FETCHERS,
+        now=lambda: 1000.0,
+        old_release_discovery=ft.OLD_RELEASE_DISCOVERY,
+        **env,
+    ):
         """Runs ft.run() with load_config(env); returns (summary, messages)."""
         with self.assertLogs(ft.logger, level="DEBUG") as logs:
             summary = ft.run(
@@ -265,6 +271,7 @@ class RunTestCase(unittest.TestCase):
                 today=date(2026, 9, 2),
                 now=now,
                 fetchers=fetchers,
+                old_release_discovery=old_release_discovery,
                 disk_usage=self.world.disk_usage,
                 wait_for_rpc=self.world.wait_for_rpc,
             )
@@ -604,12 +611,12 @@ class RunTests(RunTestCase):
 
     def test_old_release_check_is_off_by_default(self):
         discovered = []
-        with unittest.mock.patch.dict(
-            ft.OLD_RELEASE_DISCOVERY,
-            {"kali": lambda: discovered.append("kali") or {}},
-            clear=True,
-        ):
-            summary, _ = self._run(FETCH_TORRENTS_DISTROS="kali", fetchers=())
+
+        summary, _ = self._run(
+            FETCH_TORRENTS_DISTROS="kali",
+            fetchers=(),
+            old_release_discovery={"kali": lambda: discovered.append("kali") or {}},
+        )
 
         self.assertEqual(discovered, [])
         self.assertEqual((summary.old_added, summary.old_skipped), (None, None))
@@ -627,6 +634,7 @@ class OldReleaseRunTests(RunTestCase):
     def setUp(self):
         super().setUp()
         self.swarms = {}
+        # boundary double: opens UDP/HTTP tracker sockets
         patcher = unittest.mock.patch.object(
             ft.torrent_scrape, "scrape_torrent", side_effect=self._scrape
         )
@@ -655,19 +663,17 @@ class OldReleaseRunTests(RunTestCase):
             json.dump(data, f)
 
     def _check(self, candidates, fetchers=(), **env):
-        with unittest.mock.patch.dict(
-            ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: dict(candidates)}, clear=True
-        ):
-            return self._run(
-                fetchers=fetchers,
-                FETCH_TORRENTS_DISTROS="kali",
-                FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
-                FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS="4",
-                FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO="0.5",
-                FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS="true",
-                FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="10",
-                **env,
-            )
+        return self._run(
+            fetchers=fetchers,
+            old_release_discovery={"kali": lambda: dict(candidates)},
+            FETCH_TORRENTS_DISTROS="kali",
+            FETCH_TORRENTS_CHECK_OLD_RELEASES="true",
+            FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS="4",
+            FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO="0.5",
+            FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS="true",
+            FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS="10",
+            **env,
+        )
 
     def test_every_always_log_prefix_matches_a_message_the_run_emits(self):
         # FETCH_TORRENTS_ALWAYS_LOG lets lines through by prefix, so a

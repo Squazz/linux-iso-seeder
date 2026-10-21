@@ -49,6 +49,9 @@ The daily run itself is `run(config, client_factory=..., today=...)` with
 its I/O (Transmission client, clock, disk usage) injected, so it is tested
 directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
 `tests/test_daily_run.py` keeps one runpy test for the `__main__` wiring.
+Which distros have old-release discovery is injected the same way
+(`run(old_release_discovery=)`, `check_old_releases_for_demand(discovery=)`),
+so tests pass a mapping instead of patching `OLD_RELEASE_DISCOVERY`.
 Env vars are read once by `load_config(env)`. Transmission's HTTP RPC (the
 ratio log) is faked with `helpers.FakeTransmissionRpc` as `requests.post`:
 409 plus session id first, like the daemon, recording each call's auth.

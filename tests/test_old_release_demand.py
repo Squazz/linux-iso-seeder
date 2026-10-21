@@ -126,279 +126,6 @@ class HasUnmetDemandTests(unittest.TestCase):
         self.assertFalse(demand({"leechers": 3, "seeders": 673}, min_leechers=1))
 
 
-class EvaluateOldReleaseDemandTests(unittest.TestCase):
-    def test_404_is_not_kept_and_not_scraped(self):
-        response = helpers.fake_response(status=404)
-
-        with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=response),
-            unittest.mock.patch.object(
-                ft.torrent_scrape, "scrape_torrent"
-            ) as mock_scrape,
-        ):
-            keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                "ubuntu-14.04.6-desktop-amd64.iso",
-                "https://example.invalid/x.torrent",
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-
-        mock_scrape.assert_not_called()
-        self.assertFalse(keep)
-        self.assertIsNone(torrent_bytes)
-        self.assertIsNone(scrape_result)
-
-    def test_download_failure_is_not_kept(self):
-        with unittest.mock.patch.object(
-            ft.requests, "get", side_effect=ConnectionError("nope")
-        ):
-            keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                "ubuntu-14.04.6-desktop-amd64.iso",
-                "https://example.invalid/x.torrent",
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-
-        self.assertFalse(keep)
-        self.assertIsNone(torrent_bytes)
-        self.assertIsNone(scrape_result)
-
-    def test_scrape_below_threshold_is_not_kept(self):
-        response = helpers.fake_response(b"fake torrent bytes")
-
-        with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=response),
-            unittest.mock.patch.object(
-                ft.torrent_scrape,
-                "scrape_torrent",
-                return_value={
-                    "tracker": "http://t.example/scrape",
-                    "seeders": 10,
-                    "leechers": 0,
-                    "completed": 0,
-                },
-            ),
-        ):
-            keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                "ubuntu-14.04.6-desktop-amd64.iso",
-                "https://example.invalid/x.torrent",
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-
-        self.assertFalse(keep)
-        self.assertEqual(torrent_bytes, b"fake torrent bytes")
-        self.assertEqual(scrape_result["leechers"], 0)
-
-    def test_scrape_meeting_threshold_is_kept(self):
-        response = helpers.fake_response(b"fake torrent bytes")
-
-        with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=response),
-            unittest.mock.patch.object(
-                ft.torrent_scrape,
-                "scrape_torrent",
-                return_value={
-                    "tracker": "http://t.example/scrape",
-                    "seeders": 10,
-                    "leechers": 30,
-                    "completed": 0,
-                },
-            ),
-        ):
-            keep, torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                "ubuntu-14.04.6-desktop-amd64.iso",
-                "https://example.invalid/x.torrent",
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-
-        self.assertTrue(keep)
-        self.assertEqual(torrent_bytes, b"fake torrent bytes")
-        self.assertEqual(scrape_result["leechers"], 30)
-
-    def test_meets_absolute_floor_but_already_well_seeded_is_not_kept(self):
-        response = helpers.fake_response(b"fake torrent bytes")
-
-        # 1 leecher clears a min_leechers=1 floor, but 1000 seeders already
-        # cover it - not unmet demand.
-        with (
-            unittest.mock.patch.object(ft.requests, "get", return_value=response),
-            unittest.mock.patch.object(
-                ft.torrent_scrape,
-                "scrape_torrent",
-                return_value={
-                    "tracker": "http://t.example/scrape",
-                    "seeders": 1000,
-                    "leechers": 1,
-                    "completed": 0,
-                },
-            ),
-        ):
-            keep, _torrent_bytes, scrape_result = ft.evaluate_old_release_demand(
-                "ubuntu-14.04.6-desktop-amd64.iso",
-                "https://example.invalid/x.torrent",
-                min_leechers=1,
-                min_leecher_ratio=1.2,
-                allow_zero_seeders=False,
-            )
-
-        self.assertFalse(keep)
-        self.assertEqual(scrape_result["leechers"], 1)
-
-
-class CheckOldReleasesForDemandTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp_watch_dir = helpers.use_watch_dir(self)
-
-    def test_adds_only_torrents_with_unmet_demand(self):
-        # Neither name matches LOW_DEMAND_PATTERN - that filtering is
-        # covered separately by test_low_demand_variant_is_filtered_before_evaluation.
-        candidates = {
-            "kali-linux-2026.1-installer-purple-amd64.iso": "https://example.invalid/dead.torrent",
-            "kali-linux-2026.1-installer-amd64.iso": "https://example.invalid/alive.torrent",
-        }
-
-        def fake_evaluate(
-            name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15
-        ):
-            if "purple" in name:
-                return (
-                    False,
-                    b"dead bytes",
-                    {"tracker": "t", "seeders": 5, "leechers": 0, "completed": 0},
-                )
-            return (
-                True,
-                b"alive bytes",
-                {"tracker": "t", "seeders": 5, "leechers": 30, "completed": 0},
-            )
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand", side_effect=fake_evaluate
-            ),
-        ):
-            added, skipped, _ = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                today=date(2026, 1, 8),
-            )
-
-        self.assertEqual(added, 1)
-        self.assertEqual(skipped, 1)
-        alive_path = os.path.join(
-            self.tmp_watch_dir, "kali-linux-2026.1-installer-amd64.iso.torrent"
-        )
-        dead_path = os.path.join(
-            self.tmp_watch_dir, "kali-linux-2026.1-installer-purple-amd64.iso.torrent"
-        )
-        with open(alive_path, "rb") as f:
-            self.assertEqual(f.read(), b"alive bytes")
-        self.assertFalse(os.path.exists(dead_path))
-
-    def test_skips_distros_without_old_release_discovery(self):
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, {}, clear=True):
-            added, skipped, _ = ft.check_old_releases_for_demand(
-                ["ubuntu"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                today=date(2026, 1, 8),
-            )
-
-        self.assertEqual((added, skipped), (0, 0))
-
-    def test_already_present_torrent_is_not_re_evaluated(self):
-        name = "kali-linux-2026.1-installer-amd64.iso"
-        existing_path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
-        with open(existing_path, "wb") as f:
-            f.write(b"already here")
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY,
-                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
-                clear=True,
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand"
-            ) as mock_evaluate,
-        ):
-            added, skipped, _ = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                today=date(2026, 1, 8),
-            )
-
-        mock_evaluate.assert_not_called()
-        self.assertEqual((added, skipped), (0, 0))
-
-    def test_unsafe_candidate_name_is_skipped_without_evaluation(self):
-        name = "kali-linux-2026.1-installer-../../etc/cron.d/evil"
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY,
-                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
-                clear=True,
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand"
-            ) as mock_evaluate,
-        ):
-            added, skipped, _ = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                today=date(2026, 1, 8),
-            )
-
-        mock_evaluate.assert_not_called()
-        self.assertEqual((added, skipped), (0, 1))
-
-    def test_low_demand_variant_is_filtered_before_evaluation(self):
-        name = "kali-linux-2026.1-installer-netinst-amd64.iso"
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY,
-                {"kali": lambda: {name: "https://example.invalid/x.torrent"}},
-                clear=True,
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand"
-            ) as mock_evaluate,
-        ):
-            added, skipped, _ = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                today=date(2026, 1, 8),
-            )
-
-        mock_evaluate.assert_not_called()
-        self.assertEqual((added, skipped), (0, 0))
-
-
 class ShouldRecheckOldReleaseTests(unittest.TestCase):
     """Without this gate, check_old_releases_for_demand() would re-download
     and re-scrape every not-yet-wanted candidate on every daily run
@@ -435,275 +162,6 @@ class ShouldRecheckOldReleaseTests(unittest.TestCase):
                 "x", state, date(2026, 1, 8), recheck_interval_days=7
             )
         )
-
-
-class CheckOldReleasesForDemandStateTests(unittest.TestCase):
-    """check_old_releases_for_demand() must consult both the recheck-state
-    (skip candidates checked too recently) and the removed-history (skip
-    candidates cleanup has already given up on) before ever hitting the
-    network, and must record a fresh check for anything it does evaluate."""
-
-    def setUp(self):
-        self.tmp_watch_dir = helpers.use_watch_dir(self)
-
-    def test_recently_checked_candidate_is_skipped_without_network_call(self):
-        name = "kali-linux-2026.1-installer-amd64.iso"
-        candidates = {name: "https://example.invalid/x.torrent"}
-        check_state = {name: {"last_checked": "2026-01-05", "leechers": 0}}
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand"
-            ) as mock_evaluate,
-        ):
-            added, skipped, new_state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state=check_state,
-                removed_history={},
-                today=date(2026, 1, 8),
-                recheck_interval_days=7,
-            )
-
-        mock_evaluate.assert_not_called()
-        self.assertEqual((added, skipped), (0, 1))
-        self.assertEqual(new_state, check_state)
-
-    def test_previously_removed_candidate_is_skipped_without_network_call(self):
-        name = "kali-linux-2026.1-installer-amd64.iso"
-        candidates = {name: "https://example.invalid/x.torrent"}
-        removed_history = helpers.removed(name)
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft, "evaluate_old_release_demand"
-            ) as mock_evaluate,
-        ):
-            added, skipped, _new_state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state={},
-                removed_history=removed_history,
-                today=date(2026, 1, 8),
-                recheck_interval_days=7,
-            )
-
-        mock_evaluate.assert_not_called()
-        self.assertEqual((added, skipped), (0, 1))
-
-    def test_due_candidate_is_evaluated_and_recorded(self):
-        name = "kali-linux-2026.1-installer-amd64.iso"
-        candidates = {name: "https://example.invalid/x.torrent"}
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft,
-                "evaluate_old_release_demand",
-                return_value=(
-                    True,
-                    b"bytes",
-                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
-                ),
-            ),
-        ):
-            added, skipped, new_state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state={},
-                removed_history={},
-                today=date(2026, 1, 8),
-                recheck_interval_days=7,
-            )
-
-        self.assertEqual((added, skipped), (1, 0))
-        self.assertEqual(
-            new_state[name], {"last_checked": "2026-01-08", "leechers": 30}
-        )
-
-    def test_today_defaults_to_the_current_date(self):
-        name = "kali-linux-2026.1-installer-amd64.iso"
-        candidates = {name: "https://example.invalid/x.torrent"}
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft,
-                "evaluate_old_release_demand",
-                return_value=(
-                    False,
-                    b"bytes",
-                    {"tracker": "t", "seeders": 1, "leechers": 0, "completed": 0},
-                ),
-            ),
-            unittest.mock.patch.object(
-                ft, "date", helpers.fixed_date(date(2026, 3, 14))
-            ),
-        ):
-            _added, _skipped, new_state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-            )
-
-        self.assertEqual(new_state[name], {"last_checked": "2026-03-14", "leechers": 0})
-
-    def test_no_demand_result_is_still_recorded_for_future_recheck_gating(self):
-        name = "kali-linux-2026.1-installer-arm64.iso"
-        candidates = {name: "https://example.invalid/x.torrent"}
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft,
-                "evaluate_old_release_demand",
-                return_value=(
-                    False,
-                    b"bytes",
-                    {"tracker": "t", "seeders": 1, "leechers": 0, "completed": 0},
-                ),
-            ),
-        ):
-            added, skipped, new_state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state={},
-                removed_history={},
-                today=date(2026, 1, 8),
-                recheck_interval_days=7,
-            )
-
-        self.assertEqual((added, skipped), (0, 1))
-        self.assertEqual(new_state[name], {"last_checked": "2026-01-08", "leechers": 0})
-
-
-class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
-    """An old release whose .torrent can't be written in full must leave no
-    <name>.torrent behind (it would count as present forever) and must not
-    be recorded as checked, so the next run tries it again."""
-
-    NAME = "kali-linux-2026.1-installer-amd64.iso"
-
-    def setUp(self):
-        self.tmp_watch_dir = helpers.use_watch_dir(self)
-
-    def _check(self):
-        candidates = {self.NAME: "https://example.invalid/x.torrent"}
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft,
-                "evaluate_old_release_demand",
-                return_value=(
-                    True,
-                    b"torrent bytes" * 32,
-                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
-                ),
-            ),
-        ):
-            return ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state={},
-                removed_history={},
-                today=date(2026, 1, 8),
-            )
-
-    def test_failed_write_leaves_no_file_and_is_not_recorded(self):
-        with helpers.disk_full_open(ft):
-            added, skipped, state = self._check()
-
-        self.assertEqual((added, skipped), (0, 1))
-        self.assertEqual(os.listdir(self.tmp_watch_dir), [])
-        self.assertNotIn(self.NAME, state)
-
-    def test_next_run_adds_it_after_a_failed_write(self):
-        with helpers.disk_full_open(ft):
-            self._check()
-
-        added, _, _ = self._check()
-
-        self.assertEqual(added, 1)
-        with open(os.path.join(self.tmp_watch_dir, f"{self.NAME}.torrent"), "rb") as f:
-            self.assertEqual(f.read(), b"torrent bytes" * 32)
-        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
-
-    def test_a_failed_write_is_counted_and_later_candidates_still_added(self):
-        names = [
-            f"kali-linux-2026.1-installer-{arch}.iso" for arch in ("amd64", "arm64")
-        ]
-        # An unsafe name is skipped first, so the failed write is a second skip.
-        candidates = {"kali-linux/../evil": "https://example.invalid/evil.torrent"}
-        candidates |= {
-            name: f"https://example.invalid/{name}.torrent" for name in names
-        }
-        real_write = ft._write_watch_file
-
-        def write(dest, data):
-            if os.path.basename(dest) == f"{names[0]}.torrent":
-                raise OSError(28, "No space left on device")
-            real_write(dest, data)
-
-        with (
-            unittest.mock.patch.dict(
-                ft.OLD_RELEASE_DISCOVERY, {"kali": lambda: candidates}, clear=True
-            ),
-            unittest.mock.patch.object(
-                ft,
-                "evaluate_old_release_demand",
-                return_value=(
-                    True,
-                    b"torrent bytes",
-                    {"tracker": "t", "seeders": 1, "leechers": 30, "completed": 0},
-                ),
-            ),
-            unittest.mock.patch.object(ft, "_write_watch_file", write),
-        ):
-            added, skipped, state = ft.check_old_releases_for_demand(
-                ["kali"],
-                include_low_demand=False,
-                min_leechers=1,
-                min_leecher_ratio=0.0,
-                allow_zero_seeders=False,
-                check_state={},
-                removed_history={},
-                today=date(2026, 1, 8),
-            )
-
-        self.assertEqual((added, skipped), (1, 2))
-        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{names[1]}.torrent"])
-        self.assertEqual(list(state), [names[1]])
 
 
 class OldReleaseTracker:
@@ -749,6 +207,7 @@ class OldReleaseTracker:
     def patch(self, testcase):
         for target, name, fake in (
             (ft.requests, "get", self.get),
+            # boundary double: opens UDP/HTTP tracker sockets
             (ft.torrent_scrape, "scrape_torrent", self.scrape_torrent),
         ):
             patcher = unittest.mock.patch.object(target, name, side_effect=fake)
@@ -844,6 +303,29 @@ class EvaluateOldReleaseDemandBoundaryTests(unittest.TestCase):
             [(r.levelname, r.getMessage()) for r in logs.records],
             [("INFO", f"{url} not found upstream (404) during old-release check.")],
         )
+        self.assertEqual(self.tracker.scrapes, [])
+
+    def test_connection_error_is_logged_as_a_failed_download(self):
+        url = "https://cdimage.example/unreachable.torrent"
+        self.tracker.routes[url] = ConnectionError("connection refused")
+
+        with self.assertLogs(ft.logger, level="INFO") as logs:
+            result = self._evaluate(url)
+
+        self.assertEqual(result, (False, None, None))
+        self.assertEqual(
+            [(r.levelname, r.getMessage()) for r in logs.records],
+            [
+                (
+                    "ERROR",
+                    (
+                        f"Failed to download {url} for old-release check: "
+                        "connection refused"
+                    ),
+                )
+            ],
+        )
+        self.assertEqual(self.tracker.scrapes, [])
 
     def test_server_error_is_logged_as_a_failed_download(self):
         url = "https://cdimage.example/broken.torrent"
@@ -893,8 +375,9 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
             "today": date(2026, 1, 8),
         }
         kwargs.update(overrides)
-        with unittest.mock.patch.dict(ft.OLD_RELEASE_DISCOVERY, discovery, clear=True):
-            return ft.check_old_releases_for_demand(list(distros), **kwargs)
+        return ft.check_old_releases_for_demand(
+            list(distros), discovery=discovery, **kwargs
+        )
 
     def _watch_files(self):
         return sorted(os.listdir(self.tmp_watch_dir))
@@ -1039,6 +522,106 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
         added, _, _ = self._check({"kali": lambda: candidates}, check_state=check_state)
 
         self.assertEqual(added, 1)
+
+    def test_today_and_saved_state_default_to_now_and_empty(self):
+        name = kali(3)
+        candidates = {name: self.tracker.candidate(name, swarm(2, 10))}
+
+        with unittest.mock.patch.object(
+            ft, "date", helpers.fixed_date(date(2026, 3, 14))
+        ):
+            _added, _skipped, new_state = ft.check_old_releases_for_demand(
+                ["kali"],
+                include_low_demand=False,
+                min_leechers=4,
+                min_leecher_ratio=0.5,
+                allow_zero_seeders=False,
+                discovery={"kali": lambda: candidates},
+            )
+
+        self.assertEqual(
+            new_state, {name: {"last_checked": "2026-03-14", "leechers": 2}}
+        )
+
+
+class CheckOldReleasesAtomicWriteTests(unittest.TestCase):
+    """An old release whose .torrent can't be written in full must leave no
+    <name>.torrent behind (it would count as present forever) and must not
+    be recorded as checked, so the next run tries it again. The real
+    evaluate_old_release_demand() runs (OldReleaseTracker); the disk fills
+    at fetch_torrents' own open()."""
+
+    NAME = kali(4)
+
+    def setUp(self):
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
+        self.tracker = OldReleaseTracker()
+        self.tracker.patch(self)
+
+    def _check(self, candidates):
+        """Every served candidate has unmet demand (30 leechers, 1 seeder)."""
+        return ft.check_old_releases_for_demand(
+            ["kali"],
+            include_low_demand=False,
+            min_leechers=4,
+            min_leecher_ratio=0.5,
+            allow_zero_seeders=False,
+            check_state={},
+            removed_history={},
+            today=date(2026, 1, 8),
+            discovery={"kali": lambda: candidates},
+        )
+
+    def _wanted(self, *names):
+        return {name: self.tracker.candidate(name, swarm(30, 1)) for name in names}
+
+    def test_failed_write_leaves_no_file_and_is_not_recorded(self):
+        with (
+            helpers.disk_full_open(ft),
+            self.assertLogs(ft.logger, level="ERROR") as logs,
+        ):
+            added, skipped, state = self._check(self._wanted(self.NAME))
+
+        self.assertEqual((added, skipped), (0, 1))
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [])
+        self.assertEqual(state, {})
+        self.assertEqual(
+            [r.getMessage() for r in logs.records],
+            [
+                (
+                    f"Failed to save old release {self.NAME}: "
+                    "[Errno 28] No space left on device"
+                )
+            ],
+        )
+
+    def test_next_run_adds_it_after_a_failed_write(self):
+        candidates = self._wanted(self.NAME)
+        with helpers.disk_full_open(ft), self.assertLogs(ft.logger, level="ERROR"):
+            self._check(candidates)
+
+        added, _, _ = self._check(candidates)
+
+        self.assertEqual(added, 1)
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent"])
+        with open(os.path.join(self.tmp_watch_dir, f"{self.NAME}.torrent"), "rb") as f:
+            self.assertEqual(f.read(), f"{self.NAME} metadata".encode())
+
+    def test_a_failed_write_is_counted_and_later_candidates_still_added(self):
+        later = kali(4, "live")
+        # An unsafe name is skipped first, so the failed write is a second skip.
+        candidates = {"kali-linux/../evil": "https://cdimage.example/evil.torrent"}
+        candidates |= self._wanted(self.NAME, later)
+
+        with (
+            helpers.disk_full_open(ft, only=self.NAME),
+            self.assertLogs(ft.logger, level="ERROR"),
+        ):
+            added, skipped, state = self._check(candidates)
+
+        self.assertEqual((added, skipped), (1, 2))
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{later}.torrent"])
+        self.assertEqual(list(state), [later])
 
 
 if __name__ == "__main__":

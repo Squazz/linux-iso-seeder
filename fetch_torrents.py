@@ -1061,6 +1061,7 @@ def check_old_releases_for_demand(
     removed_history=None,
     today=None,
     recheck_interval_days=7,
+    discovery=OLD_RELEASE_DISCOVERY,
 ):
     """FETCH_TORRENTS_CHECK_OLD_RELEASES: for distros with old-release
     discovery, scrape each not-yet-seeded candidate's trackers and add it to
@@ -1074,7 +1075,8 @@ def check_old_releases_for_demand(
     run - see should_recheck_old_release(). removed_history
     ({name: {'removed_date', 'reason'}}) is consulted so a candidate cleanup
     already gave up on isn't automatically re-added from a momentary demand
-    blip - see record_removal().
+    blip - see record_removal(). discovery maps a distro to the function
+    that lists its old-release candidates ({name: torrent url}).
 
     Returns (added_count, skipped_count, updated check_state).
     """
@@ -1086,7 +1088,7 @@ def check_old_releases_for_demand(
     skipped = 0
 
     for distro in selected_distros:
-        discover = OLD_RELEASE_DISCOVERY.get(distro)
+        discover = discovery.get(distro)
         if not discover:
             continue
 
@@ -1738,7 +1740,7 @@ def _fetch_latest(config, fetchers, ratios, removed_history, summary):
                 summary.failed += 1
 
 
-def _check_old_releases(config, today, summary):
+def _check_old_releases(config, today, discovery, summary):
     config.require(
         "old_release_min_leechers",
         "old_release_min_leecher_ratio",
@@ -1768,6 +1770,7 @@ def _check_old_releases(config, today, summary):
         removed_history,
         today,
         config.old_release_recheck_days,
+        discovery,
     )
     save_old_release_check_state(old_release_check_state_file, check_state)
     logger.info(
@@ -1803,6 +1806,7 @@ def run(
     today,
     now=time.time,
     fetchers=DEFAULT_FETCHERS,
+    old_release_discovery=OLD_RELEASE_DISCOVERY,
     disk_usage=shutil.disk_usage,
     download_path="/downloads",
     wait_for_rpc=wait_for_transmission_rpc,
@@ -1828,7 +1832,7 @@ def run(
 
     if config.check_old_releases:
         try:
-            _check_old_releases(config, today, summary)
+            _check_old_releases(config, today, old_release_discovery, summary)
         except Exception as exc:
             logger.error("Could not check old releases: %s", exc)
 

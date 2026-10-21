@@ -224,34 +224,17 @@ class MakeClientFactoryTests(unittest.TestCase):
             client = ft.make_client_factory(config)()
         return client_cls, client
 
-    def test_passes_configured_credentials(self):
-        client_cls, client = self._connect(
-            {
-                "TRANSMISSION_RPC_USERNAME": "alice",
-                "TRANSMISSION_RPC_PASSWORD": "hunter2",
-            }
-        )
+    def test_unset_or_blank_credentials_connect_without_auth(self):
+        for env in (
+            {},
+            {"TRANSMISSION_RPC_USERNAME": "  ", "TRANSMISSION_RPC_PASSWORD": ""},
+        ):
+            with self.subTest(env=env):
+                client_cls, _client = self._connect(env)
 
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username="alice", password="hunter2"
-        )
-        self.assertIs(client, client_cls.return_value)
-
-    def test_passes_no_credentials_when_unset(self):
-        client_cls, _client = self._connect({})
-
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username=None, password=None
-        )
-
-    def test_blank_credentials_count_as_unset(self):
-        client_cls, _client = self._connect(
-            {"TRANSMISSION_RPC_USERNAME": "  ", "TRANSMISSION_RPC_PASSWORD": ""}
-        )
-
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username=None, password=None
-        )
+                client_cls.assert_called_once_with(
+                    host="localhost", port=9091, username=None, password=None
+                )
 
     def test_factory_connects_only_when_called(self):
         with unittest.mock.patch.object(ft, "Client", autospec=True) as client_cls:

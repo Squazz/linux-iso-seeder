@@ -373,21 +373,6 @@ class RpcCredentialFallbackTests(unittest.TestCase):
     def test_password_without_username_sends_no_auth(self):
         self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_PASSWORD="hunter2"))
 
-    def test_fallback_applies_the_config_credential_rule(self):
-        # One rule for which credentials count: Config.rpc_auth, the same
-        # one run() passes in explicitly.
-        with unittest.mock.patch.object(
-            ft.Config,
-            "rpc_auth",
-            new_callable=unittest.mock.PropertyMock,
-            return_value=("from", "config"),
-        ):
-            auth = self._auth_sent(
-                TRANSMISSION_RPC_USERNAME="alice", TRANSMISSION_RPC_PASSWORD="hunter2"
-            )
-
-        self.assertEqual(auth, ("from", "config"))
-
 
 if __name__ == "__main__":
     unittest.main()

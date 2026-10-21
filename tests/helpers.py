@@ -315,10 +315,11 @@ def _patch_for_test(testcase, target, attr, value):
     testcase.addCleanup(patcher.stop)
 
 
-def disk_full_open(module):
+def disk_full_open(module, only=None):
     """Patch `module`'s own `open` so a binary write keeps half its bytes and
     then fails with ENOSPC, as when the disk fills mid-write. Scoped to the
-    module (not builtins) so logging's own file writes are unaffected."""
+    module (not builtins) so logging's own file writes are unaffected. With
+    `only`, just writes to a path containing that text fail."""
     real_open = open
 
     class HalfWritingFile:
@@ -338,7 +339,8 @@ def disk_full_open(module):
 
     def fake_open(path, mode="r", *args, **kwargs):
         f = real_open(path, mode, *args, **kwargs)
-        return HalfWritingFile(f) if "wb" in mode else f
+        failing = "wb" in mode and (only is None or only in os.fspath(path))
+        return HalfWritingFile(f) if failing else f
 
     return unittest.mock.patch.object(module, "open", fake_open, create=True)
 
