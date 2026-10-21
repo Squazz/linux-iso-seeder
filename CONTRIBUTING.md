@@ -40,16 +40,21 @@ applied its overrides, that `transmission-daemon` is running, that the
 daily `fetch_torrents.py` run started, and that every module imports.
 
 When `alpine:latest` moves to new `python3` or `py3-*` versions, bump the
-pins in `requirements-test.txt` and CI's `python-version` in
-`.github/workflows/docker-image.yml` to match.
+pins in `requirements-test.txt`, CI's `python-version` in
+`.github/workflows/docker-image.yml` and `PYTHON_VERSION` in
+`.github/workflows/drift.yml` to match.
 
-The `test` job also lints the shell scripts and the Dockerfile with pinned
-images. To run them locally:
+The `test` job also lints the shell scripts, the Dockerfile and the
+workflows with pinned images. To run them locally:
 
 ```sh
 docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 entrypoint.sh scripts/*.sh
 docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 ```
+
+`docker-image.yml` doesn't run for a change that only touches the other
+workflows (`paths-ignore`), so run actionlint locally when you edit one.
 
 ## Upstream drift
 

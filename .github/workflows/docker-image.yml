@@ -40,7 +40,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        # alpine:latest's python3 minor; bump with requirements-test.txt.
+        # alpine:latest's python3 minor; bump with requirements-test.txt
+        # and PYTHON_VERSION in drift.yml.
         python-version: "3.14"
 
     - name: Install dev dependencies
@@ -60,6 +61,11 @@ jobs:
 
     - name: Lint Dockerfile
       run: docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+
+    # Every workflow in .github/workflows/, including the `run:` scripts
+    # (via the image's bundled shellcheck). No ignores.
+    - name: Lint workflows
+      run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
     - name: Run tests
       run: coverage run -m unittest discover -s tests -v
