@@ -18,6 +18,7 @@ A typical test module:
 
 import errno
 import glob
+import importlib.util
 import inspect
 import json
 import os
@@ -111,6 +112,39 @@ def removed(name, ratio=None, *, on="2026-01-01"):
     if ratio is not None:
         entry["ratio"] = ratio
     return {name: entry}
+
+
+def load_script(name):
+    """Imports scripts/<name>.py from its path, so scripts/ itself never
+    lands on sys.path for other tests. sys.path is restored afterwards: a
+    script run inside the image may add the image's own directories."""
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(REPO_ROOT, "scripts", f"{name}.py")
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    saved_path = list(sys.path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = saved_path
+    return module
+
+
+class FakeClock:
+    """A monotonic clock that only moves when `sleep` is called, recording
+    each sleep."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
 
 
 def make_temp_dir(testcase, prefix):

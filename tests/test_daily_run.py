@@ -129,25 +129,9 @@ class FakeWorld:
         )
 
 
-class FakeClock:
-    """A monotonic clock that only moves when `sleep` is called, recording
-    each sleep."""
-
-    def __init__(self):
-        self.now = 0.0
-        self.sleeps = []
-
-    def __call__(self):
-        return self.now
-
-    def sleep(self, seconds):
-        self.sleeps.append(seconds)
-        self.now += seconds
-
-
 class WaitForTransmissionRpcTests(unittest.TestCase):
     def setUp(self):
-        self.clock = FakeClock()
+        self.clock = helpers.FakeClock()
         self.attempts = []
 
     def _connect_after(self, refusals):

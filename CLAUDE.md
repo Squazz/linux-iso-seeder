@@ -77,6 +77,11 @@ fakes the tracker scrape for the old-release check).
 `test_persistence.py`, `test_logging.py`, `test_old_release_demand.py`,
 `test_config.py` (`load_config()`, `parse_bool()`, `make_client_factory()`,
 the run summary) and `test_daily_run.py` (`run()`, `__main__`).
+Tests for the `scripts/` the drift job runs (`test_live_check.py`,
+`test_record_fixtures.py`, `test_transmission_roundtrip.py`) import them
+with `helpers.load_script(name)`, so `scripts/` never lands on `sys.path`;
+their network, output directory and clock are injected (polling loops take
+`clock=`/`sleep=`, faked with `helpers.FakeClock`).
 `test_helpers.py` tests the doubles in `tests/helpers.py` themselves;
 `test_repo_hygiene.py` checks the repository itself (shebang files are
 executable in git).

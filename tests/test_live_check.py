@@ -6,21 +6,13 @@ Run with: python -m unittest discover -s tests
 """
 
 import contextlib
-import importlib.util
 import io
-import os
 import unittest
 
 import helpers
 import requests
 
-# Loaded from its path so scripts/ never lands on sys.path for other tests.
-_spec = importlib.util.spec_from_file_location(
-    "live_check", os.path.join(helpers.REPO_ROOT, "scripts", "live_check.py")
-)
-assert _spec and _spec.loader
-live_check = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(live_check)
+live_check = helpers.load_script("live_check")
 
 
 def setUpModule():
