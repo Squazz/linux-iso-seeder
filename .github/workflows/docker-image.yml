@@ -37,13 +37,48 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: "3.x"
+        # alpine:latest's python3 minor; bump with requirements-test.txt.
+        python-version: "3.14"
 
-    - name: Install test dependencies
-      run: pip install -r requirements-test.txt
+    - name: Install dev dependencies
+      run: pip install -r requirements-dev.txt
+
+    - name: Lint
+      run: ruff check .
+
+    - name: Check formatting
+      run: ruff format --check .
+
+    - name: Type-check
+      run: mypy
+
+    - name: Lint shell scripts
+      run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 entrypoint.sh scripts/*.sh
+
+    - name: Lint Dockerfile
+      run: docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
 
     - name: Run tests
-      run: python -m unittest discover -s tests -v
+      run: coverage run -m unittest discover -s tests -v
+
+    # Fails below [tool.coverage.report] fail_under; that and the other
+    # settings (branch coverage, which modules) are in pyproject.toml.
+    - name: Coverage report
+      run: coverage report
+
+    # Same suite again with env vars exported that would flip outcomes if any
+    # test leaked the developer's shell environment into production code.
+    - name: Run tests with a hostile environment
+      run: python -m unittest discover -s tests
+      env:
+        SKIP_RATIO_CHECK: "true"
+        CLEANUP_MIN_RATIO: "5"
+        CLEANUP_SKIP_RATIO_CHECK: "true"
+        TRANSMISSION_RPC_USERNAME: x
+        TRANSMISSION_RPC_PASSWORD: y
+        FETCH_TORRENTS_DISTROS: arch
+        FETCH_TORRENTS_LOG_MAX_BYTES: "7"
+        FETCH_TORRENTS_ALWAYS_LOG: "false"
 
   build:
     needs: test
@@ -54,6 +89,19 @@ jobs:
 
     steps:
     - uses: actions/checkout@v7
+
+    # The test job uses pip packages on Ubuntu; this reruns the suite on the
+    # apk versions the container actually ships (Dockerfile `test` stage).
+    - name: Run unit tests inside the image
+      run: docker build --target test .
+
+    - name: Build image for smoke test
+      run: docker build -t linux-iso-seeder:smoke .
+
+    # Starts the image (root and RUN_AS_NON_ROOT) and checks it comes up;
+    # nothing below pushes unless this passes.
+    - name: Smoke-test the image
+      run: sh scripts/smoke_test.sh linux-iso-seeder:smoke
 
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v4

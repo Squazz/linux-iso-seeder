@@ -1,30 +1,38 @@
 #!/usr/bin/env python3
-import os
-import re
 import json
-import requests
 import logging
 import logging.handlers
-import tempfile
-import time
+import os
+import re
 import shutil
 import socket
+import tempfile
+import time
+from dataclasses import dataclass, field
 from datetime import date
+from typing import Any
+
+import requests
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
 
 import torrent_scrape
 
-# Configure logging
-log_dir = os.getenv('FETCH_TORRENTS_LOG_DIR', '/logs')
-log_file = os.path.join(log_dir, "fetch_torrents.log")
-ratio_log_file = os.path.join(log_dir, "fetch_torrents_ratios.log")
+# State and log file locations. Plain paths only - nothing is opened at
+# import time; configure_logging() creates the log handlers.
+log_dir = os.getenv("FETCH_TORRENTS_LOG_DIR", "/logs")
+LOG_FILE_NAME = "fetch_torrents.log"
+RATIO_LOG_FILE_NAME = "fetch_torrents_ratios.log"
+ratio_log_file = os.path.join(log_dir, RATIO_LOG_FILE_NAME)
 ratio_history_file = os.path.join(log_dir, "fetch_torrents_ratio_history.json")
-old_release_check_state_file = os.path.join(log_dir, "fetch_torrents_old_release_check_state.json")
+old_release_check_state_file = os.path.join(
+    log_dir, "fetch_torrents_old_release_check_state.json"
+)
 removed_history_file = os.path.join(log_dir, "fetch_torrents_removed_history.json")
 
-def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
-    value = os.getenv(env_var, '').strip()
+
+def parse_log_level(env_var: str, default: int = logging.INFO, env=None) -> int:
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return default
     if value.isdigit():
@@ -36,15 +44,15 @@ def parse_log_level(env_var: str, default: int = logging.INFO) -> int:
     return logging._nameToLevel.get(level, default)
 
 
-def parse_bool(env_var: str, default: bool = False) -> bool:
-    value = os.getenv(env_var, '').strip().lower()
+def parse_bool(env_var: str, default: bool = False, env=None) -> bool:
+    value = (os.environ if env is None else env).get(env_var, "").strip().lower()
     if not value:
         return default
-    return value in ('1', 'true', 'yes', 'on')
+    return value in ("1", "true", "yes", "on")
 
 
-def parse_int(env_var: str, default: int) -> int:
-    value = os.getenv(env_var, '').strip()
+def parse_int(env_var: str, default: int, env=None) -> int:
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return default
     try:
@@ -52,30 +60,16 @@ def parse_int(env_var: str, default: int) -> int:
     except ValueError:
         return default
 
-log_level = parse_log_level('FETCH_TORRENTS_LOG_LEVEL', parse_log_level('LOG_LEVEL', logging.INFO))
-formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
-
-stream_handler = logging.StreamHandler()
-stream_handler.setFormatter(formatter)
-
-# Rotating rather than a plain FileHandler: fetch_torrents.log otherwise
-# grows without bound for the lifetime of a "deploy and forget" container -
-# see FETCH_TORRENTS_LOG_MAX_BYTES/FETCH_TORRENTS_LOG_BACKUP_COUNT in the
-# README. 5MB x 3 backups keeps a generous amount of history bounded to ~20MB.
-log_max_bytes = parse_int('FETCH_TORRENTS_LOG_MAX_BYTES', 5 * 1024 * 1024)
-log_backup_count = parse_int('FETCH_TORRENTS_LOG_BACKUP_COUNT', 3)
-file_handler = logging.handlers.RotatingFileHandler(
-    log_file, maxBytes=log_max_bytes, backupCount=log_backup_count,
-)
-file_handler.setFormatter(formatter)
 
 class RatioOnlyFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return record.getMessage().startswith("[ratio]")
 
+
 class NonRatioFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         return not record.getMessage().startswith("[ratio]")
+
 
 class ImportantMessageFilter(logging.Filter):
     def __init__(self, level: int, important_prefixes=None):
@@ -104,59 +98,113 @@ def get_always_log_prefixes():
         "Old-release check complete",
     ]
 
-always_log_enabled = parse_bool('FETCH_TORRENTS_ALWAYS_LOG', True)
-important_prefixes = get_always_log_prefixes() if always_log_enabled else []
 
-stream_handler.setLevel(logging.DEBUG)
-stream_handler.addFilter(NonRatioFilter())
-if always_log_enabled:
-    stream_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
-else:
-    stream_handler.setLevel(log_level)
-
-file_handler.setLevel(logging.DEBUG)
-file_handler.addFilter(NonRatioFilter())
-if always_log_enabled:
-    file_handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
-else:
-    file_handler.setLevel(log_level)
-
-ratio_handler = logging.FileHandler(ratio_log_file, mode='w', delay=True, encoding='utf-8')
-ratio_handler.setLevel(logging.INFO)
-ratio_handler.addFilter(RatioOnlyFilter())
-ratio_handler.setFormatter(formatter)
-
-logger = logging.getLogger('fetch_torrents')
-logger.setLevel(logging.DEBUG)
-logger.addHandler(stream_handler)
-logger.addHandler(file_handler)
-logger.addHandler(ratio_handler)
-logger.propagate = False
-
-watch_dir = "/watch"
+logger = logging.getLogger("fetch_torrents")
+# Silent until configure_logging() runs, so importing this module (tests,
+# other scripts) neither writes log files nor falls back to stderr.
+_configured_handlers: list[logging.Handler] = [logging.NullHandler()]
+logger.addHandler(_configured_handlers[0])
 
 
-def get_rpc_credentials():
-    """TRANSMISSION_RPC_USERNAME/PASSWORD, read here so this script's own
-    RPC calls (cleanup, ratio logging) authenticate the same way
+def configure_logging(log_dir, env=None):
+    """Attach the daily run's handlers to `logger`, replacing the ones a
+    previous call (or the import-time NullHandler) attached:
+    stderr and a rotating fetch_torrents.log (both filtered by log level and
+    FETCH_TORRENTS_ALWAYS_LOG), plus fetch_torrents_ratios.log holding only
+    the "[ratio]" lines. Returns (stream_handler, file_handler, ratio_handler).
+
+    The ratio log is opened with mode="w" but delay=True, so it's only
+    truncated on the first "[ratio]" line of this run - after
+    get_previous_ratios() has already read the previous run's ratios."""
+    log_level = parse_log_level(
+        "FETCH_TORRENTS_LOG_LEVEL",
+        parse_log_level("LOG_LEVEL", logging.INFO, env=env),
+        env=env,
+    )
+    always_log_enabled = parse_bool("FETCH_TORRENTS_ALWAYS_LOG", True, env=env)
+    important_prefixes = get_always_log_prefixes() if always_log_enabled else []
+    formatter = logging.Formatter("%(asctime)s %(levelname)s: %(message)s")
+
+    stream_handler = logging.StreamHandler()
+    # Rotating rather than a plain FileHandler: fetch_torrents.log otherwise
+    # grows without bound for the lifetime of a "deploy and forget" container -
+    # see FETCH_TORRENTS_LOG_MAX_BYTES/FETCH_TORRENTS_LOG_BACKUP_COUNT in the
+    # README. 5MB x 3 backups keeps a generous amount of history bounded to ~20MB.
+    file_handler = logging.handlers.RotatingFileHandler(
+        os.path.join(log_dir, LOG_FILE_NAME),
+        maxBytes=parse_int("FETCH_TORRENTS_LOG_MAX_BYTES", 5 * 1024 * 1024, env=env),
+        backupCount=parse_int("FETCH_TORRENTS_LOG_BACKUP_COUNT", 3, env=env),
+    )
+    for handler in (stream_handler, file_handler):
+        handler.setFormatter(formatter)
+        handler.setLevel(logging.DEBUG)
+        handler.addFilter(NonRatioFilter())
+        if always_log_enabled:
+            handler.addFilter(ImportantMessageFilter(log_level, important_prefixes))
+        else:
+            handler.setLevel(log_level)
+
+    ratio_handler = logging.FileHandler(
+        os.path.join(log_dir, RATIO_LOG_FILE_NAME),
+        mode="w",
+        delay=True,
+        encoding="utf-8",
+    )
+    ratio_handler.setLevel(logging.INFO)
+    ratio_handler.addFilter(RatioOnlyFilter())
+    ratio_handler.setFormatter(formatter)
+
+    while _configured_handlers:
+        handler = _configured_handlers.pop()
+        logger.removeHandler(handler)
+        handler.close()
+    logger.setLevel(logging.DEBUG)
+    for handler in (stream_handler, file_handler, ratio_handler):
+        logger.addHandler(handler)
+        _configured_handlers.append(handler)
+    logger.propagate = False
+    return stream_handler, file_handler, ratio_handler
+
+
+# Where transmission-daemon picks up new .torrent files; read once, like
+# log_dir.
+watch_dir = os.getenv("FETCH_TORRENTS_WATCH_DIR", "/watch")
+
+
+def _rpc_credentials(env):
+    """Config's rpc_username/rpc_password from TRANSMISSION_RPC_USERNAME/
+    PASSWORD (blank counts as unset), read so this script's own RPC calls
+    (cleanup, ratio logging) authenticate the same way
     configure_transmission.py configured the daemon. Without this, setting
     rpc-authentication-required (as the README instructs whenever
     TRANSMISSION_RPC_WHITELIST is widened beyond localhost) makes every one
     of this script's own localhost RPC calls fail with 401 - silently, since
-    callers only log the failure - permanently disabling cleanup."""
-    username = os.getenv('TRANSMISSION_RPC_USERNAME', '').strip()
-    password = os.getenv('TRANSMISSION_RPC_PASSWORD', '').strip()
-    return username or None, password or None
+    callers only log the failure - permanently disabling cleanup.
+    Config.rpc_auth decides whether they are complete enough to send."""
+    return {
+        "rpc_username": env.get("TRANSMISSION_RPC_USERNAME", "").strip() or None,
+        "rpc_password": env.get("TRANSMISSION_RPC_PASSWORD", "").strip() or None,
+    }
 
 
-def wait_for_transmission_rpc(host='localhost', port=9091, timeout=30):
-    start = time.time()
-    while time.time() - start < timeout:
+def wait_for_transmission_rpc(
+    host="localhost",
+    port=9091,
+    timeout=30,
+    *,
+    connect=socket.create_connection,
+    clock=time.monotonic,
+    sleep=time.sleep,
+):
+    """True once host:port accepts a TCP connection, retrying once a second;
+    False if it still doesn't after `timeout` seconds."""
+    start = clock()
+    while clock() - start < timeout:
         try:
-            with socket.create_connection((host, port), timeout=3):
+            with connect((host, port), timeout=3):
                 return True
         except OSError:
-            time.sleep(1)
+            sleep(1)
     return False
 
 
@@ -164,43 +212,35 @@ def get_previous_ratios(log_file):
     if not os.path.exists(log_file):
         return {}
     ratios = {}
-    with open(log_file, 'r', encoding='utf-8') as f:
+    with open(log_file, "r", encoding="utf-8") as f:
         lines = f.readlines()
 
     # Only parse the latest ratio segment between the last start and end markers.
-    start_marker = '[ratio] RATIOS START'
-    end_marker = '[ratio] RATIOS END'
-    start_index = None
-    end_index = None
-
-    for idx, line in enumerate(lines):
-        if start_marker in line:
-            start_index = idx
-            end_index = None
-        elif start_index is not None and end_marker in line:
-            end_index = idx
-
-    if start_index is not None:
-        if end_index is not None and end_index > start_index:
-            lines = lines[start_index + 1:end_index]
-        else:
-            lines = lines[start_index + 1:]
+    start_marker = "[ratio] RATIOS START"
+    end_marker = "[ratio] RATIOS END"
+    starts = [idx for idx, line in enumerate(lines) if start_marker in line]
+    if starts:
+        lines = lines[starts[-1] + 1 :]
+        ends = [idx for idx, line in enumerate(lines) if end_marker in line]
+        if ends:
+            lines = lines[: ends[-1]]
 
     for line in lines:
-        match = re.search(r'\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)', line)
+        match = re.search(r"\[ratio\]\s+(.+?)\s+→\s+(\d+\.\d+)", line)
         if match:
             name = match.group(1).strip()
             ratio = float(match.group(2))
             ratios[name] = ratio
     return ratios
 
+
 distro_patterns = {
-    'ubuntu': re.compile(r'^ubuntu-|^lbuntu-|^xbuntu-'),
-    'debian': re.compile(r'^debian-'),
-    'kali': re.compile(r'^kali-linux-'),
-    'arch': re.compile(r'^archlinux-'),
-    'mint': re.compile(r'^linuxmint-'),
-    'fedora': re.compile(r'^Fedora-Workstation-Live-'),
+    "ubuntu": re.compile(r"^(ubuntu|lubuntu|xubuntu)-"),
+    "debian": re.compile(r"^debian-"),
+    "kali": re.compile(r"^kali-linux-"),
+    "arch": re.compile(r"^archlinux-"),
+    "mint": re.compile(r"^linuxmint-"),
+    "fedora": re.compile(r"^Fedora-Workstation-Live-"),
     # devuan has no entry here deliberately: it publishes a single
     # multi-file torrent per release (see fetch_devuan_latest()), so its
     # name (e.g. "devuan_excalibur") carries no dotted version string for
@@ -215,12 +255,12 @@ distro_patterns = {
 # instead of distro_patterns above wherever Devuan needs identifying without
 # a dotted version to parse: should_fetch_torrent()'s ratio gate and
 # _old_version_candidates()'s cleanup grouping.
-DEVUAN_NAME_PATTERN = re.compile(r'^devuan_')
+DEVUAN_NAME_PATTERN = re.compile(r"^devuan_")
 
 # Every distro fetch_torrents.py knows how to fetch, for FETCH_TORRENTS_DISTROS
 # validation - deliberately not the same set as distro_patterns above (see
 # the devuan comment there).
-ALL_DISTROS = tuple(distro_patterns.keys()) + ('devuan',)
+ALL_DISTROS = tuple(distro_patterns.keys()) + ("devuan",)
 
 # Distros fetched when FETCH_TORRENTS_DISTROS is unset. Arch and Devuan are
 # opt-in only - see tasks/01-demand-checks-for-default-distros.md:
@@ -230,15 +270,16 @@ ALL_DISTROS = tuple(distro_patterns.keys()) + ('devuan',)
 #  - Devuan bundles every edition/arch into one multi-file torrent under a
 #    single info-hash, so any demand check only ever reads the swarm as a
 #    whole, never which of the bundled files anyone actually wants.
-OPT_IN_DISTROS = ('arch', 'devuan')
+OPT_IN_DISTROS = ("arch", "devuan")
 DEFAULT_DISTROS = tuple(d for d in ALL_DISTROS if d not in OPT_IN_DISTROS)
 
-def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
-    value = os.getenv(env_var, '').strip()
+
+def parse_supported_distros(env_var="FETCH_TORRENTS_DISTROS", env=None):
+    value = (os.environ if env is None else env).get(env_var, "").strip()
     if not value:
         return list(DEFAULT_DISTROS)
 
-    requested = [entry.strip().lower() for entry in value.split(',') if entry.strip()]
+    requested = [entry.strip().lower() for entry in value.split(",") if entry.strip()]
     valid = [d for d in ALL_DISTROS if d in requested]
 
     invalid = [entry for entry in requested if entry not in ALL_DISTROS]
@@ -282,11 +323,13 @@ def parse_supported_distros(env_var='FETCH_TORRENTS_DISTROS'):
 #
 # FETCH_TORRENTS_INCLUDE_LOW_DEMAND opts back into all of the above.
 LOW_DEMAND_PATTERN = re.compile(
-    r'(cloud-genericcloud|^kali-linux-\d+\.\d+-installer-netinst-)', re.IGNORECASE
+    r"(cloud-genericcloud|^kali-linux-\d+\.\d+-installer-netinst-)", re.IGNORECASE
 )
+
 
 def is_low_demand_variant(name):
     return bool(LOW_DEMAND_PATTERN.search(name))
+
 
 def filter_low_demand(torrents, include_low_demand):
     if include_low_demand:
@@ -296,11 +339,13 @@ def filter_low_demand(torrents, include_low_demand):
         if is_low_demand_variant(name):
             logger.info(
                 "Skipping %s – low-demand image family (set "
-                "FETCH_TORRENTS_INCLUDE_LOW_DEMAND=true to include).", name,
+                "FETCH_TORRENTS_INCLUDE_LOW_DEMAND=true to include).",
+                name,
             )
         else:
             kept[name] = url
     return kept
+
 
 def get_distro(name):
     for distro, pattern in distro_patterns.items():
@@ -308,45 +353,48 @@ def get_distro(name):
             return distro
     return None
 
+
 def version_to_tuple(v):
     try:
-        return tuple(map(int, v.split('.')))
+        return tuple(map(int, v.split(".")))
     except ValueError as exc:
         raise ValueError(f"Invalid version string '{v}'") from exc
 
+
 def parse_version_type(name, distro):
-    if distro == 'ubuntu':
-        parts = name.split('-')
+    if distro == "ubuntu":
+        parts = name.split("-")
         prefix = parts[0]
         version = parts[1]
-        suffix = '-'.join(parts[2:])
+        suffix = "-".join(parts[2:])
         type_ = f"{prefix}-{suffix}"
-    elif distro == 'debian':
-        parts = name.split('-')
+    elif distro == "debian":
+        parts = name.split("-")
         version = parts[1]
         arch = parts[2]
-        type_suffix = '-'.join(parts[3:])
+        type_suffix = "-".join(parts[3:])
         type_ = f"{arch}-{type_suffix}"
-    elif distro == 'kali':
-        parts = name.split('-')
+    elif distro == "kali":
+        parts = name.split("-")
         version = parts[2]
-        type_ = '-'.join(parts[3:])
-    elif distro == 'arch':
-        parts = name.split('-')
+        type_ = "-".join(parts[3:])
+    elif distro == "arch":
+        parts = name.split("-")
         version = parts[1]
-        type_ = ''
-    elif distro == 'mint':
-        parts = name.split('-')
+        type_ = ""
+    elif distro == "mint":
+        parts = name.split("-")
         version = parts[1]
-        type_ = '-'.join(parts[2:])
-    elif distro == 'fedora':
-        parts = name.split('-')
+        type_ = "-".join(parts[2:])
+    elif distro == "fedora":
+        parts = name.split("-")
         version = parts[-1]
         type_ = parts[-2]
     else:
-        version = ''
-        type_ = ''
+        version = ""
+        type_ = ""
     return version, type_
+
 
 def _should_fetch_devuan(name, ratios, removed_history):
     """Devuan bundles every edition/arch into one multi-file torrent per
@@ -361,11 +409,14 @@ def _should_fetch_devuan(name, ratios, removed_history):
     if name in ratios:
         return True  # already holding this exact release
 
-    prior_ratios = [r for n, r in ratios.items() if n != name and DEVUAN_NAME_PATTERN.match(n)]
+    prior_ratios = [
+        r for n, r in ratios.items() if n != name and DEVUAN_NAME_PATTERN.match(n)
+    ]
     if not prior_ratios:
         prior_ratios = [
-            record['ratio'] for n, record in removed_history.items()
-            if n != name and DEVUAN_NAME_PATTERN.match(n) and 'ratio' in record
+            record["ratio"]
+            for n, record in removed_history.items()
+            if n != name and DEVUAN_NAME_PATTERN.match(n) and "ratio" in record
         ]
 
     if not prior_ratios:
@@ -374,7 +425,7 @@ def _should_fetch_devuan(name, ratios, removed_history):
     return max(prior_ratios) >= 1.0
 
 
-def should_fetch_torrent(name, ratios, removed_history=None):
+def should_fetch_torrent(name, ratios, removed_history=None, *, skip_ratio_check=False):
     """removed_history (record_removal()'s output) is consulted as a
     fallback for versions ratios doesn't cover: ratios only reflects
     torrents Transmission currently holds (see get_previous_ratios()), so a
@@ -382,8 +433,8 @@ def should_fetch_torrent(name, ratios, removed_history=None):
     out of this check and fall into the "no previous version, fetch" branch
     below - bypassing the ratio gate for exactly the versions cleanup
     already gave up on. Live ratios still take priority when a name somehow
-    appears in both."""
-    if os.getenv('SKIP_RATIO_CHECK', 'false').lower() == 'true':
+    appears in both. skip_ratio_check (SKIP_RATIO_CHECK) bypasses the gate."""
+    if skip_ratio_check:
         return True
     distro = get_distro(name)
     if not distro:
@@ -410,19 +461,25 @@ def should_fetch_torrent(name, ratios, removed_history=None):
                 if t == type_:
                     type_ratios[version_to_tuple(v_str)] = r
             except Exception as exc:
-                logger.warning("Skipping stored ratio entry %s due to parse error: %s", n, exc)
+                logger.warning(
+                    "Skipping stored ratio entry %s due to parse error: %s", n, exc
+                )
 
     for n, record in removed_history.items():
-        if n in ratios or 'ratio' not in record:
+        if n in ratios or "ratio" not in record:
             continue
         d = get_distro(n)
         if d == distro:
             try:
                 v_str, t = parse_version_type(n, d)
                 if t == type_:
-                    type_ratios.setdefault(version_to_tuple(v_str), record['ratio'])
+                    type_ratios.setdefault(version_to_tuple(v_str), record["ratio"])
             except Exception as exc:
-                logger.warning("Skipping removed-history ratio entry %s due to parse error: %s", n, exc)
+                logger.warning(
+                    "Skipping removed-history ratio entry %s due to parse error: %s",
+                    n,
+                    exc,
+                )
 
     if not type_ratios:
         return True  # no previous, fetch
@@ -433,8 +490,16 @@ def should_fetch_torrent(name, ratios, removed_history=None):
     prev_max = max(prev_versions)
     return type_ratios[prev_max] >= 1.0
 
-def format_run_summary(elapsed, success_count, existing_count, not_found_count, failure_count,
-                        old_added=None, old_skipped=None):
+
+def format_run_summary(
+    elapsed,
+    success_count,
+    existing_count,
+    not_found_count,
+    failure_count,
+    old_added=None,
+    old_skipped=None,
+):
     """The single end-of-run log line. old_added/old_skipped are only
     non-None when FETCH_TORRENTS_CHECK_OLD_RELEASES ran, so the count of
     torrents that flag introduced is visible at a glance rather than only
@@ -456,9 +521,28 @@ def _safe_watch_path(name):
     the check here means a future looser fetch_*() regex (parsing scraped
     HTML/JSON from upstream) can't turn a crafted name into a write/delete
     outside watch_dir."""
-    if not name or name in ('.', '..') or '/' in name or '\\' in name:
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
         return None
     return os.path.join(watch_dir, f"{name}.torrent")
+
+
+def _write_watch_file(dest, data):
+    """Write data to dest atomically: into a dot-prefixed .part file beside
+    it, then os.replace() into place. transmission-daemon watches *.torrent
+    and download_torrent() treats an existing dest as already fetched, so a
+    write that dies part-way (disk full, process killed) must never leave a
+    partial file under dest's name."""
+    tmp_path = os.path.join(os.path.dirname(dest), f".{os.path.basename(dest)}.part")
+    try:
+        with open(tmp_path, "wb") as f:
+            f.write(data)
+        os.replace(tmp_path, dest)
+    except BaseException:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def download_torrent(name, url):
@@ -481,25 +565,26 @@ def download_torrent(name, url):
             logger.info("%s not found upstream (404) – likely no longer hosted.", url)
             return "not_found"
         r.raise_for_status()
-        with open(dest, "wb") as f:
-            f.write(r.content)
+        _write_watch_file(dest, r.content)
         logger.info(f"Saved {dest}")
         return "added"
     except Exception as e:
         logger.error(f"Failed to download {url}: {e}")
         return "failed"
 
+
 def fetch_ubuntu_lts():
-    url = "https://releases.ubuntu.com/"
     try:
-        text = requests.get("https://changelogs.ubuntu.com/meta-release-lts", timeout=30).text
-        blocks  = [b for b in text.strip().split("\n\n") if "Supported: 1" in b]
+        r = requests.get("https://changelogs.ubuntu.com/meta-release-lts", timeout=30)
+        r.raise_for_status()
+        text = r.text
+        blocks = [b for b in text.strip().split("\n\n") if "Supported: 1" in b]
         results = {}
 
         # newest first (optional – remove reversed() if order is irrelevant)
         for block in reversed(blocks):
-            version  = re.search(r"Version:\s*([\d.]+)", block).group(1)
-            codename = re.search(r"Dist:\s*(\w+)",   block).group(1)
+            version = re.search(r"Version:\s*([\d.]+)", block).group(1)
+            codename = re.search(r"Dist:\s*(\w+)", block).group(1)
 
             torrent_urls = [
                 f"https://releases.ubuntu.com/{codename}/ubuntu-{version}-desktop-amd64.iso.torrent",
@@ -520,13 +605,14 @@ def fetch_ubuntu_lts():
         logger.error(f"Ubuntu fetch error: {e}")
         return False
 
+
 def fetch_debian_stable():
     urls = [
-            "https://cdimage.debian.org/debian-cd/current/amd64/bt-dvd/",
-            "https://cdimage.debian.org/debian-cd/current/arm64/bt-dvd/",
-            "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/",
-            "https://cdimage.debian.org/debian-cd/current/arm64/bt-cd/"
-        ]
+        "https://cdimage.debian.org/debian-cd/current/amd64/bt-dvd/",
+        "https://cdimage.debian.org/debian-cd/current/arm64/bt-dvd/",
+        "https://cdimage.debian.org/debian-cd/current/amd64/bt-cd/",
+        "https://cdimage.debian.org/debian-cd/current/arm64/bt-cd/",
+    ]
     results = {}
 
     for url in urls:
@@ -534,9 +620,9 @@ def fetch_debian_stable():
             r = requests.get(url, timeout=30)
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "html.parser")
-            
-            for link in soup.find_all('a', href=True):
-                href = link['href']
+
+            for link in soup.find_all("a", href=True):
+                href = link["href"]
                 if ".iso.torrent" in href:
                     torrent_url = url + href
                     # Keep the .iso extension so this matches what Transmission
@@ -545,15 +631,16 @@ def fetch_debian_stable():
                     results[name] = torrent_url
                     break
             else:
-                logger.warning("No Debian DVD-1 torrent found.")  
-            
+                logger.warning("No Debian DVD-1 torrent found.")
+
         except Exception as e:
             logger.error(f"Debian fetch error: {e}")
 
     return results
 
+
 def _kali_torrent_urls(ver):
-    base_cd  = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
+    base_cd = f"https://cdimage.kali.org/kali-{ver}/kali-linux-{ver}-installer"
     base_arm = f"https://kali.download/arm-images/kali-{ver}/kali-linux-{ver}"
     base_cloud = f"https://kali.download/cloud-images/kali-{ver}/kali-linux-{ver}-cloud-genericcloud"
     return [
@@ -563,11 +650,9 @@ def _kali_torrent_urls(ver):
         f"{base_cd}-arm64.iso.torrent",
         f"{base_cd}-netinst-arm64.iso.torrent",
         f"{base_cd}-purple-amd64.iso.torrent",
-
         f"{base_arm}-raspberry-pi-armhf.img.xz.torrent",
         f"{base_arm}-raspberry-pi-zero-2-w-armhf.img.xz.torrent",
         f"{base_arm}-raspberry-pi-zero-w-armel.img.xz.torrent",
-
         f"{base_cloud}-amd64.tar.xz.torrent",
         f"{base_cloud}-arm64.tar.xz.torrent",
     ]
@@ -576,7 +661,9 @@ def _kali_torrent_urls(ver):
 def fetch_kali_latest():
     url = "https://www.kali.org/get-kali/#kali-installer-images"
     try:
-        html = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        html = r.text
 
         matches = re.findall(r"kali-linux-(\d+\.\d+)-installer-", html)
         if not matches:
@@ -589,10 +676,6 @@ def fetch_kali_latest():
         for turl in _kali_torrent_urls(ver):
             name = os.path.basename(turl).replace(".torrent", "")
             results[name] = turl
-
-        if not results:
-            logger.warning("No Kali torrents found.")
-            return False
 
         return results
 
@@ -610,12 +693,14 @@ def fetch_kali_old_versions():
     current release to find."""
     url = "https://cdimage.kali.org/"
     try:
-        html = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        html = r.text
         soup = BeautifulSoup(html, "html.parser")
 
         versions = []
-        for link in soup.find_all('a', href=True):
-            match = re.match(r'^kali-(\d+\.\d+)/$', link['href'])
+        for link in soup.find_all("a", href=True):
+            match = re.match(r"^kali-(\d+\.\d+)/$", link["href"])
             if match:
                 versions.append(match.group(1))
 
@@ -635,6 +720,7 @@ def fetch_kali_old_versions():
     except Exception as exc:
         logger.error("Kali old-release fetch error: %s", exc)
         return {}
+
 
 def fetch_arch_latest():
     """Opt-in (FETCH_TORRENTS_DISTROS=arch,...): Arch's official torrent
@@ -662,7 +748,7 @@ def fetch_arch_latest():
             link = row.find("a", href=re.compile(torrent_url_pattern))
             if not link:
                 continue
-            href = link['href']
+            href = link["href"]
             version = re.sub(torrent_url_pattern, "\\1", href)
             candidates.append((version, href))
 
@@ -671,7 +757,7 @@ def fetch_arch_latest():
             return False
 
         # Version strings are YYYY.MM.DD, so lexicographic order == chronological order.
-        version, href = max(candidates, key=lambda entry: entry[0])
+        version, href = max(candidates)
         logger.debug(f"Arch Linux {version}: {base_url}{href}")
         return {f"archlinux-{version}": base_url + href}
     except Exception as exc:
@@ -691,7 +777,9 @@ def fetch_devuan_latest():
     release codename (e.g. devuan_excalibur.torrent)."""
     url = "https://www.devuan.org/get-devuan"
     try:
-        text = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        text = r.text
         match = re.search(r"https://files\.devuan\.org/devuan_\w+\.torrent", text)
         if not match:
             logger.warning("Could not find a Devuan release torrent link on %s", url)
@@ -704,10 +792,13 @@ def fetch_devuan_latest():
         logger.error(f"Devuan fetch error: {e}")
         return False
 
+
 def fetch_linuxmint_cinnamon():
     url = "https://www.linuxmint.com/download.php"
     try:
-        text = requests.get(url, timeout=30).text
+        r = requests.get(url, timeout=30)
+        r.raise_for_status()
+        text = r.text
         match = re.search(r"<title>Download Linux Mint ([\d.]+)", text)
         if not match:
             logger.warning("Could not detect a Linux Mint version on %s", url)
@@ -724,29 +815,45 @@ def fetch_linuxmint_cinnamon():
         logger.error(f"Linux Mint fetch error: {e}")
         return False
 
-def fetch_fedora_workstation():
-    url = "https://torrent.fedoraproject.org/torrents/"
-    try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
 
-        pattern = re.compile(r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$")
-        latest = {}
-        for link in soup.find_all('a', href=True):
-            match = pattern.match(link['href'])
-            if not match:
-                continue
+FEDORA_TORRENTS_URL = "https://torrent.fedoraproject.org/torrents/"
+FEDORA_WORKSTATION_PATTERN = re.compile(
+    r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$"
+)
+
+
+def _fedora_workstation_torrents():
+    """{arch: [href, ...]} for every Fedora Workstation Live torrent the
+    listing links, each href once, newest version first."""
+    r = requests.get(FEDORA_TORRENTS_URL, timeout=30)
+    r.raise_for_status()
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    by_arch: dict[str, set[tuple[int, str]]] = {}
+    for link in soup.find_all("a", href=True):
+        match = FEDORA_WORKSTATION_PATTERN.match(link["href"])
+        if match:
             arch, version = match.group(1), int(match.group(2))
-            if arch not in latest or version > latest[arch][0]:
-                latest[arch] = (version, link['href'])
+            by_arch.setdefault(arch, set()).add((version, link["href"]))
+    return {
+        arch: [href for _version, href in sorted(entries, reverse=True)]
+        for arch, entries in by_arch.items()
+    }
+
+
+def fetch_fedora_workstation():
+    url = FEDORA_TORRENTS_URL
+    try:
+        latest = {
+            arch: hrefs[0] for arch, hrefs in _fedora_workstation_torrents().items()
+        }
 
         if not latest:
             logger.warning("No Fedora Workstation torrents found on %s", url)
             return False
 
         results = {}
-        for arch, (version, href) in latest.items():
+        for href in latest.values():
             torrent_url = url + href
             # The torrent's own "name" field (and Transmission's later
             # torrent.name) has no .iso extension for Fedora, unlike Ubuntu/
@@ -764,25 +871,11 @@ def fetch_fedora_workstation_old_versions():
     """Non-latest Fedora Workstation Live torrents per arch, from the same
     listing fetch_fedora_workstation() already scrapes - for the
     old-release demand check (FETCH_TORRENTS_CHECK_OLD_RELEASES)."""
-    url = "https://torrent.fedoraproject.org/torrents/"
+    url = FEDORA_TORRENTS_URL
     try:
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        soup = BeautifulSoup(r.text, "html.parser")
-
-        pattern = re.compile(r"^Fedora-Workstation-Live-([A-Za-z0-9_]+)-(\d+)\.torrent$")
-        by_arch = {}
-        for link in soup.find_all('a', href=True):
-            match = pattern.match(link['href'])
-            if not match:
-                continue
-            arch, version = match.group(1), int(match.group(2))
-            by_arch.setdefault(arch, []).append((version, link['href']))
-
         results = {}
-        for versions in by_arch.values():
-            versions.sort(key=lambda entry: entry[0], reverse=True)
-            for _version, href in versions[1:]:  # newest is fetch_fedora_workstation()'s job
+        for hrefs in _fedora_workstation_torrents().values():
+            for href in hrefs[1:]:  # newest is fetch_fedora_workstation()'s job
                 name = href.replace(".torrent", "")
                 results[name] = url + href
         return results
@@ -792,7 +885,9 @@ def fetch_fedora_workstation_old_versions():
         return {}
 
 
-def has_unmet_demand(scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders):
+def has_unmet_demand(
+    scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders
+):
     """True if a live tracker scrape shows real, currently-unserved demand:
     at least min_leechers leechers in absolute terms (so a single leecher
     never justifies a download on its own), AND at least min_leecher_ratio
@@ -816,16 +911,18 @@ def has_unmet_demand(scrape_result, min_leechers, min_leecher_ratio, allow_zero_
     scraping failed."""
     if not scrape_result:
         return False
-    leechers = scrape_result.get('leechers', 0)
+    leechers = scrape_result.get("leechers", 0)
     if leechers < min_leechers:
         return False
-    seeders = scrape_result.get('seeders', 0)
+    seeders = scrape_result.get("seeders", 0)
     if seeders == 0:
         return allow_zero_seeders
     return leechers >= min_leecher_ratio * seeders
 
 
-def evaluate_old_release_demand(name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15):
+def evaluate_old_release_demand(
+    name, url, min_leechers, min_leecher_ratio, allow_zero_seeders, timeout=15
+):
     """Downloads name's .torrent metadata and scrapes its trackers for live
     demand, without adding it to Transmission. Returns (keep, torrent_bytes,
     scrape_result): keep is True once has_unmet_demand() passes;
@@ -842,18 +939,24 @@ def evaluate_old_release_demand(name, url, min_leechers, min_leecher_ratio, allo
         return False, None, None
 
     torrent_bytes = r.content
-    tmp = tempfile.NamedTemporaryFile(suffix=".torrent", delete=False)
+    tmp_path = None
     try:
-        tmp.write(torrent_bytes)
-        tmp.close()
-        scrape_result = torrent_scrape.scrape_torrent(tmp.name, timeout=timeout)
+        # Closed before scraping: scrape_torrent() reopens it by name, which
+        # Windows refuses while the file is still open.
+        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(torrent_bytes)
+        scrape_result = torrent_scrape.scrape_torrent(tmp_path, timeout=timeout)
     except Exception as exc:
         logger.warning("Could not scrape %s: %s", name, exc)
         scrape_result = None
     finally:
-        os.remove(tmp.name)
+        if tmp_path is not None:
+            os.remove(tmp_path)
 
-    keep = has_unmet_demand(scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders)
+    keep = has_unmet_demand(
+        scrape_result, min_leechers, min_leecher_ratio, allow_zero_seeders
+    )
     return keep, torrent_bytes, scrape_result
 
 
@@ -861,16 +964,20 @@ def load_old_release_check_state(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Could not read old-release check state at %s (%s) - starting fresh.", path, exc)
+        logger.warning(
+            "Could not read old-release check state at %s (%s) - starting fresh.",
+            path,
+            exc,
+        )
         return {}
 
 
 def save_old_release_check_state(path, state):
     tmp_path = f"{path}.tmp"
-    with open(tmp_path, 'w', encoding='utf-8') as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2, sort_keys=True)
     os.replace(tmp_path, path)
 
@@ -883,7 +990,7 @@ def should_recheck_old_release(name, check_state, today, recheck_interval_days):
     record = check_state.get(name)
     if record is None:
         return True
-    last_checked = date.fromisoformat(record['last_checked'])
+    last_checked = date.fromisoformat(record["last_checked"])
     return (today - last_checked).days >= recheck_interval_days
 
 
@@ -891,16 +998,20 @@ def load_removed_history(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Could not read removed-torrent history at %s (%s) - starting fresh.", path, exc)
+        logger.warning(
+            "Could not read removed-torrent history at %s (%s) - starting fresh.",
+            path,
+            exc,
+        )
         return {}
 
 
 def save_removed_history(path, history):
     tmp_path = f"{path}.tmp"
-    with open(tmp_path, 'w', encoding='utf-8') as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2, sort_keys=True)
     os.replace(tmp_path, path)
 
@@ -919,7 +1030,11 @@ def record_removal(history, name, today, reason, ratio):
     Transmission stops reporting this (now-deleted) torrent - see its
     removed_history fallback."""
     updated = dict(history)
-    updated[name] = {'removed_date': today.isoformat(), 'reason': reason, 'ratio': round(float(ratio), 3)}
+    updated[name] = {
+        "removed_date": today.isoformat(),
+        "reason": reason,
+        "ratio": round(float(ratio), 3),
+    }
     return updated
 
 
@@ -931,14 +1046,22 @@ def record_removal(history, name, today, reason, ratio):
 # check - no separate discovery needed. Debian and Mint don't expose a
 # similarly easy back-catalog with the current fetch approach.
 OLD_RELEASE_DISCOVERY = {
-    'kali': fetch_kali_old_versions,
-    'fedora': fetch_fedora_workstation_old_versions,
+    "kali": fetch_kali_old_versions,
+    "fedora": fetch_fedora_workstation_old_versions,
 }
 
 
-def check_old_releases_for_demand(selected_distros, include_low_demand, min_leechers, min_leecher_ratio,
-                                   allow_zero_seeders, check_state=None, removed_history=None, today=None,
-                                   recheck_interval_days=7):
+def check_old_releases_for_demand(
+    selected_distros,
+    include_low_demand,
+    min_leechers,
+    min_leecher_ratio,
+    allow_zero_seeders,
+    check_state=None,
+    removed_history=None,
+    today=None,
+    recheck_interval_days=7,
+):
     """FETCH_TORRENTS_CHECK_OLD_RELEASES: for distros with old-release
     discovery, scrape each not-yet-seeded candidate's trackers and add it to
     the watch dir only if there's live unmet demand - no need to leech it
@@ -984,66 +1107,96 @@ def check_old_releases_for_demand(selected_distros, include_low_demand, min_leec
             if name in removed_history:
                 logger.info(
                     "Skipping old release %s - previously removed on %s, not re-adding automatically.",
-                    name, removed_history[name]['removed_date'],
+                    name,
+                    removed_history[name]["removed_date"],
                 )
                 skipped += 1
                 continue
 
-            if not should_recheck_old_release(name, check_state, today, recheck_interval_days):
-                logger.debug("Skipping old release %s - checked recently, not due for recheck.", name)
+            if not should_recheck_old_release(
+                name, check_state, today, recheck_interval_days
+            ):
+                logger.debug(
+                    "Skipping old release %s - checked recently, not due for recheck.",
+                    name,
+                )
                 skipped += 1
                 continue
 
             keep, torrent_bytes, scrape_result = evaluate_old_release_demand(
-                name, url, min_leechers, min_leecher_ratio, allow_zero_seeders,
+                name,
+                url,
+                min_leechers,
+                min_leecher_ratio,
+                allow_zero_seeders,
             )
             check_state[name] = {
-                'last_checked': today.isoformat(),
-                'leechers': scrape_result['leechers'] if scrape_result else None,
+                "last_checked": today.isoformat(),
+                "leechers": scrape_result["leechers"] if scrape_result else None,
             }
 
             if keep:
-                with open(dest, "wb") as f:
-                    f.write(torrent_bytes)
+                try:
+                    _write_watch_file(dest, torrent_bytes)
+                except OSError as e:
+                    logger.error("Failed to save old release %s: %s", name, e)
+                    # Not recorded as checked, so the next run retries it.
+                    del check_state[name]
+                    skipped += 1
+                    continue
                 logger.info(
                     "Found unmet demand on old release %s (%d leechers via %s) - added.",
-                    name, scrape_result['leechers'], scrape_result['tracker'],
+                    name,
+                    scrape_result["leechers"],
+                    scrape_result["tracker"],
                 )
                 added += 1
             else:
-                if scrape_result is not None and scrape_result.get('seeders', 0) == 0 and not allow_zero_seeders:
+                if (
+                    scrape_result is not None
+                    and scrape_result.get("seeders", 0) == 0
+                    and not allow_zero_seeders
+                ):
                     logger.info(
                         "Skipping old release %s - %d leechers but 0 seeders via %s (no verified-complete copy "
                         "in the swarm; set FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS=true to gamble on it).",
-                        name, scrape_result['leechers'], scrape_result['tracker'],
+                        name,
+                        scrape_result["leechers"],
+                        scrape_result["tracker"],
                     )
                 elif scrape_result is not None:
                     logger.info(
                         "Skipping old release %s - %d leechers / %d seeders via %s "
                         "(need >= %d leechers and >= %.1fx as many leechers as seeders).",
-                        name, scrape_result['leechers'], scrape_result.get('seeders', 0),
-                        scrape_result['tracker'], min_leechers, min_leecher_ratio,
+                        name,
+                        scrape_result["leechers"],
+                        scrape_result.get("seeders", 0),
+                        scrape_result["tracker"],
+                        min_leechers,
+                        min_leecher_ratio,
                     )
                 elif torrent_bytes is not None:
                     logger.info(
-                        "Skipping old release %s - could not determine live demand from any tracker.", name,
+                        "Skipping old release %s - could not determine live demand from any tracker.",
+                        name,
                     )
                 skipped += 1
 
     return added, skipped, check_state
 
 
-def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None):
+def log_seed_ratios_via_http(
+    rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None
+):
     if auth is None:
-        username, password = get_rpc_credentials()
-        auth = (username, password) if username and password else None
+        auth = Config(**_rpc_credentials(os.environ)).rpc_auth
 
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url, timeout=15)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
-    payload = {
+    payload: dict[str, Any] = {
         "method": "torrent-get",
-        "arguments": {"fields": ["name", "uploadRatio"]}
+        "arguments": {"fields": ["name", "uploadRatio"]},
     }
     r = requests.post(rpc_url, json=payload, headers=headers, auth=auth, timeout=15)
     r.raise_for_status()
@@ -1063,16 +1216,17 @@ def log_seed_ratios_via_http(rpc_url="http://localhost:9091/transmission/rpc", a
     logger.info("[ratio] RATIOS END")
     logger.info("")
 
+
 def _devuan_sort_key(torrent):
     """Devuan releases carry no dotted version in their name to compare (see
     DEVUAN_NAME_PATTERN), so _old_version_candidates() orders them by when
     Transmission added them instead - the most-recently-added one is treated
     as the current release, the same role the highest parsed version plays
     for every other distro."""
-    added = getattr(torrent, 'added_date', None)
+    added = getattr(torrent, "added_date", None)
     if added is None:
         return 0.0
-    if hasattr(added, 'timestamp'):
+    if hasattr(added, "timestamp"):
         return added.timestamp()
     return float(added)
 
@@ -1088,12 +1242,14 @@ def _devuan_sort_key(torrent):
 # (should_fetch_torrent() only knows to skip a fetch once a *previous*
 # version's ratio is on record). Kept separate from the cleanup_*()
 # functions so the selection logic can be unit tested without a live
-# Transmission RPC connection (see tests/test_fetch_torrents.py).
+# Transmission RPC connection (see tests/test_cleanup.py).
 def _old_version_candidates(torrents):
     groups = {}
     for torrent in torrents:
         if DEVUAN_NAME_PATTERN.match(torrent.name):
-            groups.setdefault(('devuan', ''), []).append((_devuan_sort_key(torrent), torrent))
+            groups.setdefault(("devuan", ""), []).append(
+                (_devuan_sort_key(torrent), torrent)
+            )
             continue
         distro = get_distro(torrent.name)
         if not distro:
@@ -1102,7 +1258,9 @@ def _old_version_candidates(torrents):
             version_str, type_ = parse_version_type(torrent.name, distro)
             version = version_to_tuple(version_str)
         except Exception as exc:
-            logger.warning("Skipping %s during cleanup due to parse error: %s", torrent.name, exc)
+            logger.warning(
+                "Skipping %s during cleanup due to parse error: %s", torrent.name, exc
+            )
             continue
         groups.setdefault((distro, type_), []).append((version, torrent))
 
@@ -1114,6 +1272,7 @@ def _old_version_candidates(torrents):
         entries.sort(key=lambda entry: entry[0], reverse=True)
         candidates.extend(torrent for _version, torrent in entries[1:])
     return candidates
+
 
 def _remove_watch_file(name):
     """Best-effort: once cleanup deletes a torrent's downloaded data, also
@@ -1136,7 +1295,7 @@ def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
     to_remove = []
     to_keep_low_ratio = []
     for torrent in _old_version_candidates(torrents):
-        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+        ratio = float(getattr(torrent, "ratio", 0.0) or 0.0)
         if not skip_ratio_check and ratio < min_ratio:
             to_keep_low_ratio.append((torrent, ratio))
         else:
@@ -1144,34 +1303,35 @@ def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
 
     return to_remove, to_keep_low_ratio
 
-def cleanup_old_versions():
-    """Space-constrained option (CLEANUP_KEEP_ONLY_LATEST_VERSION=true):
-    remove superseded versions as soon as they clear the ratio floor,
-    regardless of whether anyone's still downloading them."""
-    username, password = get_rpc_credentials()
-    tc = Client(host='localhost', port=9091, username=username, password=password)
-    torrents = tc.get_torrents()
 
-    skip_ratio_check = parse_bool('CLEANUP_SKIP_RATIO_CHECK', False)
-    min_ratio = float(os.getenv('CLEANUP_MIN_RATIO', '1.0'))
+def cleanup_old_versions(tc, *, today, skip_ratio_check=False, min_ratio=1.0):
+    """Space-constrained option (CLEANUP_KEEP_ONLY_LATEST_VERSION=true):
+    remove superseded versions as soon as they clear the ratio floor
+    (CLEANUP_MIN_RATIO, unless CLEANUP_SKIP_RATIO_CHECK), regardless of
+    whether anyone's still downloading them. tc is a Transmission client."""
+    torrents = tc.get_torrents()
 
     to_remove, to_keep_low_ratio = plan_cleanup(torrents, skip_ratio_check, min_ratio)
 
     for torrent, ratio in to_keep_low_ratio:
         logger.info(
             "Keeping old version %s – ratio %.3f is below cleanup threshold %.3f.",
-            torrent.name, ratio, min_ratio,
+            torrent.name,
+            ratio,
+            min_ratio,
         )
 
     removed_history = load_removed_history(removed_history_file)
-    today = date.today()
     for torrent in to_remove:
         logger.info(f"Removing old version: {torrent.name}")
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
         removed_history = record_removal(
-            removed_history, torrent.name, today, 'keep_only_latest',
-            float(getattr(torrent, 'ratio', 0.0) or 0.0),
+            removed_history,
+            torrent.name,
+            today,
+            "keep_only_latest",
+            float(getattr(torrent, "ratio", 0.0) or 0.0),
         )
     save_removed_history(removed_history_file, removed_history)
 
@@ -1189,49 +1349,66 @@ def plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent):
     if threshold_percent <= 0 or used_percent < threshold_percent:
         return []
     candidates = _old_version_candidates(torrents)
-    candidates.sort(key=lambda t: float(getattr(t, 'ratio', 0.0) or 0.0))
+    candidates.sort(key=lambda t: float(getattr(t, "ratio", 0.0) or 0.0))
     return candidates
 
 
-def enforce_disk_usage_limit(threshold_percent, download_path="/downloads"):
-    """Runs after the normal cleanup pass. Only connects to Transmission and
-    touches disk usage at all once threshold_percent is actually exceeded,
+def _used_percent(disk_usage, path):
+    """How full path's filesystem is, 0-100; 0.0 for a zero-size one."""
+    total, used, _free = disk_usage(path)
+    return (used / total * 100) if total else 0.0
+
+
+def enforce_disk_usage_limit(
+    client_factory,
+    threshold_percent,
+    *,
+    today,
+    disk_usage=shutil.disk_usage,
+    download_path="/downloads",
+):
+    """Runs after the normal cleanup pass. Only checks disk usage at all
+    when enabled (threshold_percent > 0), and only calls client_factory()
+    to connect to Transmission once threshold_percent is actually exceeded,
     so a deployment that never gets close to full pays no extra cost."""
     if threshold_percent <= 0:
         return
 
-    total, used, _free = shutil.disk_usage(download_path)
-    used_percent = (used / total * 100) if total else 0.0
+    used_percent = _used_percent(disk_usage, download_path)
     if used_percent < threshold_percent:
         return
 
-    username, password = get_rpc_credentials()
-    tc = Client(host='localhost', port=9091, username=username, password=password)
+    tc = client_factory()
     torrents = tc.get_torrents()
     candidates = plan_disk_pressure_cleanup(torrents, used_percent, threshold_percent)
 
     if not candidates:
         logger.warning(
             "Downloads folder usage is %.1f%% (>= %.1f%% threshold) but no superseded "
-            "versions are available to free space.", used_percent, threshold_percent,
+            "versions are available to free space.",
+            used_percent,
+            threshold_percent,
         )
         return
 
     removed_history = load_removed_history(removed_history_file)
-    today = date.today()
     for torrent in candidates:
-        total, used, _free = shutil.disk_usage(download_path)
-        used_percent = (used / total * 100) if total else 0.0
+        used_percent = _used_percent(disk_usage, download_path)
         if used_percent < threshold_percent:
             break
-        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+        ratio = float(getattr(torrent, "ratio", 0.0) or 0.0)
         logger.warning(
             "Downloads folder usage %.1f%% >= %.1f%% threshold - removing %s (ratio %.3f) to free space.",
-            used_percent, threshold_percent, torrent.name, ratio,
+            used_percent,
+            threshold_percent,
+            torrent.name,
+            ratio,
         )
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
-        removed_history = record_removal(removed_history, torrent.name, today, 'disk_pressure', ratio)
+        removed_history = record_removal(
+            removed_history, torrent.name, today, "disk_pressure", ratio
+        )
     save_removed_history(removed_history_file, removed_history)
 
 
@@ -1242,16 +1419,18 @@ def load_ratio_history(path):
     if not os.path.exists(path):
         return {}
     try:
-        with open(path, 'r', encoding='utf-8') as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Could not read ratio history at %s (%s) – starting fresh.", path, exc)
+        logger.warning(
+            "Could not read ratio history at %s (%s) – starting fresh.", path, exc
+        )
         return {}
 
 
 def save_ratio_history(path, history):
     tmp_path = f"{path}.tmp"
-    with open(tmp_path, 'w', encoding='utf-8') as f:
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(history, f, indent=2, sort_keys=True)
     os.replace(tmp_path, path)
 
@@ -1262,16 +1441,27 @@ def save_ratio_history(path, history):
 # taken every RATIO_HISTORY_SAMPLE_INTERVAL_DAYS, pruned once older than
 # window_days + the interval. That's a fixed handful of small numbers per
 # torrent forever, not one entry per run.
-def update_ratio_history(history, current_ratios, today, sample_interval_days=RATIO_HISTORY_SAMPLE_INTERVAL_DAYS, window_days=30):
+def update_ratio_history(
+    history,
+    current_ratios,
+    today,
+    sample_interval_days=RATIO_HISTORY_SAMPLE_INTERVAL_DAYS,
+    window_days=30,
+):
     max_age_days = window_days + sample_interval_days
     updated = {}
     for name, ratio in current_ratios.items():
         samples = list(history.get(name, []))
-        if not samples or (today - date.fromisoformat(samples[-1]['date'])).days >= sample_interval_days:
-            samples.append({'date': today.isoformat(), 'ratio': ratio})
+        if (
+            not samples
+            or (today - date.fromisoformat(samples[-1]["date"])).days
+            >= sample_interval_days
+        ):
+            samples.append({"date": today.isoformat(), "ratio": ratio})
         updated[name] = [
-            s for s in samples
-            if (today - date.fromisoformat(s['date'])).days <= max_age_days
+            s
+            for s in samples
+            if (today - date.fromisoformat(s["date"])).days <= max_age_days
         ]
     return updated
 
@@ -1280,13 +1470,19 @@ def _stagnation_anchor(samples, today, window_days):
     """Ratio of the oldest recorded sample that's at least window_days old,
     or None if we don't have one yet - i.e. this torrent is too new to judge
     either way."""
-    old_enough = [s for s in samples if (today - date.fromisoformat(s['date'])).days >= window_days]
+    old_enough = [
+        s
+        for s in samples
+        if (today - date.fromisoformat(s["date"])).days >= window_days
+    ]
     if not old_enough:
         return None
-    return min(old_enough, key=lambda s: s['date'])['ratio']
+    return min(old_enough, key=lambda s: s["date"])["ratio"]
 
 
-def plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_delta=0.02):
+def plan_stagnation_cleanup(
+    torrents, history, today, window_days=30, min_ratio_delta=0.02
+):
     """Default cleanup path: among superseded (non-latest) versions per
     (distro, type) group, remove ones whose ratio has grown less than
     min_ratio_delta over the last window_days - nobody's downloading them
@@ -1296,7 +1492,7 @@ def plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_
     to_remove = []
     to_keep = []
     for torrent in _old_version_candidates(torrents):
-        ratio = float(getattr(torrent, 'ratio', 0.0) or 0.0)
+        ratio = float(getattr(torrent, "ratio", 0.0) or 0.0)
         anchor = _stagnation_anchor(history.get(torrent.name, []), today, window_days)
         if anchor is None:
             to_keep.append((torrent, None))
@@ -1309,149 +1505,376 @@ def plan_stagnation_cleanup(torrents, history, today, window_days=30, min_ratio_
     return to_remove, to_keep
 
 
-def cleanup_stagnant_torrents():
-    username, password = get_rpc_credentials()
-    tc = Client(host='localhost', port=9091, username=username, password=password)
+def cleanup_stagnant_torrents(tc, *, today, window_days=30, min_ratio_delta=0.02):
+    """Default cleanup path: records today's ratios in the ratio history,
+    then removes superseded versions whose ratio grew by less than
+    min_ratio_delta over window_days (see plan_stagnation_cleanup()). tc is
+    a Transmission client."""
     torrents = tc.get_torrents()
 
-    window_days = int(os.getenv('CLEANUP_STAGNATION_WINDOW_DAYS', '30'))
-    min_ratio_delta = float(os.getenv('CLEANUP_STAGNATION_MIN_RATIO_DELTA', '0.02'))
-    today = date.today()
-
     history = load_ratio_history(ratio_history_file)
-    current_ratios = {t.name: float(getattr(t, 'ratio', 0.0) or 0.0) for t in torrents}
-    history = update_ratio_history(history, current_ratios, today, window_days=window_days)
+    current_ratios = {t.name: float(getattr(t, "ratio", 0.0) or 0.0) for t in torrents}
+    history = update_ratio_history(
+        history, current_ratios, today, window_days=window_days
+    )
 
-    to_remove, to_keep = plan_stagnation_cleanup(torrents, history, today, window_days, min_ratio_delta)
+    to_remove, to_keep = plan_stagnation_cleanup(
+        torrents, history, today, window_days, min_ratio_delta
+    )
 
     for torrent, delta in to_keep:
         if delta is None:
             logger.info(
                 "Keeping old version %s – not enough ratio history yet (need %d days).",
-                torrent.name, window_days,
+                torrent.name,
+                window_days,
             )
         else:
             logger.info(
                 "Keeping old version %s – ratio grew by %.3f over the last %d days.",
-                torrent.name, delta, window_days,
+                torrent.name,
+                delta,
+                window_days,
             )
     removed_history = load_removed_history(removed_history_file)
     for torrent in to_remove:
         logger.info(
             "Removing stagnant torrent: %s (no meaningful ratio growth in %d days)",
-            torrent.name, window_days,
+            torrent.name,
+            window_days,
         )
         tc.remove_torrent(torrent.id, delete_data=True)
         _remove_watch_file(torrent.name)
-        removed_history = record_removal(removed_history, torrent.name, today, 'stagnant', current_ratios[torrent.name])
+        removed_history = record_removal(
+            removed_history,
+            torrent.name,
+            today,
+            "stagnant",
+            current_ratios[torrent.name],
+        )
     save_removed_history(removed_history_file, removed_history)
 
     save_ratio_history(ratio_history_file, history)
 
-if __name__ == "__main__":
-    start_time = time.time()
-    logger.info("Starting torrent fetch run.")
 
-    ratios = get_previous_ratios(ratio_log_file)
-    removed_history = load_removed_history(removed_history_file)
+@dataclass(frozen=True)
+class Config:
+    """Every env var the daily run reads, parsed once by load_config().
 
-    success_count = 0
-    existing_count = 0
-    failure_count = 0
-    not_found_count = 0
+    A numeric setting that doesn't parse is None here, with the problem
+    recorded in `invalid`; require() raises it at the point the setting is
+    actually used. So a bad CLEANUP_* or CLEANUP_DISK_USAGE_THRESHOLD_PERCENT
+    value still only skips that step (logged), and a bad
+    FETCH_TORRENTS_OLD_RELEASE_* value still only fails once the old-release
+    check runs - the same as when each was parsed in place."""
 
-    distro_funcs = [
-        ('ubuntu', fetch_ubuntu_lts),
-        ('debian', fetch_debian_stable),
-        ('kali', fetch_kali_latest),
-        ('arch', fetch_arch_latest),
-        ('mint', fetch_linuxmint_cinnamon),
-        ('fedora', fetch_fedora_workstation),
-        ('devuan', fetch_devuan_latest),
-    ]
+    distros: tuple[str, ...] = DEFAULT_DISTROS
+    include_low_demand: bool = False
+    skip_ratio_check: bool = False
+    check_old_releases: bool = False
+    old_release_min_leechers: int | None = 10
+    old_release_min_leecher_ratio: float | None = 0.1
+    old_release_allow_zero_seeders: bool = False
+    old_release_recheck_days: int | None = 7
+    old_release_skip_removed: bool = True
+    cleanup_keep_only_latest: bool = False
+    cleanup_skip_ratio_check: bool = False
+    cleanup_min_ratio: float | None = 1.0
+    stagnation_window_days: int | None = 30
+    stagnation_min_ratio_delta: float | None = 0.02
+    disk_usage_threshold_percent: float | None = 95.0
+    rpc_username: str | None = None
+    rpc_password: str | None = None
+    invalid: dict[str, str] = field(default_factory=dict)
 
-    selected_distros = parse_supported_distros()
-    logger.info("Selected distros for this run: %s", ", ".join(selected_distros))
+    def require(self, *fields):
+        for name in fields:
+            if name in self.invalid:
+                raise ValueError(self.invalid[name])
 
-    include_low_demand = parse_bool('FETCH_TORRENTS_INCLUDE_LOW_DEMAND', False)
-    logger.info("Including low-demand image families (arm64/cloud/etc.): %s", include_low_demand)
+    @property
+    def rpc_auth(self):
+        if self.rpc_username and self.rpc_password:
+            return (self.rpc_username, self.rpc_password)
+        return None
 
-    for distro, func in distro_funcs:
-        if distro not in selected_distros:
-            logger.info("Skipping distro %s because it is not enabled by FETCH_TORRENTS_DISTROS.", distro)
+
+def load_config(env):
+    invalid = {}
+
+    def number(field_name, key, default, convert):
+        raw = env.get(key)
+        if raw is None:
+            return default
+        try:
+            return convert(raw)
+        except ValueError as exc:
+            invalid[field_name] = f"{key}: {exc}"
+            return None
+
+    return Config(
+        distros=tuple(parse_supported_distros(env=env)),
+        include_low_demand=parse_bool("FETCH_TORRENTS_INCLUDE_LOW_DEMAND", False, env),
+        skip_ratio_check=parse_bool("SKIP_RATIO_CHECK", False, env),
+        check_old_releases=parse_bool("FETCH_TORRENTS_CHECK_OLD_RELEASES", False, env),
+        old_release_min_leechers=number(
+            "old_release_min_leechers",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS",
+            10,
+            int,
+        ),
+        old_release_min_leecher_ratio=number(
+            "old_release_min_leecher_ratio",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO",
+            0.1,
+            float,
+        ),
+        old_release_allow_zero_seeders=parse_bool(
+            "FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS", False, env
+        ),
+        old_release_recheck_days=number(
+            "old_release_recheck_days",
+            "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS",
+            7,
+            int,
+        ),
+        old_release_skip_removed=parse_bool(
+            "FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED", True, env
+        ),
+        cleanup_keep_only_latest=parse_bool(
+            "CLEANUP_KEEP_ONLY_LATEST_VERSION", False, env
+        ),
+        cleanup_skip_ratio_check=parse_bool("CLEANUP_SKIP_RATIO_CHECK", False, env),
+        cleanup_min_ratio=number("cleanup_min_ratio", "CLEANUP_MIN_RATIO", 1.0, float),
+        stagnation_window_days=number(
+            "stagnation_window_days", "CLEANUP_STAGNATION_WINDOW_DAYS", 30, int
+        ),
+        stagnation_min_ratio_delta=number(
+            "stagnation_min_ratio_delta",
+            "CLEANUP_STAGNATION_MIN_RATIO_DELTA",
+            0.02,
+            float,
+        ),
+        disk_usage_threshold_percent=number(
+            "disk_usage_threshold_percent",
+            "CLEANUP_DISK_USAGE_THRESHOLD_PERCENT",
+            95.0,
+            float,
+        ),
+        **_rpc_credentials(env),
+        invalid=invalid,
+    )
+
+
+def make_client_factory(config):
+    """Connects to the local daemon with the credentials configure_transmission.py
+    configured it with (see _rpc_credentials() for why that matters)."""
+
+    def connect():
+        return Client(
+            host="localhost",
+            port=9091,
+            username=config.rpc_username,
+            password=config.rpc_password,
+        )
+
+    return connect
+
+
+DEFAULT_FETCHERS = (
+    ("ubuntu", fetch_ubuntu_lts),
+    ("debian", fetch_debian_stable),
+    ("kali", fetch_kali_latest),
+    ("arch", fetch_arch_latest),
+    ("mint", fetch_linuxmint_cinnamon),
+    ("fedora", fetch_fedora_workstation),
+    ("devuan", fetch_devuan_latest),
+)
+
+
+@dataclass
+class RunSummary:
+    elapsed: float = 0.0
+    added: int = 0
+    existing: int = 0
+    not_found: int = 0
+    failed: int = 0
+    old_added: int | None = None
+    old_skipped: int | None = None
+
+
+def _fetch_latest(config, fetchers, ratios, removed_history, summary):
+    for distro, func in fetchers:
+        if distro not in config.distros:
+            logger.info(
+                "Skipping distro %s because it is not enabled by FETCH_TORRENTS_DISTROS.",
+                distro,
+            )
             continue
 
         logger.info(f"Fetching latest {distro} torrents...")
         torrents = func()
-        if torrents:
-            torrents = filter_low_demand(torrents, include_low_demand)
-            for name, url in torrents.items():
-                if should_fetch_torrent(name, ratios, removed_history):
-                    status = download_torrent(name, url)
-                    if status == "added":
-                        success_count += 1
-                    elif status == "existing":
-                        existing_count += 1
-                    elif status == "not_found":
-                        not_found_count += 1
-                    else:
-                        failure_count += 1
-                else:
-                    logger.info(f"Skipping {name} due to low ratio on previous version.")
-        else:
-            failure_count += 1
+        if not torrents:
+            summary.failed += 1
+            continue
+        torrents = filter_low_demand(torrents, config.include_low_demand)
+        for name, url in torrents.items():
+            if not should_fetch_torrent(
+                name,
+                ratios,
+                removed_history,
+                skip_ratio_check=config.skip_ratio_check,
+            ):
+                logger.info(f"Skipping {name} due to low ratio on previous version.")
+                continue
+            status = download_torrent(name, url)
+            if status == "added":
+                summary.added += 1
+            elif status == "existing":
+                summary.existing += 1
+            elif status == "not_found":
+                summary.not_found += 1
+            else:
+                summary.failed += 1
 
-    old_added = old_skipped = None
-    check_old_releases = parse_bool('FETCH_TORRENTS_CHECK_OLD_RELEASES', False)
-    if check_old_releases:
-        old_release_min_leechers = int(os.getenv('FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS', '10'))
-        old_release_min_leecher_ratio = float(os.getenv('FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO', '0.1'))
-        old_release_allow_zero_seeders = parse_bool('FETCH_TORRENTS_OLD_RELEASE_ALLOW_ZERO_SEEDERS', False)
-        old_release_recheck_days = int(os.getenv('FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS', '7'))
-        skip_previously_removed = parse_bool('FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED', True)
 
-        check_state = load_old_release_check_state(old_release_check_state_file)
-        removed_history = load_removed_history(removed_history_file) if skip_previously_removed else {}
+def _check_old_releases(config, today, summary):
+    config.require(
+        "old_release_min_leechers",
+        "old_release_min_leecher_ratio",
+        "old_release_recheck_days",
+    )
+    check_state = load_old_release_check_state(old_release_check_state_file)
+    removed_history = (
+        load_removed_history(removed_history_file)
+        if config.old_release_skip_removed
+        else {}
+    )
+    logger.info(
+        "Checking old releases for unmet demand (min leechers: %d, min leecher/seeder ratio: %.1fx, "
+        "allow zero-seeder swarms: %s, recheck interval: %d days)...",
+        config.old_release_min_leechers,
+        config.old_release_min_leecher_ratio,
+        config.old_release_allow_zero_seeders,
+        config.old_release_recheck_days,
+    )
+    summary.old_added, summary.old_skipped, check_state = check_old_releases_for_demand(
+        list(config.distros),
+        config.include_low_demand,
+        config.old_release_min_leechers,
+        config.old_release_min_leecher_ratio,
+        config.old_release_allow_zero_seeders,
+        check_state,
+        removed_history,
+        today,
+        config.old_release_recheck_days,
+    )
+    save_old_release_check_state(old_release_check_state_file, check_state)
+    logger.info(
+        "Old-release check complete: %d added, %d skipped.",
+        summary.old_added,
+        summary.old_skipped,
+    )
 
-        logger.info(
-            "Checking old releases for unmet demand (min leechers: %d, min leecher/seeder ratio: %.1fx, "
-            "allow zero-seeder swarms: %s, recheck interval: %d days)...",
-            old_release_min_leechers, old_release_min_leecher_ratio, old_release_allow_zero_seeders,
-            old_release_recheck_days,
+
+def _cleanup(config, client_factory, today):
+    if config.cleanup_keep_only_latest:
+        config.require("cleanup_min_ratio")
+        cleanup_old_versions(
+            client_factory(),
+            today=today,
+            skip_ratio_check=config.cleanup_skip_ratio_check,
+            min_ratio=config.cleanup_min_ratio,
         )
-        old_added, old_skipped, check_state = check_old_releases_for_demand(
-            selected_distros, include_low_demand, old_release_min_leechers, old_release_min_leecher_ratio,
-            old_release_allow_zero_seeders, check_state, removed_history, date.today(), old_release_recheck_days,
+    else:
+        config.require("stagnation_window_days", "stagnation_min_ratio_delta")
+        cleanup_stagnant_torrents(
+            client_factory(),
+            today=today,
+            window_days=config.stagnation_window_days,
+            min_ratio_delta=config.stagnation_min_ratio_delta,
         )
-        save_old_release_check_state(old_release_check_state_file, check_state)
-        logger.info("Old-release check complete: %d added, %d skipped.", old_added, old_skipped)
 
-    if wait_for_transmission_rpc():
+
+def run(
+    config,
+    *,
+    client_factory,
+    today,
+    now=time.time,
+    fetchers=DEFAULT_FETCHERS,
+    disk_usage=shutil.disk_usage,
+    download_path="/downloads",
+    wait_for_rpc=wait_for_transmission_rpc,
+):
+    """The daily run: fetch new releases (ratio-gated on the previous run's
+    ratio log), optionally check old releases for demand, log seed ratios
+    for the next run, clean up, then enforce the disk-usage limit. Each
+    step after fetching logs its own failure and lets the rest carry on."""
+    start_time = now()
+    logger.info("Starting torrent fetch run.")
+    logger.info("Selected distros for this run: %s", ", ".join(config.distros))
+    logger.info(
+        "Including low-demand image families (arm64/cloud/etc.): %s",
+        config.include_low_demand,
+    )
+
+    summary = RunSummary()
+    ratios = get_previous_ratios(ratio_log_file)
+    removed_history = load_removed_history(removed_history_file)
+    _fetch_latest(config, fetchers, ratios, removed_history, summary)
+
+    if config.check_old_releases:
+        _check_old_releases(config, today, summary)
+
+    if wait_for_rpc():
         try:
-            log_seed_ratios_via_http()
+            log_seed_ratios_via_http(auth=config.rpc_auth)
         except Exception as exc:
             logger.error("Could not query Transmission: %s", exc)
     else:
-        logger.error("Transmission RPC not available on localhost:9091; skipping ratio logs.")
-        
+        logger.error(
+            "Transmission RPC not available on localhost:9091; skipping ratio logs."
+        )
+
     try:
-        if parse_bool('CLEANUP_KEEP_ONLY_LATEST_VERSION', False):
-            cleanup_old_versions()
-        else:
-            cleanup_stagnant_torrents()
+        _cleanup(config, client_factory, today)
     except Exception as exc:
         logger.error("Could not clean up old versions: %s", exc)
 
     try:
-        disk_usage_threshold = float(os.getenv('CLEANUP_DISK_USAGE_THRESHOLD_PERCENT', '95'))
-        enforce_disk_usage_limit(disk_usage_threshold)
+        config.require("disk_usage_threshold_percent")
+        enforce_disk_usage_limit(
+            client_factory,
+            config.disk_usage_threshold_percent,
+            today=today,
+            disk_usage=disk_usage,
+            download_path=download_path,
+        )
     except Exception as exc:
         logger.error("Could not enforce disk usage limit: %s", exc)
 
-    total, used, free = shutil.disk_usage("/downloads")
-    logger.info(f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total")
+    total, used, _free = disk_usage(download_path)
+    logger.info(
+        f"Downloads folder usage: {used // (2**30)} GB used / {total // (2**30)} GB total"
+    )
 
-    elapsed = time.time() - start_time
-    logger.info(format_run_summary(
-        elapsed, success_count, existing_count, not_found_count, failure_count, old_added, old_skipped,
-    ))
+    summary.elapsed = now() - start_time
+    logger.info(
+        format_run_summary(
+            summary.elapsed,
+            summary.added,
+            summary.existing,
+            summary.not_found,
+            summary.failed,
+            summary.old_added,
+            summary.old_skipped,
+        )
+    )
+    return summary
+
+
+if __name__ == "__main__":
+    configure_logging(log_dir)
+    config = load_config(os.environ)
+    run(config, client_factory=make_client_factory(config), today=date.today())

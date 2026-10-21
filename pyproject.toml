@@ -1,0 +1,52 @@
+# Tool configuration only - this project isn't packaged. The container runs
+# the scripts directly with Alpine's python3 (see Dockerfile).
+
+[tool.ruff]
+# The oldest Python the scripts still support. The container runs Alpine's
+# python3 (3.14 on alpine:latest as of 2026-10), which CI pins too.
+target-version = "py312"
+
+[tool.ruff.lint]
+# The defaults plus flake8-bandit (S), so new security smells fail CI.
+extend-select = ["S"]
+ignore = [
+    # Broad `except Exception` is the error-handling design here: each
+    # distro fetcher, cleanup step and tracker scrape must log and carry on
+    # rather than abort the whole daily run (see the __main__ block).
+    "BLE001",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    # unittest asserts via self.assert*, but a bare assert to narrow a type
+    # for mypy (e.g. a module spec) is fine in a test.
+    "S101",
+    # Fake RPC credentials and the 0.0.0.0 SSRF case are test inputs.
+    "S104",
+    "S106",
+    # Runs sys.executable on this repo's own scripts, with no shell.
+    "S603",
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["fetch_torrents.py", "torrent_scrape.py", "configure_transmission.py"]
+
+[tool.coverage.run]
+branch = true
+source_pkgs = ["fetch_torrents", "torrent_scrape", "configure_transmission"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+# Ratchet: about 2 points under the measured total (99.13% on 2026-10-19,
+# task 38), so coverage can only go up. Raise it as coverage improves; never
+# lower it to get a change through.
+fail_under = 97
+
+[tool.mutmut]
+# mutmut<3 (see requirements-dev.txt). It edits these files in place while
+# it runs, so run it on a clean working tree. See CONTRIBUTING.md.
+paths_to_mutate = "fetch_torrents.py,torrent_scrape.py,configure_transmission.py"
+tests_dir = "tests/"
+runner = "python -m unittest discover -s tests -f -q"

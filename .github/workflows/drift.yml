@@ -1,0 +1,154 @@
+name: Live drift check
+
+# The merge check is deterministic by design (recorded pages, fakes, no
+# network). This weekly job checks the moving parts it can't: the live
+# distro sites, a live tracker, a real transmission-daemon, and the
+# published image as deployed (network + apk upgrade at start). It never
+# blocks anything; a failure opens (or comments on) one issue labelled
+# `drift`.
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"  # Mondays 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/squazz/linux-iso-seeder:latest
+
+jobs:
+  scrapers:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.x"
+
+    - run: pip install -r requirements-test.txt
+
+    # Every fetcher must return well-formed candidates, at least one of
+    # which answers 200.
+    - name: Run fetchers against the live sites
+      run: python scripts/live_check.py scrapers
+
+    # Fresh captures to diff against tests/fixtures/pages.
+    - name: Re-record fixtures
+      if: failure()
+      run: python scripts/record_fixtures.py
+
+    - name: Upload re-recorded fixtures
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: rerecorded-fixtures
+        path: tests/fixtures/pages
+
+  tracker:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.x"
+
+    - run: pip install -r requirements-test.txt
+
+    - name: Scrape a current Ubuntu torrent's tracker
+      run: python scripts/live_check.py tracker
+
+  transmission:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    # Just the daemon (no daily fetch loop), offline: the round trip uses a
+    # self-made tracker-less torrent, so nothing is downloaded.
+    - name: Start the published image's transmission-daemon
+      run: |
+        docker run -d --name seeder --network none --entrypoint sh "$IMAGE" -c \
+          'python3 /usr/local/bin/configure_transmission.py && exec transmission-daemon --foreground --config-dir /config --download-dir /downloads --watch-dir /watch'
+
+    # Inside the image, so it's the image's own apk py3-transmission-rpc
+    # and fetch_torrents.py talking to its own daemon.
+    - name: Add, read, log and remove a torrent through the RPC
+      run: |
+        docker cp scripts/transmission_roundtrip.py seeder:/tmp/
+        docker exec -w /usr/local/bin seeder python3 /tmp/transmission_roundtrip.py
+
+    - name: Daemon logs
+      if: always()
+      run: docker logs seeder
+
+  published-image:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Smoke-test the published image as deployed
+      run: sh scripts/smoke_test.sh "$IMAGE"
+      env:
+        SMOKE_NETWORK: bridge
+        SMOKE_SKIP_PACKAGE_UPDATES: "false"
+        SMOKE_TIMEOUT_SECONDS: "300"
+
+  # Trend only: results are uploaded, and a low score never fails the run.
+  mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.x"
+
+    - run: pip install -r requirements-dev.txt
+
+    - name: Run mutmut
+      run: |
+        mutmut run --no-progress || true
+        mutmut results > mutmut-results.txt || true
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: mutmut-results
+        path: |
+          mutmut-results.txt
+          .mutmut-cache
+
+  report:
+    needs: [scrapers, tracker, transmission, published-image]
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+    - uses: actions/github-script@v7
+      with:
+        script: |
+          const label = "drift";
+          const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+          const body = `The weekly live drift check failed: ${run}\n\n` +
+            "Check which job failed. For scraper drift, the run has a " +
+            "`rerecorded-fixtures` artifact to diff against `tests/fixtures/pages`.";
+          try {
+            await github.rest.issues.createLabel({ ...context.repo, name: label, color: "d93f0b" });
+          } catch (error) {
+            if (error.status !== 422) throw error;  // 422: already exists
+          }
+          const { data: open } = await github.rest.issues.listForRepo({
+            ...context.repo, labels: label, state: "open",
+          });
+          if (open.length > 0) {
+            await github.rest.issues.createComment({ ...context.repo, issue_number: open[0].number, body });
+          } else {
+            await github.rest.issues.create({
+              ...context.repo, title: "Live drift check failed", labels: [label], body,
+            });
+          }
