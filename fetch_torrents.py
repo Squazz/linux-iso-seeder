@@ -1204,9 +1204,11 @@ def check_old_releases_for_demand(
 def log_seed_ratios_via_http(
     rpc_url="http://localhost:9091/transmission/rpc", *, auth: tuple | None
 ):
-    """auth is the caller's Config.rpc_auth; None sends no credentials."""
+    """auth is the caller's Config.rpc_auth; None sends no credentials.
+    Both requests carry it: the daemon checks credentials before it hands
+    out the session id."""
     logger.info("Querying Transmission RPC for seed ratios...")
-    r = requests.post(rpc_url, timeout=15)
+    r = requests.post(rpc_url, auth=auth, timeout=15)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
     payload: dict[str, Any] = {
         "method": "torrent-get",

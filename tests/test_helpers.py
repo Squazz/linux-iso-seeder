@@ -207,6 +207,49 @@ class FakeTransmissionRpcTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_with_credentials_wrong_auth_gets_a_401_before_the_session_id(self):
+        # transmission-daemon 4.0.6 (rpc-server.cc handle_request) checks
+        # Basic auth before the session id, so an unauthenticated request
+        # never learns the id.
+        self.rpc.credentials = ("alice", "hunter2")
+        for auth in (None, ("alice", "wrong")):
+            for headers in (None, self._authed_session_headers()):
+                with self.subTest(auth=auth, headers=headers):
+                    response = self.rpc.post(
+                        RPC_URL,
+                        json=TORRENT_GET,
+                        headers=headers,
+                        auth=auth,
+                        timeout=15,
+                    )
+
+                    self.assertEqual(response.status_code, 401)
+                    self.assertNotIn("X-Transmission-Session-Id", response.headers)
+                    self.assertIn("WWW-Authenticate", response.headers)
+        self.assertEqual(self.rpc.auths, [])
+
+    def test_with_credentials_the_right_auth_completes_the_handshake(self):
+        self.rpc.credentials = ("alice", "hunter2")
+        headers = self._authed_session_headers()
+
+        response = self.rpc.post(
+            RPC_URL,
+            json=TORRENT_GET,
+            headers=headers,
+            auth=("alice", "hunter2"),
+            timeout=15,
+        )
+
+        response.raise_for_status()
+        self.assertEqual(self.rpc.auths, [("alice", "hunter2")])
+
+    def _authed_session_headers(self):
+        refused = self.rpc.post(RPC_URL, auth=("alice", "hunter2"), timeout=15)
+        self.assertEqual(refused.status_code, 409)
+        return {
+            "X-Transmission-Session-Id": refused.headers["X-Transmission-Session-Id"]
+        }
+
 
 class FakeHttpTests(unittest.TestCase):
     PAGE = "https://example.org/page"

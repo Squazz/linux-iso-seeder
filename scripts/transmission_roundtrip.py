@@ -10,7 +10,8 @@ Drops a tiny self-made .torrent (one 16-byte file, random name, no
 trackers - so nothing is ever downloaded) into /watch, waits for the daemon
 to pick it up, reads it the way cleanup does, logs seed ratios over raw RPC
 the way the daily run does, then removes it with delete_data=True.
-Exits 1 on any failure.
+Exits 1 on any failure. RPC credentials come from the environment, as in
+the daily run; drift.yml sets them so the daemon checks auth.
 """
 
 import hashlib

@@ -71,10 +71,16 @@ jobs:
     - uses: actions/checkout@v7
 
     # Just the daemon (no daily fetch loop), offline: the round trip uses a
-    # self-made tracker-less torrent, so nothing is downloaded.
+    # self-made tracker-less torrent, so nothing is downloaded. RPC
+    # credentials are set so the daemon checks auth on every request, the
+    # session-id handshake included (task 52). docker exec inherits them and
+    # the round trip reads them with load_config(). Throwaway values: the
+    # container has no network.
     - name: Start the published image's transmission-daemon
       run: |
-        docker run -d --name seeder --network none --entrypoint sh "$IMAGE" -c \
+        docker run -d --name seeder --network none \
+          -e TRANSMISSION_RPC_USERNAME=drift -e TRANSMISSION_RPC_PASSWORD=drift-check \
+          --entrypoint sh "$IMAGE" -c \
           'python3 /usr/local/bin/configure_transmission.py && exec transmission-daemon --foreground --config-dir /config --download-dir /downloads --watch-dir /watch'
 
     # Inside the image, so it's the image's own apk py3-transmission-rpc

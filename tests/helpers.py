@@ -264,7 +264,10 @@ class FakeTransmissionRpc:
     requested fields. A method or field the pinned transmission_rpc doesn't
     know raises ValueError. `calls` records every post, as mock.call()s.
     Set `error_status` (e.g. 500) to fail every request past the handshake
-    with that status."""
+    with that status. Set `credentials` to a (user, password) tuple to
+    require them like a daemon with rpc-authentication-required: a request
+    with any other `auth` gets a 401 without the session id, checked first,
+    as transmission-daemon 4.0.6's rpc-server.cc does."""
 
     URL = "http://localhost:9091/transmission/rpc"
     SESSION_ID = "sid"
@@ -274,11 +277,19 @@ class FakeTransmissionRpc:
         self.calls = []
         self.auths = []
         self.error_status = None
+        self.credentials = None
 
     def post(self, url, **kwargs):
         self.calls.append(unittest.mock.call(url, **kwargs))
         if url != self.URL:
             return fake_response(b"not found", status=404, url=url)
+        if self.credentials is not None and kwargs.get("auth") != self.credentials:
+            return fake_response(
+                b"unauthorized",
+                status=401,
+                url=url,
+                headers={"WWW-Authenticate": 'Basic realm="Transmission"'},
+            )
         headers = kwargs.get("headers") or {}
         if headers.get("X-Transmission-Session-Id") != self.SESSION_ID:
             return fake_response(
