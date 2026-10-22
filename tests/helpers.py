@@ -565,6 +565,73 @@ def kali_candidates(*versions):
     }
 
 
+class FakeUdpSocket:
+    """socket.socket stand-in for a UDP tracker client. Records each
+    datagram sent, by sendto() or connect()+send() alike, as (payload, addr)
+    in `sent`. recvfrom()/recv() serve `replies` in order: bytes, an
+    exception to raise, or a function of the last payload sent (so a reply
+    can echo its transaction id). `timeout` is what settimeout() was given,
+    and `closed` is set by close() or by leaving a `with` block. patch()
+    serves it for every UDP socket opened during a test."""
+
+    def __init__(self, replies=()):
+        self.replies = list(replies)
+        self.sent = []
+        self.timeout = None
+        self.closed = False
+        self._peer = None
+
+    def patch(self, testcase):
+        def open_socket(family=socket.AF_INET, type=socket.SOCK_DGRAM, *args):
+            assert type == socket.SOCK_DGRAM, "FakeUdpSocket only fakes UDP"
+            return self
+
+        _patch_for_test(testcase, socket, "socket", open_socket)
+
+    def _check_open(self):
+        if self.closed:
+            raise OSError("Bad file descriptor")
+
+    def settimeout(self, value):
+        self.timeout = value
+
+    def gettimeout(self):
+        return self.timeout
+
+    def connect(self, address):
+        self._check_open()
+        self._peer = address
+
+    def sendto(self, data, address):
+        self._check_open()
+        self.sent.append((bytes(data), address))
+        return len(data)
+
+    def send(self, data):
+        return self.sendto(data, self._peer)
+
+    def recvfrom(self, bufsize):
+        self._check_open()
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        if callable(reply):
+            reply = reply(self.sent[-1][0])
+        return reply, self.sent[-1][1]
+
+    def recv(self, bufsize):
+        return self.recvfrom(bufsize)[0]
+
+    def close(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+
 def _refuse_network(*args, **kwargs):
     raise RuntimeError("tests must not open network connections")
 

@@ -385,5 +385,76 @@ class NetworkGuardTests(unittest.TestCase):
             socket.create_connection(("192.0.2.1", 80), timeout=1)
 
 
+class FakeUdpSocketTests(unittest.TestCase):
+    """The UDP socket double records datagrams whichever way they're sent,
+    and only stands in for what socket.socket really has."""
+
+    ADDR = ("tracker.example.com", 6969)
+
+    def test_records_datagrams_from_sendto_and_connect_send_alike(self):
+        sock = helpers.FakeUdpSocket()
+        sock.sendto(b"one", self.ADDR)
+        sock.connect(self.ADDR)
+        sock.send(b"two")
+
+        self.assertEqual(sock.sent, [(b"one", self.ADDR), (b"two", self.ADDR)])
+
+    def test_serves_scripted_replies_in_order_and_raises_exceptions(self):
+        sock = helpers.FakeUdpSocket(
+            [b"first", lambda payload: payload.upper(), TimeoutError("timed out")]
+        )
+        sock.sendto(b"ping", self.ADDR)
+
+        self.assertEqual(sock.recvfrom(2048), (b"first", self.ADDR))
+        self.assertEqual(sock.recv(2048), b"PING")
+        with self.assertRaisesRegex(TimeoutError, "timed out"):
+            sock.recvfrom(2048)
+
+    def test_records_the_timeout_it_was_given(self):
+        sock = helpers.FakeUdpSocket()
+        self.assertIsNone(sock.timeout)
+
+        sock.settimeout(5)
+
+        self.assertEqual((sock.timeout, sock.gettimeout()), (5, 5))
+
+    def test_closed_by_close_and_by_leaving_a_with_block(self):
+        closed = helpers.FakeUdpSocket()
+        closed.close()
+        with helpers.FakeUdpSocket() as left:
+            self.assertFalse(left.closed)
+
+        self.assertEqual((closed.closed, left.closed), (True, True))
+
+    def test_a_closed_socket_refuses_io(self):
+        sock = helpers.FakeUdpSocket([b"reply"])
+        sock.close()
+
+        for io in (lambda: sock.sendto(b"x", self.ADDR), lambda: sock.recvfrom(1)):
+            with self.subTest(io=io), self.assertRaises(OSError):
+                io()
+
+    def test_patch_serves_it_as_any_udp_socket_and_refuses_tcp(self):
+        sock = helpers.FakeUdpSocket()
+        sock.patch(self)
+
+        for family in (socket.AF_INET, socket.AF_INET6):
+            with self.subTest(family=family):
+                self.assertIs(socket.socket(family, socket.SOCK_DGRAM), sock)
+        with self.assertRaisesRegex(AssertionError, "UDP"):
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    def test_every_method_exists_on_the_real_socket(self):
+        public = {
+            name
+            for name in vars(helpers.FakeUdpSocket)
+            if not name.startswith("_") and callable(vars(helpers.FakeUdpSocket)[name])
+        }
+
+        self.assertEqual(
+            {name for name in public if not hasattr(socket.socket, name)}, {"patch"}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
