@@ -1,3 +1,6 @@
+# Store text files with LF whatever the committer's core.autocrlf; the
+# checkout keeps each machine's own line endings. Later lines override.
+* text=auto
 *.sh text eol=lf
 # Recorded upstream pages: keep byte-for-byte as captured.
 tests/fixtures/pages/** -text
