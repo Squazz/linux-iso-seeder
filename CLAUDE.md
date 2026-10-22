@@ -23,8 +23,11 @@ a task as done, run:
 python -m unittest discover -s tests -v
 ```
 
-(On Windows dev machines without a `python` alias, use `py -m unittest
-discover -s tests -v`.) If a test fails, fix it or the code — don't report
+(On Windows dev machines, use the project venv's interpreter:
+`.venv/Scripts/python -m unittest discover -s tests -v`, with
+`requirements-dev.txt` installed into `.venv`. The system `py` launcher
+doesn't have the test dependencies, so every test module fails to import.)
+If a test fails, fix it or the code — don't report
 completion with a known-failing suite, and don't delete/weaken a test just to
 make it pass unless the test itself was wrong.
 

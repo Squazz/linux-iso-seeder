@@ -8,7 +8,7 @@ Testing rules and the import-stubbing pattern live in the root [CLAUDE.md](../CL
 - Tests: stdlib `unittest` (`tests/`)
 
 ## Commands
-- Test: `python -m unittest discover -s tests -v` (Windows: `py -m unittest discover -s tests -v`)
+- Test: `python -m unittest discover -s tests -v` (Windows: `.venv/Scripts/python -m unittest discover -s tests -v`; the system `py` lacks the test deps)
 - Lint/format: `ruff check .` / `ruff format .`
 - Typecheck: `mypy` (files and settings in `pyproject.toml`)
 - CI's `test` job runs ruff check (defaults + bandit `S`), ruff format --check, mypy, shellcheck, hadolint and actionlint (all of `.github/workflows/`) before the tests; tool versions are pinned in `requirements-dev.txt`, the shellcheck/hadolint/actionlint images in `.github/workflows/docker-image.yml` (commands in CONTRIBUTING.md)
