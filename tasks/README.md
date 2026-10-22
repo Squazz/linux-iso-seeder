@@ -265,6 +265,6 @@ A 2026-10-22 review asked whether the suite breaks when the implementation chang
 | 56 | [UDP scrape tests: assert on datagrams, not socket method calls](56-udp-scrape-fake-socket.md) | P4 (optional) | NO_REFACTOR | — | open |
 | 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | open |
 | 58 | [Tests that pin private helpers' internals](58-private-helper-tests.md) | P4 (optional) | NO_REFACTOR | 56 (soft) | open |
-| 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | open |
+| 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | done |
 
 Suggested order: 59 (smallest), then 56 and 58 together, then 57. Each task says how to prove the change worked: temporarily make the refactor the old test would have blocked, check the suite stays green, then revert it.

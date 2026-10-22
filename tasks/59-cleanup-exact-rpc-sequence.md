@@ -13,3 +13,8 @@
 1. Assert on the removals only: e.g. `[c for c in transmission.calls if c[0] == "remove_torrent"] == [("remove_torrent", N, True)]`, or a small `FakeTransmission.removals` property (tested in `tests/test_helpers.py`) if more tests would use it.
 2. Check that nothing else in the suite compares the whole of `transmission.calls`. Where a test really needs "no other calls" (e.g. `test_disabled_threshold_never_touches_disk_or_rpc`), keep that and say so in the test.
 3. Full suite, ruff, ruff format, mypy and the coverage gate are green.
+
+## Result
+- Both tests assert `transmission.removals == [(N, True)]`, using the property `FakeTransmission` already had (tested in `tests/test_helpers.py`). Names unchanged, so `docs/seeding-policy.md` still matches.
+- No other test compares the whole of `transmission.calls` (`:666` already used `assertIn`). `test_disabled_threshold_never_touches_disk_or_rpc` pins "no RPC at all" through the connection count, not `calls`, so it stays as it is.
+- Proved by temporarily adding a second `tc.get_torrents()` read to `cleanup_stagnant_torrents()` and `enforce_disk_usage_limit()`: the rewritten tests pass, the old ones fail. Reverted.
