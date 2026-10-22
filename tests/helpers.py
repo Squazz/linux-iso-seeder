@@ -527,7 +527,7 @@ class OldReleaseTracker(FakeHttp):
         import fetch_torrents
 
         _patch_for_test(testcase, fetch_torrents.requests, "get", self.get)
-        # boundary double: opens UDP/HTTP tracker sockets
+        # double-waiver: B1 — opens UDP/HTTP tracker sockets
         _patch_for_test(
             testcase,
             fetch_torrents.torrent_scrape,

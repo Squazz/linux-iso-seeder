@@ -12,3 +12,8 @@
 2. No `mock.patch.object(record_fixtures, ...)` is left in `tests/test_record_fixtures.py`.
 3. The `scrape_torrent` double carries whatever waiver marker the other boundary doubles use, or this file records why the existing comment already satisfies it.
 4. Full suite, ruff, ruff format, mypy and the coverage gate are green.
+
+## Result
+- `main(argv, *, now=None, record=record)`. `MainTests` pass a `Mock` spy instead of patching the module; no `mock.patch.object(record_fixtures, ...)` is left. With the distro filter temporarily broken (`if True:`), `test_distro_arguments_record_only_those_distros` and `test_an_unknown_distro_records_nothing` fail; reverted.
+- The r3 test-design report (`.dev-team-reports/test-design-2026-10-21-r3.md`, row 1) expects the normative `# double-waiver: B1 — <reason>` marker, which no other double needs: every other double in the suite is at a leaf (`requests`, sockets, clock) or injected. `OldReleaseTracker.patch()`'s comment now reads `# double-waiver: B1 — opens UDP/HTTP tracker sockets`.
+- Not in scope, left as is: the same report's warning that `tests/test_old_release_demand.py` patches `ft.date` without a waiver although `today=` exists.
