@@ -96,7 +96,14 @@ class ScraperTestCase(unittest.TestCase):
 
 class RecordedSnapshotTests(ScraperTestCase):
     """Each fetcher, replayed against its captured pages, must produce
-    exactly the candidates the snapshot lists."""
+    exactly the candidates the snapshot lists. The names matter as much as
+    the URLs: a candidate's name is what should_fetch_torrent() checks
+    before the download and what the old-release check saves it as, so it
+    must match the name inside the .torrent file, which Transmission later
+    reports as torrent.name (checked against real downloads: e.g.
+    ubuntu-24.04-desktop-amd64.iso keeps its arch and .iso suffix,
+    Fedora-Workstation-Live-x86_64-44 has no .iso, and Devuan's is the
+    devuan_<codename> basename)."""
 
     def test_ubuntu_lists_every_supported_lts_newest_first(self):
         fetched = self.fetch(ft.fetch_ubuntu_lts)

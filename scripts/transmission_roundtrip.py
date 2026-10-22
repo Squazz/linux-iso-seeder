@@ -38,13 +38,22 @@ def make_torrent(name):
     return torrent_scrape.bencode({"info": info})
 
 
-def wait_for(description, predicate):
-    deadline = time.time() + TIMEOUT_SECONDS
-    while time.time() < deadline:
+def wait_for(
+    description,
+    predicate,
+    *,
+    clock=time.monotonic,
+    sleep=time.sleep,
+    timeout=TIMEOUT_SECONDS,
+):
+    """predicate()'s first truthy result, polling every 2 seconds; exits
+    with a failure if there is none within `timeout` seconds."""
+    start = clock()
+    while clock() - start < timeout:
         result = predicate()
         if result:
             return result
-        time.sleep(2)
+        sleep(2)
     raise SystemExit(f"FAILED: timed out waiting for {description}")
 
 

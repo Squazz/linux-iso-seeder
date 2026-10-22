@@ -66,10 +66,12 @@ ENDPOINTS = (
 )
 
 
-def record(distro, slug, url, ext, now):
-    response = requests.get(url, timeout=30)
+def record(distro, slug, url, ext, now, *, get=requests.get, out_dir=FIXTURES_DIR):
+    """Fetches `url` with `get` and writes it to <out_dir>/<distro>/<slug>.<ext>
+    plus <slug>.meta.json. HTTP errors propagate before anything is written."""
+    response = get(url, timeout=30)
     response.raise_for_status()
-    directory = os.path.join(FIXTURES_DIR, distro)
+    directory = os.path.join(out_dir, distro)
     os.makedirs(directory, exist_ok=True)
     with open(os.path.join(directory, f"{slug}.{ext}"), "wb") as f:
         f.write(response.content)
@@ -84,9 +86,12 @@ def record(distro, slug, url, ext, now):
     print(f"{distro}/{slug}.{ext}: {len(response.content)} bytes from {url}")
 
 
-def main(argv):
+def main(argv, *, now=None):
+    """Records every endpoint, or only those of the distros in `argv`, all
+    stamped with `now` (default: the current UTC time)."""
     wanted = set(argv)
-    now = datetime.now(UTC)
+    if now is None:
+        now = datetime.now(UTC)
     for distro, slug, url, ext in ENDPOINTS:
         if not wanted or distro in wanted:
             record(distro, slug, url, ext, now)

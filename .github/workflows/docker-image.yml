@@ -12,6 +12,9 @@ on:
       - ".github/dependabot.yml"
       - ".github/workflows/**"
       - "!.github/workflows/docker-image.yml"
+  # Manual dry run: on a tag ref it builds and smoke-tests with the tag's
+  # VERSION, but only a push event publishes anything.
+  workflow_dispatch:
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -37,7 +40,8 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        # alpine:latest's python3 minor; bump with requirements-test.txt.
+        # alpine:latest's python3 minor; bump with requirements-test.txt
+        # and PYTHON_VERSION in drift.yml.
         python-version: "3.14"
 
     - name: Install dev dependencies
@@ -57,6 +61,11 @@ jobs:
 
     - name: Lint Dockerfile
       run: docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
+
+    # Every workflow in .github/workflows/, including the `run:` scripts
+    # (via the image's bundled shellcheck). No ignores.
+    - name: Lint workflows
+      run: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 
     - name: Run tests
       run: coverage run -m unittest discover -s tests -v
@@ -86,61 +95,94 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      LOCAL_IMAGE: linux-iso-seeder:ci
+      REMOTE_IMAGE: ghcr.io/squazz/linux-iso-seeder
 
     steps:
     - uses: actions/checkout@v7
 
+    # One VERSION for every build below. It is in the environment of the
+    # Dockerfile's `apk add` RUN, so the unit-test stage, the smoke-tested
+    # image and the pushed image only share the cached runtime layers (and
+    # its apk packages) if they all get the same value.
+    - name: Pick image version and tags
+      id: version
+      run: |
+        if [ "$GITHUB_REF_TYPE" = tag ]; then
+          version=${GITHUB_REF_NAME#v}
+        else
+          version=latest
+        fi
+        case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+          push:refs/tags/*) tags="$version latest" ;;
+          push:refs/heads/main) tags=latest ;;
+          *) tags= ;;
+        esac
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "tags=$tags" >> "$GITHUB_OUTPUT"
+
     # The test job uses pip packages on Ubuntu; this reruns the suite on the
     # apk versions the container actually ships (Dockerfile `test` stage).
     - name: Run unit tests inside the image
-      run: docker build --target test .
+      run: docker build --target test --build-arg VERSION="$VERSION" .
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
 
-    - name: Build image for smoke test
-      run: docker build -t linux-iso-seeder:smoke .
+    # Built once: the image smoke-tested below is the one pushed, by ID, with
+    # no rebuild in between.
+    - name: Build the image
+      run: docker build --build-arg VERSION="$VERSION" -t "$LOCAL_IMAGE" .
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
 
     # Starts the image (root and RUN_AS_NON_ROOT) and checks it comes up;
     # nothing below pushes unless this passes.
     - name: Smoke-test the image
-      run: sh scripts/smoke_test.sh linux-iso-seeder:smoke
+      run: sh scripts/smoke_test.sh "$LOCAL_IMAGE"
 
     - name: Log in to GitHub Container Registry
+      if: steps.version.outputs.tags != ''
       uses: docker/login-action@v4
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build and push latest image for main branch
-      if: github.ref == 'refs/heads/main'
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        file: Dockerfile
-        push: true
-        tags: ghcr.io/squazz/linux-iso-seeder:latest
-        build-args: |
-          VERSION=latest
+    # `latest` on main; `<version>` and `latest` on a tag, both the same image.
+    - name: Push the smoke-tested image
+      if: steps.version.outputs.tags != ''
+      env:
+        TAGS: ${{ steps.version.outputs.tags }}
+      run: |
+        for tag in $TAGS; do
+          docker tag "$LOCAL_IMAGE" "$REMOTE_IMAGE:$tag"
+          docker push "$REMOTE_IMAGE:$tag"
+        done
 
-    - name: Extract version from tag
-      if: startsWith(github.ref, 'refs/tags/')
-      id: extract_version
-      run: echo "version=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
-
-    - name: Build and push versioned image for tag
-      if: startsWith(github.ref, 'refs/tags/')
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        file: Dockerfile
-        push: true
-        tags: |
-          ghcr.io/squazz/linux-iso-seeder:${{ steps.extract_version.outputs.version }}
-          ghcr.io/squazz/linux-iso-seeder:latest
-        build-args: |
-          VERSION=${{ steps.extract_version.outputs.version }}
+    # Pulls each pushed tag back from the registry and fails unless it is
+    # the image the smoke test ran against.
+    - name: Check the pushed tags are the smoke-tested image
+      if: steps.version.outputs.tags != ''
+      env:
+        TAGS: ${{ steps.version.outputs.tags }}
+      run: |
+        tested=$(docker image inspect -f '{{.Id}}' "$LOCAL_IMAGE")
+        for tag in $TAGS; do
+          # Untag only (LOCAL_IMAGE keeps the image), so the name below
+          # comes from the pull, not from the push.
+          docker image rm "$REMOTE_IMAGE:$tag"
+          docker pull "$REMOTE_IMAGE:$tag"
+          pulled=$(docker image inspect -f '{{.Id}}' "$REMOTE_IMAGE:$tag")
+          if [ "$pulled" != "$tested" ]; then
+            echo "::error::$REMOTE_IMAGE:$tag is $pulled, but the smoke test ran $tested"
+            exit 1
+          fi
+          echo "$REMOTE_IMAGE:$tag is the smoke-tested image ($tested)"
+        done
 
     - name: Create GitHub release if one doesn't already exist for this tag
-      if: startsWith(github.ref, 'refs/tags/')
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |

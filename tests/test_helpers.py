@@ -10,12 +10,12 @@ Run with: python -m unittest discover -s tests
 """
 
 import os
+import socket
 import unittest
 import unittest.mock
 from datetime import date
 
 import helpers
-import requests
 import transmission_rpc
 
 import fetch_torrents as ft
@@ -193,10 +193,64 @@ class FakeTransmissionRpcTests(unittest.TestCase):
             ):
                 self.rpc.post(RPC_URL, json=payload, headers=headers, timeout=15)
 
+    def test_error_status_fails_requests_past_the_handshake(self):
+        self.rpc.error_status = 500
+        headers = self._session_headers()
+
+        response = self.rpc.post(RPC_URL, json=TORRENT_GET, headers=headers, timeout=15)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(self.rpc.auths, [])
+
     def test_other_urls_are_not_found(self):
         response = self.rpc.post("http://localhost:9091/rpc", timeout=15)
 
         self.assertEqual(response.status_code, 404)
+
+
+class FakeHttpTests(unittest.TestCase):
+    PAGE = "https://example.org/page"
+
+    def test_serves_routed_responses_and_records_each_request(self):
+        page = helpers.fake_response(b"hello")
+        http = helpers.FakeHttp({self.PAGE: page})
+
+        self.assertIs(http.get(self.PAGE + "#top", timeout=30), page)
+        self.assertIs(http.get(self.PAGE), page)
+
+        self.assertEqual(http.requests, [(self.PAGE, 30), (self.PAGE, None)])
+        self.assertEqual(http.requested, [self.PAGE, self.PAGE])
+        self.assertEqual(http.unexpected, [])
+
+    def test_unrouted_urls_get_a_404_and_are_flagged(self):
+        http = helpers.FakeHttp()
+
+        response = http.get(self.PAGE, timeout=30)
+
+        self.assertEqual(response.status_code, 404)
+        with self.assertRaises(ft.requests.HTTPError):
+            response.raise_for_status()
+        self.assertEqual(http.unexpected, [self.PAGE])
+
+    def test_a_routed_exception_is_raised(self):
+        http = helpers.FakeHttp({self.PAGE: ConnectionError("down")})
+
+        with self.assertRaisesRegex(ConnectionError, "down"):
+            http.get(self.PAGE, timeout=30)
+        self.assertEqual(http.requested, [self.PAGE])
+
+    def test_recorded_pages_prefer_overrides_to_the_recordings(self):
+        pages = helpers.RecordedPages()
+        url = next(iter(pages.pages))
+        override = helpers.fake_response(b"override")
+
+        recorded = pages.get(url, timeout=30)
+        pages.routes[url] = override
+
+        self.assertEqual(recorded.status_code, 200)
+        self.assertNotEqual(recorded.content, b"override")
+        self.assertIs(pages.get(url, timeout=30), override)
+        self.assertEqual(pages.unexpected, [])
 
 
 class PathFixtureTests(unittest.TestCase):
@@ -263,8 +317,29 @@ class RemovedTests(unittest.TestCase):
 
 class NetworkGuardTests(unittest.TestCase):
     def test_real_connections_are_refused(self):
+        with (
+            socket.socket() as sock,
+            self.assertRaisesRegex(RuntimeError, "must not open network"),
+        ):
+            sock.connect(("192.0.2.1", 80))
+
+    def test_udp_datagrams_are_refused(self):
+        # A UDP tracker scrape never calls connect().
+        with (
+            socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock,
+            self.assertRaisesRegex(RuntimeError, "must not open network"),
+        ):
+            sock.sendto(b"x", ("192.0.2.1", 6969))
+
+    def test_dns_lookups_are_refused(self):
         with self.assertRaisesRegex(RuntimeError, "must not open network"):
-            requests.get("http://192.0.2.1/", timeout=1)
+            socket.getaddrinfo("example.com", 80)
+        with self.assertRaisesRegex(RuntimeError, "must not open network"):
+            socket.gethostbyname("example.com")
+
+    def test_create_connection_is_refused(self):
+        with self.assertRaisesRegex(RuntimeError, "must not open network"):
+            socket.create_connection(("192.0.2.1", 80), timeout=1)
 
 
 if __name__ == "__main__":

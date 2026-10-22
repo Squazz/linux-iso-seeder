@@ -18,6 +18,7 @@ A typical test module:
 
 import errno
 import glob
+import importlib.util
 import inspect
 import json
 import os
@@ -111,6 +112,39 @@ def removed(name, ratio=None, *, on="2026-01-01"):
     if ratio is not None:
         entry["ratio"] = ratio
     return {name: entry}
+
+
+def load_script(name):
+    """Imports scripts/<name>.py from its path, so scripts/ itself never
+    lands on sys.path for other tests. sys.path is restored afterwards: a
+    script run inside the image may add the image's own directories."""
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(REPO_ROOT, "scripts", f"{name}.py")
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    saved_path = list(sys.path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path[:] = saved_path
+    return module
+
+
+class FakeClock:
+    """A monotonic clock that only moves when `sleep` is called, recording
+    each sleep."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
 
 
 def make_temp_dir(testcase, prefix):
@@ -228,7 +262,9 @@ class FakeTransmissionRpc:
     refused with a 409 carrying that id. A torrent-get with it records its
     auth in `auths` and lists `transmission`'s torrents, with just the
     requested fields. A method or field the pinned transmission_rpc doesn't
-    know raises ValueError. `calls` records every post, as mock.call()s."""
+    know raises ValueError. `calls` records every post, as mock.call()s.
+    Set `error_status` (e.g. 500) to fail every request past the handshake
+    with that status."""
 
     URL = "http://localhost:9091/transmission/rpc"
     SESSION_ID = "sid"
@@ -237,6 +273,7 @@ class FakeTransmissionRpc:
         self.transmission = transmission
         self.calls = []
         self.auths = []
+        self.error_status = None
 
     def post(self, url, **kwargs):
         self.calls.append(unittest.mock.call(url, **kwargs))
@@ -249,6 +286,8 @@ class FakeTransmissionRpc:
                 url=url,
                 headers={"X-Transmission-Session-Id": self.SESSION_ID},
             )
+        if self.error_status is not None:
+            return fake_response(b"error", status=self.error_status, url=url)
         payload = kwargs.get("json") or {}
         method = payload.get("method")
         RpcMethod = transmission_rpc.constants.RpcMethod
@@ -315,10 +354,11 @@ def _patch_for_test(testcase, target, attr, value):
     testcase.addCleanup(patcher.stop)
 
 
-def disk_full_open(module):
+def disk_full_open(module, only=None):
     """Patch `module`'s own `open` so a binary write keeps half its bytes and
     then fails with ENOSPC, as when the disk fills mid-write. Scoped to the
-    module (not builtins) so logging's own file writes are unaffected."""
+    module (not builtins) so logging's own file writes are unaffected. With
+    `only`, just writes to a path containing that text fail."""
     real_open = open
 
     class HalfWritingFile:
@@ -338,7 +378,8 @@ def disk_full_open(module):
 
     def fake_open(path, mode="r", *args, **kwargs):
         f = real_open(path, mode, *args, **kwargs)
-        return HalfWritingFile(f) if "wb" in mode else f
+        failing = "wb" in mode and (only is None or only in os.fspath(path))
+        return HalfWritingFile(f) if failing else f
 
     return unittest.mock.patch.object(module, "open", fake_open, create=True)
 
@@ -366,15 +407,48 @@ def fake_response(body=b"", status=200, url="", headers=None):
     return response
 
 
-class RecordedPages:
-    """A requests.get stand-in serving tests/fixtures/pages (captured by
+class FakeHttp:
+    """A requests.get stand-in answering from `routes`: url -> response, or
+    an exception to raise. Any other URL is recorded in `unexpected` and
+    answered with a 404. Records every request's (url, timeout) in
+    `requests`; `requested` lists just the URLs. A fragment never reaches
+    the server, so URLs are matched and recorded without it."""
+
+    def __init__(self, routes=None):
+        self.routes = dict(routes or {})
+        self.requests = []
+        self.unexpected = []
+
+    @property
+    def requested(self):
+        return [url for url, _timeout in self.requests]
+
+    def _answer(self, url):
+        """The routed answer for `url`, or None for a 404."""
+        return self.routes.get(url)
+
+    def get(self, url, timeout=None, **kwargs):
+        url = urldefrag(url).url
+        self.requests.append((url, timeout))
+        answer = self._answer(url)
+        if answer is None:
+            self.unexpected.append(url)
+            return fake_response(b"not found", status=404, url=url)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+
+class RecordedPages(FakeHttp):
+    """A FakeHttp serving tests/fixtures/pages (captured by
     scripts/record_fixtures.py), keyed by the URL in each .meta.json.
 
-    `overrides` maps a URL to a response, or to an exception to raise.
-    Any other URL is recorded in `unexpected` and answered with a 404, so a
-    test can assert the scraper asked for nothing it wasn't expected to."""
+    `overrides` are routes that take precedence over the recordings. Any
+    other URL lands in `unexpected` (and gets a 404), so a test can assert
+    the scraper asked for nothing it wasn't expected to."""
 
     def __init__(self, overrides=None):
+        super().__init__(overrides)
         self.pages = {}
         for meta_path in glob.glob(os.path.join(PAGES_DIR, "*", "*.meta.json")):
             with open(meta_path, encoding="utf-8") as f:
@@ -384,24 +458,71 @@ class RecordedPages:
                 path for path in glob.glob(stem + ".*") if path != meta_path
             )
             self.pages[url] = body_path
-        self.overrides = dict(overrides or {})
-        self.requested = []
-        self.unexpected = []
 
-    def get(self, url, timeout=None, **kwargs):
-        # A fragment never reaches the server, so match without it.
-        url = urldefrag(url).url
-        self.requested.append(url)
-        if url in self.overrides:
-            override = self.overrides[url]
-            if isinstance(override, BaseException):
-                raise override
-            return override
+    def _answer(self, url):
+        if url in self.routes:
+            return self.routes[url]
         if url in self.pages:
             with open(self.pages[url], "rb") as f:
                 return fake_response(f.read(), url=url)
-        self.unexpected.append(url)
-        return fake_response(b"not recorded", status=404, url=url)
+        return None
+
+
+def swarm(leechers, seeders):
+    """A tracker scrape result, as torrent_scrape.scrape_torrent() returns
+    it."""
+    return {
+        "tracker": "udp://tracker.example:6969",
+        "seeders": seeders,
+        "leechers": leechers,
+        "completed": 0,
+    }
+
+
+class OldReleaseTracker(FakeHttp):
+    """Plays both network boundaries of the old-release check: requests.get
+    for the candidate's .torrent (FakeHttp) and torrent_scrape.scrape_torrent,
+    which answers from `swarms` (torrent bytes -> scrape result, or an
+    exception to raise) by reading the file it was handed - so the real
+    evaluate_old_release_demand() runs in between. Records every scrape's
+    (bytes, path, timeout) in `scrapes`."""
+
+    def __init__(self):
+        super().__init__()
+        self.swarms = {}
+        self.scrapes = []
+
+    def candidate(self, name, swarm):
+        """Serves name's .torrent and gives it `swarm` (a scrape result,
+        None for "no tracker answered", or an exception); returns its url."""
+        url = f"https://cdimage.example/{name}.torrent"
+        body = f"{name} metadata".encode()
+        self.routes[url] = fake_response(body, url=url)
+        self.swarms[body] = swarm
+        return url
+
+    def scrape_torrent(self, path, timeout=15):
+        with open(path, "rb") as f:
+            body = f.read()
+        self.scrapes.append((body, path, timeout))
+        swarm = self.swarms[body]
+        if isinstance(swarm, Exception):
+            raise swarm
+        return swarm
+
+    def patch(self, testcase):
+        """Makes this tracker fetch_torrents' requests.get and
+        torrent_scrape.scrape_torrent for the rest of `testcase`."""
+        import fetch_torrents
+
+        _patch_for_test(testcase, fetch_torrents.requests, "get", self.get)
+        # boundary double: opens UDP/HTTP tracker sockets
+        _patch_for_test(
+            testcase,
+            fetch_torrents.torrent_scrape,
+            "scrape_torrent",
+            self.scrape_torrent,
+        )
 
 
 # Every image fetch_kali_latest()/fetch_kali_old_versions() offer for a
@@ -438,12 +559,18 @@ def _refuse_network(*args, **kwargs):
 
 
 def block_network():
-    """Makes every real socket connection fail for the rest of the module
-    (call from setUpModule; returns the function that undoes it, for
-    unittest.addModuleCleanup). Mocked sockets are unaffected."""
+    """Makes every real socket connection, UDP datagram and DNS lookup fail
+    for the rest of the module (call from setUpModule; returns the function
+    that undoes it, for unittest.addModuleCleanup). Mocked sockets are
+    unaffected, and a test that patches getaddrinfo itself replaces the
+    guard for that test. socket.create_connection() needs no patch of its
+    own: it resolves through getaddrinfo and then calls connect."""
     patchers = [
         unittest.mock.patch.object(socket.socket, "connect", _refuse_network),
         unittest.mock.patch.object(socket.socket, "connect_ex", _refuse_network),
+        unittest.mock.patch.object(socket.socket, "sendto", _refuse_network),
+        unittest.mock.patch.object(socket, "getaddrinfo", _refuse_network),
+        unittest.mock.patch.object(socket, "gethostbyname", _refuse_network),
     ]
     for patcher in patchers:
         patcher.start()

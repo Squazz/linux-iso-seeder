@@ -6,21 +6,13 @@ Run with: python -m unittest discover -s tests
 """
 
 import contextlib
-import importlib.util
 import io
-import os
 import unittest
 
 import helpers
 import requests
 
-# Loaded from its path so scripts/ never lands on sys.path for other tests.
-_spec = importlib.util.spec_from_file_location(
-    "live_check", os.path.join(helpers.REPO_ROOT, "scripts", "live_check.py")
-)
-assert _spec and _spec.loader
-live_check = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(live_check)
+live_check = helpers.load_script("live_check")
 
 
 def setUpModule():
@@ -301,14 +293,9 @@ UBUNTU_CANDIDATES = {
 
 class CheckTrackerTests(unittest.TestCase):
     def setUp(self):
-        self.requested = []
+        self.http = helpers.FakeHttp()
         self.scraped = []
-        self.routes = {}
         self.result = None
-
-    def get(self, url, timeout=None):
-        self.requested.append(url)
-        return self.routes.get(url, helpers.fake_response(status=404))
 
     def scrape(self, path):
         with open(path, "rb") as f:
@@ -319,34 +306,34 @@ class CheckTrackerTests(unittest.TestCase):
         return quietly(
             live_check.check_tracker,
             fetch=lambda: candidates,
-            get=self.get,
+            get=self.http.get,
             scrape=self.scrape,
         )
 
     def test_integer_counts_from_the_newest_desktop_torrent_pass(self):
-        self.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
+        self.http.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
         self.result = {"seeders": 10, "leechers": 2}
 
         self.assertEqual(self._check(), [])
-        self.assertEqual(self.requested, [UBUNTU_URL])
+        self.assertEqual(self.http.requested, [UBUNTU_URL])
         self.assertEqual(self.scraped, [b"d8:announce"])
 
     def test_falls_back_to_an_older_desktop_torrent(self):
-        self.routes[OLDER_URL] = helpers.fake_response(b"old")
+        self.http.routes[OLDER_URL] = helpers.fake_response(b"old")
         self.result = {"seeders": 1, "leechers": 0}
 
         self.assertEqual(self._check(), [])
-        self.assertEqual(self.requested, [UBUNTU_URL, OLDER_URL])
+        self.assertEqual(self.http.requested, [UBUNTU_URL, OLDER_URL])
         self.assertEqual(self.scraped, [b"old"])
 
     def test_no_downloadable_desktop_torrent_fails_without_scraping(self):
-        self.routes[SERVER_URL] = helpers.fake_response(b"server")
+        self.http.routes[SERVER_URL] = helpers.fake_response(b"server")
 
         self.assertEqual(
             self._check(),
             ["tracker: no current Ubuntu desktop torrent could be downloaded"],
         )
-        self.assertNotIn(SERVER_URL, self.requested)
+        self.assertNotIn(SERVER_URL, self.http.requested)
         self.assertEqual(self.scraped, [])
 
     def test_no_candidates_at_all_fails(self):
@@ -358,12 +345,12 @@ class CheckTrackerTests(unittest.TestCase):
                 )
 
     def test_no_tracker_answer_fails(self):
-        self.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
+        self.http.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
 
         self.assertEqual(self._check(), ["tracker: no tracker answered the scrape"])
 
     def test_non_integer_counts_fail(self):
-        self.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
+        self.http.routes[UBUNTU_URL] = helpers.fake_response(b"d8:announce")
         for result in (
             {"seeders": "10", "leechers": 2},
             {"seeders": 10, "leechers": None},

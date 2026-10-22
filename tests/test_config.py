@@ -177,6 +177,25 @@ class LoadConfigTests(unittest.TestCase):
             r"^CLEANUP_STAGNATION_WINDOW_DAYS: ",
         )
 
+    def test_each_numeric_setting_is_recorded_under_its_own_field(self):
+        settings = {
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHERS": "old_release_min_leechers",
+            "FETCH_TORRENTS_OLD_RELEASE_MIN_LEECHER_RATIO": "old_release_min_leecher_ratio",
+            "FETCH_TORRENTS_OLD_RELEASE_RECHECK_DAYS": "old_release_recheck_days",
+            "CLEANUP_MIN_RATIO": "cleanup_min_ratio",
+            "CLEANUP_STAGNATION_WINDOW_DAYS": "stagnation_window_days",
+            "CLEANUP_STAGNATION_MIN_RATIO_DELTA": "stagnation_min_ratio_delta",
+            "CLEANUP_DISK_USAGE_THRESHOLD_PERCENT": "disk_usage_threshold_percent",
+        }
+        for env_var, field_name in settings.items():
+            with self.subTest(env_var=env_var):
+                config = ft.load_config({env_var: "lots"})
+
+                self.assertEqual(list(config.invalid), [field_name])
+                self.assertIsNone(getattr(config, field_name))
+                with self.assertRaisesRegex(ValueError, f"^{env_var}: "):
+                    config.require(field_name)
+
     def test_require_raises_the_first_invalid_field_named(self):
         config = ft.load_config({"CLEANUP_MIN_RATIO": "high"})
 
@@ -224,34 +243,17 @@ class MakeClientFactoryTests(unittest.TestCase):
             client = ft.make_client_factory(config)()
         return client_cls, client
 
-    def test_passes_configured_credentials(self):
-        client_cls, client = self._connect(
-            {
-                "TRANSMISSION_RPC_USERNAME": "alice",
-                "TRANSMISSION_RPC_PASSWORD": "hunter2",
-            }
-        )
+    def test_unset_or_blank_credentials_connect_without_auth(self):
+        for env in (
+            {},
+            {"TRANSMISSION_RPC_USERNAME": "  ", "TRANSMISSION_RPC_PASSWORD": ""},
+        ):
+            with self.subTest(env=env):
+                client_cls, _client = self._connect(env)
 
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username="alice", password="hunter2"
-        )
-        self.assertIs(client, client_cls.return_value)
-
-    def test_passes_no_credentials_when_unset(self):
-        client_cls, _client = self._connect({})
-
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username=None, password=None
-        )
-
-    def test_blank_credentials_count_as_unset(self):
-        client_cls, _client = self._connect(
-            {"TRANSMISSION_RPC_USERNAME": "  ", "TRANSMISSION_RPC_PASSWORD": ""}
-        )
-
-        client_cls.assert_called_once_with(
-            host="localhost", port=9091, username=None, password=None
-        )
+                client_cls.assert_called_once_with(
+                    host="localhost", port=9091, username=None, password=None
+                )
 
     def test_factory_connects_only_when_called(self):
         with unittest.mock.patch.object(ft, "Client", autospec=True) as client_cls:

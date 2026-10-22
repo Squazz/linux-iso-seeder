@@ -17,6 +17,10 @@ permissions:
 
 env:
   IMAGE: ghcr.io/squazz/linux-iso-seeder:latest
+  # Same minor as the `test` job in docker-image.yml (alpine:latest's
+  # python3); bump both together, so a drift failure is upstream drift and
+  # not a Python upgrade.
+  PYTHON_VERSION: "3.14"
 
 jobs:
   scrapers:
@@ -26,7 +30,7 @@ jobs:
 
     - uses: actions/setup-python@v7
       with:
-        python-version: "3.x"
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - run: pip install -r requirements-test.txt
 
@@ -54,7 +58,7 @@ jobs:
 
     - uses: actions/setup-python@v7
       with:
-        python-version: "3.x"
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - run: pip install -r requirements-test.txt
 
@@ -106,7 +110,7 @@ jobs:
 
     - uses: actions/setup-python@v7
       with:
-        python-version: "3.x"
+        python-version: ${{ env.PYTHON_VERSION }}
 
     - run: pip install -r requirements-dev.txt
 

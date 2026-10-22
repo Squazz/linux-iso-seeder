@@ -102,8 +102,22 @@ def get_always_log_prefixes():
 logger = logging.getLogger("fetch_torrents")
 # Silent until configure_logging() runs, so importing this module (tests,
 # other scripts) neither writes log files nor falls back to stderr.
-_configured_handlers: list[logging.Handler] = [logging.NullHandler()]
-logger.addHandler(_configured_handlers[0])
+_SILENT_HANDLER = logging.NullHandler()
+_configured_handlers: list[logging.Handler] = [_SILENT_HANDLER]
+logger.addHandler(_SILENT_HANDLER)
+
+
+def reset_logging():
+    """Undo configure_logging(): detach and close every handler on `logger`
+    and leave it as importing this module did - silent, at level NOTSET and
+    propagating."""
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    _configured_handlers[:] = [_SILENT_HANDLER]
+    logger.addHandler(_SILENT_HANDLER)
+    logger.setLevel(logging.NOTSET)
+    logger.propagate = True
 
 
 def configure_logging(log_dir, env=None):
@@ -943,7 +957,7 @@ def evaluate_old_release_demand(
     try:
         # Closed before scraping: scrape_torrent() reopens it by name, which
         # Windows refuses while the file is still open.
-        with tempfile.NamedTemporaryFile(suffix=".torrent", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = tmp.name
             tmp.write(torrent_bytes)
         scrape_result = torrent_scrape.scrape_torrent(tmp_path, timeout=timeout)
@@ -1061,6 +1075,7 @@ def check_old_releases_for_demand(
     removed_history=None,
     today=None,
     recheck_interval_days=7,
+    discovery=OLD_RELEASE_DISCOVERY,
 ):
     """FETCH_TORRENTS_CHECK_OLD_RELEASES: for distros with old-release
     discovery, scrape each not-yet-seeded candidate's trackers and add it to
@@ -1074,7 +1089,8 @@ def check_old_releases_for_demand(
     run - see should_recheck_old_release(). removed_history
     ({name: {'removed_date', 'reason'}}) is consulted so a candidate cleanup
     already gave up on isn't automatically re-added from a momentary demand
-    blip - see record_removal().
+    blip - see record_removal(). discovery maps a distro to the function
+    that lists its old-release candidates ({name: torrent url}).
 
     Returns (added_count, skipped_count, updated check_state).
     """
@@ -1086,7 +1102,7 @@ def check_old_releases_for_demand(
     skipped = 0
 
     for distro in selected_distros:
-        discover = OLD_RELEASE_DISCOVERY.get(distro)
+        discover = discovery.get(distro)
         if not discover:
             continue
 
@@ -1186,11 +1202,9 @@ def check_old_releases_for_demand(
 
 
 def log_seed_ratios_via_http(
-    rpc_url="http://localhost:9091/transmission/rpc", auth: tuple | None = None
+    rpc_url="http://localhost:9091/transmission/rpc", *, auth: tuple | None
 ):
-    if auth is None:
-        auth = Config(**_rpc_credentials(os.environ)).rpc_auth
-
+    """auth is the caller's Config.rpc_auth; None sends no credentials."""
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url, timeout=15)
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
@@ -1365,7 +1379,7 @@ def enforce_disk_usage_limit(
     *,
     today,
     disk_usage=shutil.disk_usage,
-    download_path="/downloads",
+    download_path,
 ):
     """Runs after the normal cleanup pass. Only checks disk usage at all
     when enabled (threshold_percent > 0), and only calls client_factory()
@@ -1738,7 +1752,7 @@ def _fetch_latest(config, fetchers, ratios, removed_history, summary):
                 summary.failed += 1
 
 
-def _check_old_releases(config, today, summary):
+def _check_old_releases(config, today, discovery, summary):
     config.require(
         "old_release_min_leechers",
         "old_release_min_leecher_ratio",
@@ -1768,6 +1782,7 @@ def _check_old_releases(config, today, summary):
         removed_history,
         today,
         config.old_release_recheck_days,
+        discovery,
     )
     save_old_release_check_state(old_release_check_state_file, check_state)
     logger.info(
@@ -1803,14 +1818,17 @@ def run(
     today,
     now=time.time,
     fetchers=DEFAULT_FETCHERS,
+    old_release_discovery=OLD_RELEASE_DISCOVERY,
     disk_usage=shutil.disk_usage,
     download_path="/downloads",
     wait_for_rpc=wait_for_transmission_rpc,
 ):
     """The daily run: fetch new releases (ratio-gated on the previous run's
     ratio log), optionally check old releases for demand, log seed ratios
-    for the next run, clean up, then enforce the disk-usage limit. Each
-    step after fetching logs its own failure and lets the rest carry on."""
+    for the next run, clean up, then enforce the disk-usage limit. Every
+    step after fetching (the old-release check included) logs its own
+    failure and lets the rest carry on; a step that fails part-way keeps
+    whatever it already put in the summary."""
     start_time = now()
     logger.info("Starting torrent fetch run.")
     logger.info("Selected distros for this run: %s", ", ".join(config.distros))
@@ -1825,7 +1843,10 @@ def run(
     _fetch_latest(config, fetchers, ratios, removed_history, summary)
 
     if config.check_old_releases:
-        _check_old_releases(config, today, summary)
+        try:
+            _check_old_releases(config, today, old_release_discovery, summary)
+        except Exception as exc:
+            logger.error("Could not check old releases: %s", exc)
 
     if wait_for_rpc():
         try:

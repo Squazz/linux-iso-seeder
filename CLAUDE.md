@@ -23,8 +23,11 @@ a task as done, run:
 python -m unittest discover -s tests -v
 ```
 
-(On Windows dev machines without a `python` alias, use `py -m unittest
-discover -s tests -v`.) If a test fails, fix it or the code — don't report
+(On Windows dev machines, use the project venv's interpreter:
+`.venv/Scripts/python -m unittest discover -s tests -v`, with
+`requirements-dev.txt` installed into `.venv`. The system `py` launcher
+doesn't have the test dependencies, so every test module fails to import.)
+If a test fails, fix it or the code — don't report
 completion with a known-failing suite, and don't delete/weaken a test just to
 make it pass unless the test itself was wrong.
 
@@ -44,14 +47,18 @@ against the pinned library's `Client` signatures and `Torrent` fields (see
 
 Importing the module opens no files: log handlers are only attached by
 `configure_logging()`, which the `__main__` block calls. Tests that need it
-should restore the logger afterwards (see `configure_logging_for_test()`).
+undo it with `addCleanup(ft.reset_logging)` (see `configure_logging_for_test()`).
 The daily run itself is `run(config, client_factory=..., today=...)` with
 its I/O (Transmission client, clock, disk usage) injected, so it is tested
 directly with fakes from `tests/helpers.py` (`FakeTransmission`, `FakeDisk`);
 `tests/test_daily_run.py` keeps one runpy test for the `__main__` wiring.
+Which distros have old-release discovery is injected the same way
+(`run(old_release_discovery=)`, `check_old_releases_for_demand(discovery=)`),
+so tests pass a mapping instead of patching `OLD_RELEASE_DISCOVERY`.
 Env vars are read once by `load_config(env)`. Transmission's HTTP RPC (the
 ratio log) is faked with `helpers.FakeTransmissionRpc` as `requests.post`:
-409 plus session id first, like the daemon, recording each call's auth.
+409 plus session id first, like the daemon, recording each call's auth
+(its `error_status` fails every request past that handshake).
 The file locations are module globals read at import
 (`FETCH_TORRENTS_LOG_DIR`, `FETCH_TORRENTS_WATCH_DIR`); in-process tests
 point them at temp dirs with `helpers.use_watch_dir(self)` and
@@ -61,17 +68,27 @@ patching them by hand.
 Every test module starts with `import helpers` (which also puts the repo
 root on `sys.path`) and a `setUpModule()` calling `helpers.isolate_module()`:
 that scrubs the developer's own `CLEANUP_*`, `FETCH_TORRENTS_*` etc. so they
-can't change test outcomes, and refuses any real network connection. HTTP is
-faked with `helpers.fake_response()` (a real `requests.Response`) or
-`helpers.RecordedPages` (pages captured by `scripts/record_fixtures.py`).
+can't change test outcomes, and refuses any real network connection, UDP
+datagram or DNS lookup. HTTP is faked with `helpers.fake_response()` (a real
+`requests.Response`), served as `requests.get` by `helpers.FakeHttp` (a
+url -> response routes dict, 404 for anything else, recording each
+request) or its subclasses `helpers.RecordedPages` (pages captured by
+`scripts/record_fixtures.py`) and `helpers.OldReleaseTracker` (which also
+fakes the tracker scrape for the old-release check).
 `fetch_torrents` tests are split by concern: `test_ratio_gate.py`,
 `test_fetchers.py`, `test_scrapers.py`, `test_cleanup.py`,
 `test_persistence.py`, `test_logging.py`, `test_old_release_demand.py`,
 `test_config.py` (`load_config()`, `parse_bool()`, `make_client_factory()`,
 the run summary) and `test_daily_run.py` (`run()`, `__main__`).
+Tests for the `scripts/` the drift job runs (`test_live_check.py`,
+`test_record_fixtures.py`, `test_transmission_roundtrip.py`) import them
+with `helpers.load_script(name)`, so `scripts/` never lands on `sys.path`;
+their network, output directory and clock are injected (polling loops take
+`clock=`/`sleep=`, faked with `helpers.FakeClock`).
 `test_helpers.py` tests the doubles in `tests/helpers.py` themselves;
 `test_repo_hygiene.py` checks the repository itself (shebang files are
-executable in git).
+executable in git, and every test `docs/seeding-policy.md` names exists, so
+rename a test there too when you rename it).
 
 Business logic that needs to be unit-testable should be kept as pure
 functions (taking plain data in, returning plain data out) separate from

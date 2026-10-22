@@ -25,22 +25,7 @@ def setUpModule():
 
 def configure_logging_for_test(testcase, log_dir, **env):
     """ft.configure_logging() with only `env`, undone when the test ends."""
-    saved = (
-        list(ft.logger.handlers),
-        list(ft._configured_handlers),
-        ft.logger.level,
-        ft.logger.propagate,
-    )
-
-    def restore():
-        for handler in ft._configured_handlers:
-            handler.close()
-        ft.logger.handlers[:] = saved[0]
-        ft._configured_handlers[:] = saved[1]
-        ft.logger.setLevel(saved[2])
-        ft.logger.propagate = saved[3]
-
-    testcase.addCleanup(restore)
+    testcase.addCleanup(ft.reset_logging)
     return ft.configure_logging(log_dir, env=env)
 
 
@@ -154,6 +139,47 @@ class ConfigureLoggingTests(unittest.TestCase):
         self.assertEqual([h for h in first if h in ft.logger.handlers], [])
 
 
+class ResetLoggingTests(unittest.TestCase):
+    """reset_logging() undoes configure_logging(), so a test (or anything
+    else that configured logging in-process) can put the logger back the
+    way importing the module left it."""
+
+    def test_closes_the_handlers_and_leaves_the_logger_as_imported(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_reset_")
+        self.addCleanup(ft.reset_logging)
+        stream_handler, file_handler, ratio_handler = ft.configure_logging(
+            log_dir, env={}
+        )
+        stream_handler.setStream(io.StringIO())
+        ft.logger.info("[ratio] RATIOS START")
+
+        ft.reset_logging()
+        ft.logger.warning("after the reset")
+
+        self.assertEqual([type(h) for h in ft.logger.handlers], [logging.NullHandler])
+        self.assertEqual((ft.logger.level, ft.logger.propagate), (logging.NOTSET, True))
+        self.assertIsNone(file_handler.stream)
+        self.assertIsNone(ratio_handler.stream)
+        with open(os.path.join(log_dir, "fetch_torrents.log"), encoding="utf-8") as f:
+            self.assertNotIn("after the reset", f.read())
+
+    def test_a_later_configure_logging_starts_from_scratch(self):
+        log_dir = helpers.make_temp_dir(self, "fetch_torrents_reset_")
+        self.addCleanup(ft.reset_logging)
+        ft.configure_logging(log_dir, env={})
+        ft.reset_logging()
+
+        handlers = ft.configure_logging(log_dir, env={})
+
+        self.assertEqual(ft.logger.handlers, list(handlers))
+
+
+class LoggerNameTests(unittest.TestCase):
+    def test_the_module_logs_under_the_fetch_torrents_name(self):
+        # So logging can be configured by name from outside the module.
+        self.assertIs(logging.getLogger("fetch_torrents"), ft.logger)
+
+
 class ParseLogLevelTests(unittest.TestCase):
     def test_values(self):
         for value, expected in (
@@ -247,7 +273,8 @@ class LogRoutingTests(unittest.TestCase):
 
     def test_lines_carry_a_timestamp_and_the_logger_does_not_propagate(self):
         log_dir = helpers.make_temp_dir(self, "fetch_torrents_routing_")
-        _, file_handler, _ = configure_logging_for_test(self, log_dir)
+        stream_handler, file_handler, _ = configure_logging_for_test(self, log_dir)
+        stream_handler.setStream(io.StringIO())
 
         ft.logger.warning("plain warning")
         file_handler.flush()
@@ -262,9 +289,9 @@ class LogRoutingTests(unittest.TestCase):
 
 class LogSeedRatiosViaHttpTests(unittest.TestCase):
     """log_seed_ratios_via_http() must not hang the daily run forever on a
-    stalled Transmission response, and must authenticate with whatever
-    credentials configure_transmission.py configured the daemon with when
-    the caller doesn't explicitly override auth."""
+    stalled Transmission response, and must authenticate with exactly the
+    auth its caller passes (the run's own credential handling is tested in
+    test_daily_run.py)."""
 
     def setUp(self):
         self.transmission = helpers.FakeTransmission()
@@ -321,7 +348,9 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
             ],
         )
 
-    def test_uses_configured_credentials_when_auth_not_explicitly_passed(self):
+    def test_none_auth_sends_no_credentials_even_if_the_env_has_them(self):
+        # The run passes config.rpc_auth, read once by load_config(); None
+        # means "no auth", not "go back to os.environ".
         with unittest.mock.patch.dict(
             os.environ,
             {
@@ -329,63 +358,9 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 "TRANSMISSION_RPC_PASSWORD": "hunter2",
             },
         ):
-            ft.log_seed_ratios_via_http()
-
-        self.assertEqual(self.rpc.auths, [("alice", "hunter2")])
-
-    def test_no_auth_when_credentials_unset(self):
-        with helpers.isolated_env():
-            ft.log_seed_ratios_via_http()
+            ft.log_seed_ratios_via_http(auth=None)
 
         self.assertEqual(self.rpc.auths, [None])
-
-    def test_explicit_auth_argument_still_wins(self):
-        with unittest.mock.patch.dict(
-            os.environ,
-            {
-                "TRANSMISSION_RPC_USERNAME": "alice",
-                "TRANSMISSION_RPC_PASSWORD": "hunter2",
-            },
-        ):
-            ft.log_seed_ratios_via_http(auth=("bob", "other"))
-
-        self.assertEqual(self.rpc.auths, [("bob", "other")])
-
-
-class RpcCredentialFallbackTests(unittest.TestCase):
-    """Without an explicit auth, log_seed_ratios_via_http() authenticates
-    only when both TRANSMISSION_RPC_USERNAME and _PASSWORD are set."""
-
-    def _auth_sent(self, **env):
-        rpc = helpers.FakeTransmissionRpc(helpers.FakeTransmission())
-        with (
-            helpers.isolated_env(**env),
-            unittest.mock.patch.object(ft.requests, "post", rpc.post),
-        ):
-            ft.log_seed_ratios_via_http()
-        (auth,) = rpc.auths
-        return auth
-
-    def test_username_without_password_sends_no_auth(self):
-        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_USERNAME="alice"))
-
-    def test_password_without_username_sends_no_auth(self):
-        self.assertIsNone(self._auth_sent(TRANSMISSION_RPC_PASSWORD="hunter2"))
-
-    def test_fallback_applies_the_config_credential_rule(self):
-        # One rule for which credentials count: Config.rpc_auth, the same
-        # one run() passes in explicitly.
-        with unittest.mock.patch.object(
-            ft.Config,
-            "rpc_auth",
-            new_callable=unittest.mock.PropertyMock,
-            return_value=("from", "config"),
-        ):
-            auth = self._auth_sent(
-                TRANSMISSION_RPC_USERNAME="alice", TRANSMISSION_RPC_PASSWORD="hunter2"
-            )
-
-        self.assertEqual(auth, ("from", "config"))
 
 
 if __name__ == "__main__":
