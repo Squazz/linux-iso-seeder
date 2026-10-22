@@ -15,6 +15,8 @@ on:
   # Manual dry run: on a tag ref it builds and smoke-tests with the tag's
   # VERSION, but only a push event publishes anything.
   workflow_dispatch:
+  # Unlike push, a PR that only edits workflows still runs, so actionlint
+  # sees it before it merges. PR runs never push an image.
   pull_request:
     branches: [ "main" ]
     paths-ignore:
@@ -23,8 +25,6 @@ on:
       - ".gitattributes"
       - ".gitignore"
       - ".github/dependabot.yml"
-      - ".github/workflows/**"
-      - "!.github/workflows/docker-image.yml"
 
 permissions:
   contents: read

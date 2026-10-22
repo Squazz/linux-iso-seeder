@@ -250,7 +250,7 @@ Issues the round-3 agents found and left alone because they were outside their t
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 52 | [Ratio logging must work when RPC credentials are set](52-rpc-handshake-auth.md) | P2 (suspected bug) | NO_REFACTOR | — | done |
-| 53 | [Lint and test workflow-only changes in CI](53-lint-workflow-only-changes.md) | P3 | CI | — | open |
+| 53 | [Lint and test workflow-only changes in CI](53-lint-workflow-only-changes.md) | P3 | CI | — | done |
 | 54 | [Verify the build-once release flow on GitHub](54-verify-release-flow-on-ci.md) | P2 | CI (manual) | 39, 48 | open |
 | 55 | [Round-3 hygiene leftovers: `record=` seam, tracker double marker](55-record-fixtures-main-seam.md) | P3 | REFACTOR_REQUIRED | 49 | open |
 
