@@ -255,3 +255,16 @@ Issues the round-3 agents found and left alone because they were outside their t
 | 55 | [Round-3 hygiene leftovers: `record=` seam, tracker double marker](55-record-fixtures-main-seam.md) | P3 | REFACTOR_REQUIRED | 49 | open |
 
 Suggested order: 54 as soon as the round-3 PR runs, then 52 (step 1 decides whether it is a bug at all), 53, and 55.
+
+## Optional: tests coupled to implementation
+
+A 2026-10-22 review asked whether the suite breaks when the implementation changes but the logic doesn't. Mostly it doesn't: tests fake at the I/O boundary (HTTP, sockets, Transmission, disk, clock), the doubles are checked against the pinned library, and the logic is tested as pure functions. The spots below are the exceptions. None of them is a bug. They are known and left as they are on purpose, so pick them up only if a refactor trips over them or there's spare time.
+
+| # | Task | Priority | Class | Depends on | Status |
+| --- | --- | --- | --- | --- | --- |
+| 56 | [UDP scrape tests: assert on datagrams, not socket method calls](56-udp-scrape-fake-socket.md) | P4 (optional) | NO_REFACTOR | — | open |
+| 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | open |
+| 58 | [Tests that pin private helpers' internals](58-private-helper-tests.md) | P4 (optional) | NO_REFACTOR | 56 (soft) | open |
+| 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | open |
+
+Suggested order: 59 (smallest), then 56 and 58 together, then 57. Each task says how to prove the change worked: temporarily make the refactor the old test would have blocked, check the suite stays green, then revert it.
