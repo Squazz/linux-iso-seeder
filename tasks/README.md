@@ -263,7 +263,7 @@ A 2026-10-22 review asked whether the suite breaks when the implementation chang
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
 | 56 | [UDP scrape tests: assert on datagrams, not socket method calls](56-udp-scrape-fake-socket.md) | P4 (optional) | NO_REFACTOR | — | done |
-| 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | open |
+| 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | done |
 | 58 | [Tests that pin private helpers' internals](58-private-helper-tests.md) | P4 (optional) | NO_REFACTOR | 56 (soft) | done |
 | 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | done |
 

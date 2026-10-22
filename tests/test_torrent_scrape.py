@@ -839,8 +839,20 @@ def write_torrent(testcase, announce_urls):
 
 class ScrapeTorrentTests(unittest.TestCase):
     """scrape_torrent()'s tracker selection, with DNS and the UDP round trip
-    injected (resolve=, udp_scrape=) and requests.get doubled. The real
-    defaults are exercised by ScrapeTorrentUdpWireTests."""
+    injected (resolve=, udp_scrape=) and HTTP served by helpers.FakeHttp,
+    which records each URL as it would be sent. The real defaults are
+    exercised by ScrapeTorrentUdpWireTests."""
+
+    def setUp(self):
+        self.http = helpers.FakeHttp()
+        self.enterContext(unittest.mock.patch.object(ts.requests, "get", self.http.get))
+
+    def _serve(self, tracker, info_hash, answer):
+        """Routes tracker's scrape URL for info_hash to `answer`; returns
+        that URL."""
+        url = f"{tracker}/scrape?info_hash={percent_encoded(info_hash)}"
+        self.http.routes[url] = answer
+        return url
 
     def _scrape(self, path, *, private=(), udp=UDP_STATS, **kwargs):
         """Runs scrape_torrent(path) with every host resolving publicly
@@ -893,10 +905,9 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = self._scrape(path)
+        result = self._scrape(path)
 
-        mock_get.assert_not_called()
+        self.assertEqual(self.http.requests, [])
         self.assertEqual(
             result, {"tracker": "udp://tracker.example.com:80", **UDP_STATS}
         )
@@ -909,23 +920,15 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests,
-            "get",
-            return_value=tracker_response(info_hash, 5, 7, completed=2),
-        ) as mock_get:
-            result = self._scrape(path, udp=OSError("unreachable"), timeout=3)
-
-        self.assertEqual(
-            mock_get.call_args_list,
-            [
-                unittest.mock.call(
-                    "http://tracker.example.com:6969/scrape?info_hash="
-                    + percent_encoded(info_hash),
-                    timeout=3,
-                )
-            ],
+        url = self._serve(
+            "http://tracker.example.com:6969",
+            info_hash,
+            tracker_response(info_hash, 5, 7, completed=2),
         )
+
+        result = self._scrape(path, udp=OSError("unreachable"), timeout=3)
+
+        self.assertEqual(self.http.requests, [(url, 3)])
         self.assertEqual(
             result,
             {
@@ -947,10 +950,13 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ):
-            result = self._scrape(path)
+        self._serve(
+            "http://tracker.example.com:6969",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
+        )
+
+        result = self._scrape(path)
 
         self.assertEqual(result["tracker"], "http://tracker.example.com:6969/scrape")
 
@@ -984,18 +990,16 @@ class ScrapeTorrentTests(unittest.TestCase):
                     "A": "http://dead.example.com" + query,
                     "B": "http://good.example.com" + query,
                 }
-                http = helpers.FakeHttp(
-                    {
-                        urls["A"]: dead_answer,
-                        urls["B"]: tracker_response(info_hash, 1, 2, completed=3),
-                    }
-                )
+                self.http.requests.clear()
+                self.http.routes = {
+                    urls["A"]: dead_answer,
+                    urls["B"]: tracker_response(info_hash, 1, 2, completed=3),
+                }
 
-                with unittest.mock.patch.object(ts.requests, "get", http.get):
-                    result = self._scrape(path, timeout=3)
+                result = self._scrape(path, timeout=3)
 
                 self.assertEqual(
-                    http.requests, [(urls[tracker], 3) for tracker in requested]
+                    self.http.requests, [(urls[tracker], 3) for tracker in requested]
                 )
                 self.assertEqual(
                     result,
@@ -1009,26 +1013,28 @@ class ScrapeTorrentTests(unittest.TestCase):
 
     def test_default_http_timeout_is_15_seconds(self):
         path, info_hash = write_torrent(self, ["http://good.example.com/announce"])
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 1, 2)
-        ) as mock_get:
-            self._scrape(path)
+        self._serve(
+            "http://good.example.com", info_hash, tracker_response(info_hash, 1, 2)
+        )
 
-        self.assertEqual(mock_get.call_args.kwargs, {"timeout": 15})
+        self._scrape(path)
+
+        self.assertEqual([timeout for _url, timeout in self.http.requests], [15])
 
     def test_returns_none_when_no_tracker_usable(self):
         path, _info_hash = write_torrent(self, ["udp://only.example.com:1337/announce"])
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = self._scrape(path, udp=OSError("unreachable"))
-        mock_get.assert_not_called()
+        result = self._scrape(path, udp=OSError("unreachable"))
+
+        self.assertEqual(self.http.requests, [])
         self.assertIsNone(result)
 
     def test_returns_none_when_no_tracker_has_stats_for_the_hash(self):
-        path, _info_hash = write_torrent(self, ["http://good.example.com/announce"])
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(OTHER_HASH, 9, 9)
-        ):
-            self.assertIsNone(self._scrape(path))
+        path, info_hash = write_torrent(self, ["http://good.example.com/announce"])
+        self._serve(
+            "http://good.example.com", info_hash, tracker_response(OTHER_HASH, 9, 9)
+        )
+
+        self.assertIsNone(self._scrape(path))
 
     def test_skips_udp_tracker_resolving_to_a_private_address(self):
         path, info_hash = write_torrent(
@@ -1038,10 +1044,13 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://real-tracker.example.com/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ):
-            result = self._scrape(path, private=("internal.example.com",))
+        self._serve(
+            "http://real-tracker.example.com",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
+        )
+
+        result = self._scrape(path, private=("internal.example.com",))
 
         self.assertEqual(
             result,
@@ -1065,31 +1074,22 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://real-tracker.example.com/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ) as mock_get:
-            result = self._scrape(path, private=("internal.example.com",))
-
-        self.assertEqual(
-            mock_get.call_args_list,
-            [
-                unittest.mock.call(
-                    "http://real-tracker.example.com/scrape?info_hash="
-                    + percent_encoded(info_hash),
-                    timeout=15,
-                )
-            ],
+        url = self._serve(
+            "http://real-tracker.example.com",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
         )
+
+        result = self._scrape(path, private=("internal.example.com",))
+
+        self.assertEqual(self.http.requests, [(url, 15)])
         self.assertEqual(result["tracker"], "http://real-tracker.example.com/scrape")
 
     def test_returns_none_when_every_tracker_resolves_privately(self):
         path, _info_hash = write_torrent(self, ["http://internal.example.com/announce"])
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = ts.scrape_torrent(
-                path,
-                resolve=lambda _hostname: ["169.254.169.254"],
-            )
-        mock_get.assert_not_called()
+        result = ts.scrape_torrent(path, resolve=lambda _hostname: ["169.254.169.254"])
+
+        self.assertEqual(self.http.requests, [])
         self.assertIsNone(result)
 
 

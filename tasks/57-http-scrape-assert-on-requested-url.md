@@ -16,3 +16,8 @@
 3. Prove the change works: temporarily switch the HTTP scrape to `params=` plus an extra `headers=` kwarg. The suite stays green. Revert.
 4. The `torrent_scrape.py` mutation score doesn't drop.
 5. Full suite, ruff, ruff format, mypy and the coverage gate are green.
+
+## Result
+- `FakeHttp.get` takes `params=` and records the URL as requests would send it (merged into any existing query via `requests.Request(...).prepare()`, only when params are given, so other routed URLs aren't normalised). Covered in `tests/test_helpers.py`.
+- `ScrapeTorrentTests` serves HTTP from one `FakeHttp` set up in `setUp`, routed by `_serve(tracker, info_hash, answer)`. Tests assert on `http.requests` (URL and timeout) and the result; `assert_not_called()` became `http.requests == []`.
+- Proved by switching the HTTP scrape to `requests.get(scrape_url, params={"info_hash": ...}, headers={"User-Agent": ...}, timeout=...)`: the new suite stayed green, the old `tests/test_torrent_scrape.py` failed 8 tests. Reverted. (Such a switch isn't byte-identical for every hash: requests form-encodes a `0x20` byte as `+`. FakeHttp would record that, so a test hash containing one would catch it.)

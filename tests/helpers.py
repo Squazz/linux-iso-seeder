@@ -422,8 +422,9 @@ class FakeHttp:
     """A requests.get stand-in answering from `routes`: url -> response, or
     an exception to raise. Any other URL is recorded in `unexpected` and
     answered with a 404. Records every request's (url, timeout) in
-    `requests`; `requested` lists just the URLs. A fragment never reaches
-    the server, so URLs are matched and recorded without it."""
+    `requests`; `requested` lists just the URLs. URLs are matched and
+    recorded as they'd be sent: with any `params=` merged into the query,
+    and without the fragment, which never reaches the server."""
 
     def __init__(self, routes=None):
         self.routes = dict(routes or {})
@@ -438,8 +439,10 @@ class FakeHttp:
         """The routed answer for `url`, or None for a 404."""
         return self.routes.get(url)
 
-    def get(self, url, timeout=None, **kwargs):
+    def get(self, url, params=None, timeout=None, **kwargs):
         url = urldefrag(url).url
+        if params:
+            url = requests.Request("GET", url, params=params).prepare().url
         self.requests.append((url, timeout))
         answer = self._answer(url)
         if answer is None:

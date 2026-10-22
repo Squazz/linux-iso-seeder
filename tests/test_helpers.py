@@ -265,6 +265,20 @@ class FakeHttpTests(unittest.TestCase):
         self.assertEqual(http.requested, [self.PAGE, self.PAGE])
         self.assertEqual(http.unexpected, [])
 
+    def test_params_are_matched_and_recorded_as_part_of_the_url(self):
+        # As requests would send them: appended to any existing query,
+        # with bytes values percent-encoded byte for byte.
+        url = self.PAGE + "?a=1&info_hash=%00%FF"
+        page = helpers.fake_response(b"hello")
+        http = helpers.FakeHttp({url: page})
+
+        answer = http.get(
+            self.PAGE + "?a=1", params={"info_hash": b"\x00\xff"}, timeout=30
+        )
+
+        self.assertIs(answer, page)
+        self.assertEqual(http.requests, [(url, 30)])
+
     def test_unrouted_urls_get_a_404_and_are_flagged(self):
         http = helpers.FakeHttp()
 
