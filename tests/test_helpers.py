@@ -228,6 +228,21 @@ class FakeTransmissionRpcTests(unittest.TestCase):
                     self.assertIn("WWW-Authenticate", response.headers)
         self.assertEqual(self.rpc.auths, [])
 
+    def test_off_the_whitelist_every_request_gets_a_403_before_auth(self):
+        # transmission-daemon 4.0.6 (rpc-server.cc handle_request) checks the
+        # client address against rpc-whitelist before Basic auth and the
+        # session id.
+        self.rpc.credentials = ("alice", "hunter2")
+        self.rpc.address_allowed = False
+        for auth in (None, ("alice", "hunter2")):
+            with self.subTest(auth=auth):
+                response = self.rpc.post(RPC_URL, auth=auth, timeout=15)
+
+                self.assertEqual(response.status_code, 403)
+                self.assertNotIn("X-Transmission-Session-Id", response.headers)
+                self.assertNotIn("WWW-Authenticate", response.headers)
+        self.assertEqual(self.rpc.auths, [])
+
     def test_with_credentials_the_right_auth_completes_the_handshake(self):
         self.rpc.credentials = ("alice", "hunter2")
         headers = self._authed_session_headers()

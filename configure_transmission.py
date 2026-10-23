@@ -15,6 +15,18 @@ import os
 import sys
 
 DEFAULT_SETTINGS_FILE = "/config/settings.json"
+# Transmission's own rpc-whitelist default. fetch_torrents.py talks to the
+# daemon from inside the container, so these stay in any whitelist we write.
+LOCALHOST_WHITELIST = ("127.0.0.1", "::1")
+
+
+def build_whitelist(entries):
+    """TRANSMISSION_RPC_WHITELIST's comma-separated entries, added to
+    LOCALHOST_WHITELIST rather than replacing it: Transmission's
+    rpc-whitelist replaces its default, and a whitelist without localhost
+    refuses the fetch script's own RPC calls with a 403."""
+    extra = [entry.strip() for entry in entries.split(",") if entry.strip()]
+    return ",".join([e for e in LOCALHOST_WHITELIST if e not in extra] + extra)
 
 
 def build_rpc_overrides(env):
@@ -23,7 +35,7 @@ def build_rpc_overrides(env):
     whitelist = env.get("TRANSMISSION_RPC_WHITELIST", "").strip()
     if whitelist:
         overrides["rpc-whitelist-enabled"] = True
-        overrides["rpc-whitelist"] = whitelist
+        overrides["rpc-whitelist"] = build_whitelist(whitelist)
 
     username = env.get("TRANSMISSION_RPC_USERNAME", "").strip()
     password = env.get("TRANSMISSION_RPC_PASSWORD", "").strip()

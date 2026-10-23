@@ -15,6 +15,7 @@ from typing import Any
 import requests
 from bs4 import BeautifulSoup
 from transmission_rpc import Client
+from transmission_rpc.error import TransmissionAuthError
 
 import torrent_scrape
 
@@ -1201,6 +1202,36 @@ def check_old_releases_for_demand(
     return added, skipped, check_state
 
 
+class RpcRefusedError(Exception):
+    """transmission-daemon refused this script's RPC request: 403 for an
+    address off rpc-whitelist, 401 for a missing or wrong login."""
+
+
+def rpc_refusal_message(status_code, auth):
+    """What to tell the operator when the daemon answers `status_code` (403
+    or 401) to `auth` (Config.rpc_auth): names the user, never the
+    password."""
+    if status_code == 403:
+        return (
+            "Transmission refused this script's RPC connection from localhost "
+            "(403 Forbidden): rpc-whitelist in settings.json must include "
+            "127.0.0.1. Setting TRANSMISSION_RPC_WHITELIST adds it on the next "
+            "container start."
+        )
+    if auth is None:
+        return (
+            "Transmission requires an RPC login and none was sent. Set both "
+            "TRANSMISSION_RPC_USERNAME and TRANSMISSION_RPC_PASSWORD to the "
+            "daemon's login (rpc-username/rpc-password in settings.json), or "
+            "turn its rpc-authentication-required off."
+        )
+    return (
+        f"Transmission rejected the RPC login for user {auth[0]!r}. "
+        "TRANSMISSION_RPC_USERNAME/TRANSMISSION_RPC_PASSWORD must match the "
+        "daemon's rpc-username/rpc-password in settings.json."
+    )
+
+
 def log_seed_ratios_via_http(
     rpc_url="http://localhost:9091/transmission/rpc", *, auth: tuple | None
 ):
@@ -1209,6 +1240,10 @@ def log_seed_ratios_via_http(
     out the session id."""
     logger.info("Querying Transmission RPC for seed ratios...")
     r = requests.post(rpc_url, auth=auth, timeout=15)
+    # The daemon checks the address, then the login, before the session id:
+    # a 403 or 401 carries no session id.
+    if r.status_code in (401, 403):
+        raise RpcRefusedError(rpc_refusal_message(r.status_code, auth))
     headers = {"X-Transmission-Session-Id": r.headers["X-Transmission-Session-Id"]}
     payload: dict[str, Any] = {
         "method": "torrent-get",
@@ -1862,6 +1897,13 @@ def run(
 
     try:
         _cleanup(config, client_factory, today)
+    except TransmissionAuthError as exc:
+        # transmission_rpc raises this for a 403 as well as a 401.
+        status_code = exc.original.status_code if exc.original is not None else 401
+        logger.error(
+            "Could not clean up old versions: %s",
+            rpc_refusal_message(status_code, config.rpc_auth),
+        )
     except Exception as exc:
         logger.error("Could not clean up old versions: %s", exc)
 

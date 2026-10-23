@@ -267,7 +267,9 @@ class FakeTransmissionRpc:
     with that status. Set `credentials` to a (user, password) tuple to
     require them like a daemon with rpc-authentication-required: a request
     with any other `auth` gets a 401 without the session id, checked first,
-    as transmission-daemon 4.0.6's rpc-server.cc does."""
+    as transmission-daemon 4.0.6's rpc-server.cc does. Set `address_allowed`
+    to False for a client off rpc-whitelist: every request gets a 403,
+    checked before the credentials, as that daemon does."""
 
     URL = "http://localhost:9091/transmission/rpc"
     SESSION_ID = "sid"
@@ -278,11 +280,14 @@ class FakeTransmissionRpc:
         self.auths = []
         self.error_status = None
         self.credentials = None
+        self.address_allowed = True
 
     def post(self, url, **kwargs):
         self.calls.append(unittest.mock.call(url, **kwargs))
         if url != self.URL:
             return fake_response(b"not found", status=404, url=url)
+        if not self.address_allowed:
+            return fake_response(b"Unauthorized IP Address.", status=403, url=url)
         if self.credentials is not None and kwargs.get("auth") != self.credentials:
             return fake_response(
                 b"unauthorized",
