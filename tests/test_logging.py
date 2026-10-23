@@ -310,7 +310,9 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
             self.rpc.calls,
             [
                 unittest.mock.call(
-                    "http://localhost:9091/transmission/rpc", timeout=15
+                    "http://localhost:9091/transmission/rpc",
+                    auth=("alice", "hunter2"),
+                    timeout=15,
                 ),
                 unittest.mock.call(
                     "http://localhost:9091/transmission/rpc",
@@ -324,6 +326,16 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
                 ),
             ],
         )
+
+    def test_authenticates_against_a_daemon_that_requires_credentials(self):
+        # The daemon answers 401, with no session id, to any request
+        # without the right credentials, the handshake included.
+        self.rpc.credentials = ("alice", "hunter2")
+        self.transmission.torrents = [helpers.FakeTorrent("a.iso", 1, ratio=1.5)]
+        with self.assertLogs(ft.logger, level="INFO") as logs:
+            ft.log_seed_ratios_via_http(auth=("alice", "hunter2"))
+
+        self.assertIn(f"[ratio] {'a.iso':<50} → 1.500", logs.output[-3])
 
     def test_logs_ratios_highest_first_with_none_as_zero(self):
         self.transmission.torrents = [
@@ -360,7 +372,7 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
         ):
             ft.log_seed_ratios_via_http(auth=None)
 
-        self.assertEqual(self.rpc.auths, [None])
+        self.assertEqual([c.kwargs["auth"] for c in self.rpc.calls], [None, None])
 
 
 if __name__ == "__main__":

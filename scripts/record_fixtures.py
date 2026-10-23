@@ -86,9 +86,9 @@ def record(distro, slug, url, ext, now, *, get=requests.get, out_dir=FIXTURES_DI
     print(f"{distro}/{slug}.{ext}: {len(response.content)} bytes from {url}")
 
 
-def main(argv, *, now=None):
+def main(argv, *, now=None, record=record):
     """Records every endpoint, or only those of the distros in `argv`, all
-    stamped with `now` (default: the current UTC time)."""
+    stamped with `now` (default: the current UTC time), with `record`."""
     wanted = set(argv)
     if now is None:
         now = datetime.now(UTC)

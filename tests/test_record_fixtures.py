@@ -129,9 +129,12 @@ class RecordTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    """main() decides what to record; record() itself is tested above, so a
+    spy stands in for it here."""
+
     def run_main(self, argv):
-        with unittest.mock.patch.object(record_fixtures, "record") as record:
-            record_fixtures.main(argv, now=NOW)
+        record = unittest.mock.Mock()
+        record_fixtures.main(argv, now=NOW, record=record)
         return record
 
     def recorded(self, record):
@@ -170,8 +173,8 @@ class MainTests(unittest.TestCase):
 
     def test_now_defaults_to_the_current_utc_time(self):
         before = datetime.now(UTC)
-        with unittest.mock.patch.object(record_fixtures, "record") as record:
-            record_fixtures.main(["arch"])
+        record = unittest.mock.Mock()
+        record_fixtures.main(["arch"], record=record)
         after = datetime.now(UTC)
 
         (now,) = {call.args[4] for call in record.call_args_list}

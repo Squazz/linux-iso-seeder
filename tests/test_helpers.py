@@ -207,6 +207,49 @@ class FakeTransmissionRpcTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_with_credentials_wrong_auth_gets_a_401_before_the_session_id(self):
+        # transmission-daemon 4.0.6 (rpc-server.cc handle_request) checks
+        # Basic auth before the session id, so an unauthenticated request
+        # never learns the id.
+        self.rpc.credentials = ("alice", "hunter2")
+        for auth in (None, ("alice", "wrong")):
+            for headers in (None, self._authed_session_headers()):
+                with self.subTest(auth=auth, headers=headers):
+                    response = self.rpc.post(
+                        RPC_URL,
+                        json=TORRENT_GET,
+                        headers=headers,
+                        auth=auth,
+                        timeout=15,
+                    )
+
+                    self.assertEqual(response.status_code, 401)
+                    self.assertNotIn("X-Transmission-Session-Id", response.headers)
+                    self.assertIn("WWW-Authenticate", response.headers)
+        self.assertEqual(self.rpc.auths, [])
+
+    def test_with_credentials_the_right_auth_completes_the_handshake(self):
+        self.rpc.credentials = ("alice", "hunter2")
+        headers = self._authed_session_headers()
+
+        response = self.rpc.post(
+            RPC_URL,
+            json=TORRENT_GET,
+            headers=headers,
+            auth=("alice", "hunter2"),
+            timeout=15,
+        )
+
+        response.raise_for_status()
+        self.assertEqual(self.rpc.auths, [("alice", "hunter2")])
+
+    def _authed_session_headers(self):
+        refused = self.rpc.post(RPC_URL, auth=("alice", "hunter2"), timeout=15)
+        self.assertEqual(refused.status_code, 409)
+        return {
+            "X-Transmission-Session-Id": refused.headers["X-Transmission-Session-Id"]
+        }
+
 
 class FakeHttpTests(unittest.TestCase):
     PAGE = "https://example.org/page"
@@ -221,6 +264,20 @@ class FakeHttpTests(unittest.TestCase):
         self.assertEqual(http.requests, [(self.PAGE, 30), (self.PAGE, None)])
         self.assertEqual(http.requested, [self.PAGE, self.PAGE])
         self.assertEqual(http.unexpected, [])
+
+    def test_params_are_matched_and_recorded_as_part_of_the_url(self):
+        # As requests would send them: appended to any existing query,
+        # with bytes values percent-encoded byte for byte.
+        url = self.PAGE + "?a=1&info_hash=%00%FF"
+        page = helpers.fake_response(b"hello")
+        http = helpers.FakeHttp({url: page})
+
+        answer = http.get(
+            self.PAGE + "?a=1", params={"info_hash": b"\x00\xff"}, timeout=30
+        )
+
+        self.assertIs(answer, page)
+        self.assertEqual(http.requests, [(url, 30)])
 
     def test_unrouted_urls_get_a_404_and_are_flagged(self):
         http = helpers.FakeHttp()
@@ -340,6 +397,77 @@ class NetworkGuardTests(unittest.TestCase):
     def test_create_connection_is_refused(self):
         with self.assertRaisesRegex(RuntimeError, "must not open network"):
             socket.create_connection(("192.0.2.1", 80), timeout=1)
+
+
+class FakeUdpSocketTests(unittest.TestCase):
+    """The UDP socket double records datagrams whichever way they're sent,
+    and only stands in for what socket.socket really has."""
+
+    ADDR = ("tracker.example.com", 6969)
+
+    def test_records_datagrams_from_sendto_and_connect_send_alike(self):
+        sock = helpers.FakeUdpSocket()
+        sock.sendto(b"one", self.ADDR)
+        sock.connect(self.ADDR)
+        sock.send(b"two")
+
+        self.assertEqual(sock.sent, [(b"one", self.ADDR), (b"two", self.ADDR)])
+
+    def test_serves_scripted_replies_in_order_and_raises_exceptions(self):
+        sock = helpers.FakeUdpSocket(
+            [b"first", lambda payload: payload.upper(), TimeoutError("timed out")]
+        )
+        sock.sendto(b"ping", self.ADDR)
+
+        self.assertEqual(sock.recvfrom(2048), (b"first", self.ADDR))
+        self.assertEqual(sock.recv(2048), b"PING")
+        with self.assertRaisesRegex(TimeoutError, "timed out"):
+            sock.recvfrom(2048)
+
+    def test_records_the_timeout_it_was_given(self):
+        sock = helpers.FakeUdpSocket()
+        self.assertIsNone(sock.timeout)
+
+        sock.settimeout(5)
+
+        self.assertEqual((sock.timeout, sock.gettimeout()), (5, 5))
+
+    def test_closed_by_close_and_by_leaving_a_with_block(self):
+        closed = helpers.FakeUdpSocket()
+        closed.close()
+        with helpers.FakeUdpSocket() as left:
+            self.assertFalse(left.closed)
+
+        self.assertEqual((closed.closed, left.closed), (True, True))
+
+    def test_a_closed_socket_refuses_io(self):
+        sock = helpers.FakeUdpSocket([b"reply"])
+        sock.close()
+
+        for io in (lambda: sock.sendto(b"x", self.ADDR), lambda: sock.recvfrom(1)):
+            with self.subTest(io=io), self.assertRaises(OSError):
+                io()
+
+    def test_patch_serves_it_as_any_udp_socket_and_refuses_tcp(self):
+        sock = helpers.FakeUdpSocket()
+        sock.patch(self)
+
+        for family in (socket.AF_INET, socket.AF_INET6):
+            with self.subTest(family=family):
+                self.assertIs(socket.socket(family, socket.SOCK_DGRAM), sock)
+        with self.assertRaisesRegex(AssertionError, "UDP"):
+            socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    def test_every_method_exists_on_the_real_socket(self):
+        public = {
+            name
+            for name in vars(helpers.FakeUdpSocket)
+            if not name.startswith("_") and callable(vars(helpers.FakeUdpSocket)[name])
+        }
+
+        self.assertEqual(
+            {name for name in public if not hasattr(socket.socket, name)}, {"patch"}
+        )
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ Run with: python -m unittest discover -s tests
 """
 
 import hashlib
-import inspect
 import os
 import socket
 import struct
@@ -402,6 +401,25 @@ def _error_response(transaction_id, message):
     return struct.pack(">II", 3, transaction_id) + message.encode("utf-8")
 
 
+def _sent_transaction_id(payload):
+    return struct.unpack(">I", payload[12:16])[0]
+
+
+def _echo_connect(connection_id):
+    """A FakeUdpSocket reply: a tracker answering a connect with whatever
+    transaction id it was sent."""
+    return lambda payload: _connect_response(
+        _sent_transaction_id(payload), connection_id
+    )
+
+
+def _echo_scrape(seeders, completed, leechers):
+    """As _echo_connect, for a scrape."""
+    return lambda payload: _scrape_response(
+        _sent_transaction_id(payload), seeders, completed, leechers
+    )
+
+
 class BuildParseUdpConnectRequestTests(unittest.TestCase):
     def test_request_matches_bep15_layout(self):
         request = ts.build_udp_connect_request(0xAABBCCDD)
@@ -547,48 +565,55 @@ class BuildParseUdpScrapeRequestTests(unittest.TestCase):
 
 
 class ScrapeUdpTrackerTests(unittest.TestCase):
-    """Exercises scrape_udp_tracker()'s socket I/O against an autospec'd
-    socket (so a mistyped socket method fails) and a fixed transaction id
-    sequence, so no real network access or randomness is involved."""
+    """Exercises scrape_udp_tracker() against helpers.FakeUdpSocket and a
+    fixed transaction id sequence: what goes on the wire, what comes back,
+    and that the socket is closed either way. No real network access or
+    randomness is involved."""
 
     INFO_HASH = bytes(range(20))
     ADDR = ("tracker.example.com", 1337)
 
     def _scrape(self, replies, ids=(1, 2), **kwargs):
-        """Runs scrape_udp_tracker with `replies` as what recvfrom returns
-        (or raises); returns (result or raised exception, fake socket)."""
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = replies
-        with unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock):
-            result = ts.scrape_udp_tracker(
-                *self.ADDR,
-                self.INFO_HASH,
-                new_transaction_id=iter(ids).__next__,
-                **kwargs,
-            )
-        return result, fake_sock
+        """Runs scrape_udp_tracker with `replies` as what the tracker
+        answers (or raises); returns (result, fake socket)."""
+        sock = helpers.FakeUdpSocket(replies)
+        sock.patch(self)
+        result = ts.scrape_udp_tracker(
+            *self.ADDR,
+            self.INFO_HASH,
+            new_transaction_id=iter(ids).__next__,
+            **kwargs,
+        )
+        return result, sock
+
+    def _scrape_failing(self, replies, error, message, **kwargs):
+        """As _scrape, for a scrape that must raise `error` (matching
+        `message`); returns the fake socket."""
+        sock = helpers.FakeUdpSocket(replies)
+        sock.patch(self)
+        with self.assertRaisesRegex(error, message):
+            ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH, **kwargs)
+        return sock
 
     def test_full_round_trip_sends_both_bep15_requests_and_returns_stats(self):
-        stats, fake_sock = self._scrape(
+        stats, sock = self._scrape(
             [
-                (_connect_response(transaction_id=1, connection_id=0xCAFEBABE), None),
-                (_scrape_response(2, seeders=5, completed=2, leechers=3), None),
+                _connect_response(transaction_id=1, connection_id=0xCAFEBABE),
+                _scrape_response(2, seeders=5, completed=2, leechers=3),
             ],
             timeout=5,
         )
 
         self.assertEqual(stats, {"seeders": 5, "leechers": 3, "completed": 2})
-        fake_sock.settimeout.assert_called_once_with(5)
         self.assertEqual(
-            fake_sock.sendto.call_args_list,
+            sock.sent,
             [
-                unittest.mock.call(struct.pack(">QII", 0x41727101980, 0, 1), self.ADDR),
-                unittest.mock.call(
-                    struct.pack(">QII", 0xCAFEBABE, 2, 2) + self.INFO_HASH, self.ADDR
-                ),
+                (struct.pack(">QII", 0x41727101980, 0, 1), self.ADDR),
+                (struct.pack(">QII", 0xCAFEBABE, 2, 2) + self.INFO_HASH, self.ADDR),
             ],
         )
-        fake_sock.close.assert_called_once()
+        self.assertEqual(sock.timeout, 5)
+        self.assertTrue(sock.closed)
 
     def test_scrape_uses_a_fresh_transaction_id_not_the_connect_one(self):
         # A reply to the scrape that echoes the connect's id is not ours.
@@ -597,90 +622,61 @@ class ScrapeUdpTrackerTests(unittest.TestCase):
         ):
             self._scrape(
                 [
-                    (_connect_response(transaction_id=1, connection_id=9), None),
-                    (_scrape_response(1, seeders=5, completed=2, leechers=3), None),
+                    _connect_response(transaction_id=1, connection_id=9),
+                    _scrape_response(1, seeders=5, completed=2, leechers=3),
                 ]
             )
 
     def test_default_timeout_is_15_seconds(self):
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            self.assertRaisesRegex(socket.timeout, "timed out"),
-        ):
-            ts.scrape_udp_tracker(
-                *self.ADDR, self.INFO_HASH, new_transaction_id=lambda: 1
-            )
-
-        fake_sock.settimeout.assert_called_once_with(15)
-
-    def test_connect_transaction_mismatch_raises_and_closes_socket(self):
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = [
-            (_connect_response(transaction_id=2, connection_id=1), None)
-        ]
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            self.assertRaisesRegex(
-                ts.UdpTrackerError, "Transaction ID mismatch in connect response"
-            ),
-        ):
-            ts.scrape_udp_tracker(
-                *self.ADDR, self.INFO_HASH, new_transaction_id=lambda: 1
-            )
-
-        fake_sock.close.assert_called_once()
-
-    def test_socket_timeout_propagates_and_closes_socket(self):
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
-
-        with (
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            self.assertRaisesRegex(socket.timeout, "timed out"),
-        ):
-            ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH, timeout=5)
-
-        fake_sock.close.assert_called_once()
-
-    def test_opens_a_udp_socket(self):
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = TimeoutError("timed out")
-
-        with (
-            unittest.mock.patch.object(
-                ts.socket, "socket", return_value=fake_sock
-            ) as make_socket,
-            self.assertRaises(socket.timeout),
-        ):
-            ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH)
-
-        make_socket.assert_called_once_with(socket.AF_INET, socket.SOCK_DGRAM)
-
-
-class RandomTransactionIdTests(unittest.TestCase):
-    def test_is_four_random_bytes_read_big_endian(self):
-        with unittest.mock.patch.object(
-            ts.os, "urandom", return_value=b"\x01\x02\x03\x04"
-        ) as urandom:
-            self.assertEqual(ts._random_transaction_id(), 0x01020304)
-
-        urandom.assert_called_once_with(4)
-
-    def test_is_the_default_id_source(self):
-        default = (
-            inspect.signature(ts.scrape_udp_tracker)
-            .parameters["new_transaction_id"]
-            .default
+        sock = self._scrape_failing(
+            [TimeoutError("timed out")],
+            socket.timeout,
+            "timed out",
+            new_transaction_id=lambda: 1,
         )
 
-        self.assertIs(default, ts._random_transaction_id)
+        self.assertEqual(sock.timeout, 15)
+
+    def test_connect_transaction_mismatch_raises_and_closes_socket(self):
+        sock = self._scrape_failing(
+            [_connect_response(transaction_id=2, connection_id=1)],
+            ts.UdpTrackerError,
+            "Transaction ID mismatch in connect response",
+            new_transaction_id=lambda: 1,
+        )
+
+        self.assertTrue(sock.closed)
+
+    def test_socket_timeout_propagates_and_closes_socket(self):
+        sock = self._scrape_failing(
+            [TimeoutError("timed out")], socket.timeout, "timed out", timeout=5
+        )
+
+        self.assertTrue(sock.closed)
+
+    def test_default_transaction_ids_are_random_per_request(self):
+        echoing_tracker = [
+            _echo_connect(connection_id=7),
+            _echo_scrape(seeders=5, completed=2, leechers=3),
+        ]
+        sent = []
+        for _ in range(2):
+            sock = helpers.FakeUdpSocket(echoing_tracker)
+            sock.patch(self)
+            stats = ts.scrape_udp_tracker(*self.ADDR, self.INFO_HASH)
+            self.assertEqual(stats, {"seeders": 5, "leechers": 3, "completed": 2})
+            sent += sock.sent
+
+        ids = {_sent_transaction_id(payload) for payload, _ in sent}
+        # Four 32-bit ids colliding by chance: about 1 in 700 million.
+        self.assertEqual(len(ids), 4)
 
 
 class IsDisallowedIpTests(unittest.TestCase):
+    """Calls the private _is_disallowed_ip directly on purpose: it is the
+    SSRF guard's address rule, pure input -> output, so each address class
+    is pinned here rather than only through scrape_torrent()."""
+
     def test_public_ipv4_is_allowed(self):
         self.assertFalse(ts._is_disallowed_ip("93.184.216.34"))
 
@@ -728,16 +724,21 @@ class ResolveAddressesTests(unittest.TestCase):
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
             (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("2606:2800::1", 0, 0, 0)),
         ]
-        with unittest.mock.patch.object(
-            ts.socket, "getaddrinfo", return_value=infos
-        ) as getaddrinfo:
+
+        def getaddrinfo(host, *args, **kwargs):
+            return {"tracker.example.com": infos}[host]
+
+        with unittest.mock.patch.object(ts.socket, "getaddrinfo", getaddrinfo):
             addresses = ts._resolve_addresses("tracker.example.com")
 
         self.assertEqual(addresses, ["93.184.216.34", "2606:2800::1"])
-        getaddrinfo.assert_called_once_with("tracker.example.com", None)
 
 
 class IsSafeScrapeHostTests(unittest.TestCase):
+    """Calls the private _is_safe_scrape_host directly on purpose: it is
+    the SSRF guard itself (fail closed on any doubt), so its cases are
+    pinned here rather than only through scrape_torrent()."""
+
     def _is_safe(self, hostname, addresses):
         """_is_safe_scrape_host with hostname resolving to `addresses` (or
         raising them, if an exception)."""
@@ -838,8 +839,20 @@ def write_torrent(testcase, announce_urls):
 
 class ScrapeTorrentTests(unittest.TestCase):
     """scrape_torrent()'s tracker selection, with DNS and the UDP round trip
-    injected (resolve=, udp_scrape=) and requests.get doubled. The real
-    defaults are exercised by ScrapeTorrentUdpWireTests."""
+    injected (resolve=, udp_scrape=) and HTTP served by helpers.FakeHttp,
+    which records each URL as it would be sent. The real defaults are
+    exercised by ScrapeTorrentUdpWireTests."""
+
+    def setUp(self):
+        self.http = helpers.FakeHttp()
+        self.enterContext(unittest.mock.patch.object(ts.requests, "get", self.http.get))
+
+    def _serve(self, tracker, info_hash, answer):
+        """Routes tracker's scrape URL for info_hash to `answer`; returns
+        that URL."""
+        url = f"{tracker}/scrape?info_hash={percent_encoded(info_hash)}"
+        self.http.routes[url] = answer
+        return url
 
     def _scrape(self, path, *, private=(), udp=UDP_STATS, **kwargs):
         """Runs scrape_torrent(path) with every host resolving publicly
@@ -892,10 +905,9 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = self._scrape(path)
+        result = self._scrape(path)
 
-        mock_get.assert_not_called()
+        self.assertEqual(self.http.requests, [])
         self.assertEqual(
             result, {"tracker": "udp://tracker.example.com:80", **UDP_STATS}
         )
@@ -908,23 +920,15 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests,
-            "get",
-            return_value=tracker_response(info_hash, 5, 7, completed=2),
-        ) as mock_get:
-            result = self._scrape(path, udp=OSError("unreachable"), timeout=3)
-
-        self.assertEqual(
-            mock_get.call_args_list,
-            [
-                unittest.mock.call(
-                    "http://tracker.example.com:6969/scrape?info_hash="
-                    + percent_encoded(info_hash),
-                    timeout=3,
-                )
-            ],
+        url = self._serve(
+            "http://tracker.example.com:6969",
+            info_hash,
+            tracker_response(info_hash, 5, 7, completed=2),
         )
+
+        result = self._scrape(path, udp=OSError("unreachable"), timeout=3)
+
+        self.assertEqual(self.http.requests, [(url, 3)])
         self.assertEqual(
             result,
             {
@@ -946,10 +950,13 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://tracker.example.com:6969/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ):
-            result = self._scrape(path)
+        self._serve(
+            "http://tracker.example.com:6969",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
+        )
+
+        result = self._scrape(path)
 
         self.assertEqual(result["tracker"], "http://tracker.example.com:6969/scrape")
 
@@ -983,18 +990,16 @@ class ScrapeTorrentTests(unittest.TestCase):
                     "A": "http://dead.example.com" + query,
                     "B": "http://good.example.com" + query,
                 }
-                http = helpers.FakeHttp(
-                    {
-                        urls["A"]: dead_answer,
-                        urls["B"]: tracker_response(info_hash, 1, 2, completed=3),
-                    }
-                )
+                self.http.requests.clear()
+                self.http.routes = {
+                    urls["A"]: dead_answer,
+                    urls["B"]: tracker_response(info_hash, 1, 2, completed=3),
+                }
 
-                with unittest.mock.patch.object(ts.requests, "get", http.get):
-                    result = self._scrape(path, timeout=3)
+                result = self._scrape(path, timeout=3)
 
                 self.assertEqual(
-                    http.requests, [(urls[tracker], 3) for tracker in requested]
+                    self.http.requests, [(urls[tracker], 3) for tracker in requested]
                 )
                 self.assertEqual(
                     result,
@@ -1008,26 +1013,28 @@ class ScrapeTorrentTests(unittest.TestCase):
 
     def test_default_http_timeout_is_15_seconds(self):
         path, info_hash = write_torrent(self, ["http://good.example.com/announce"])
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 1, 2)
-        ) as mock_get:
-            self._scrape(path)
+        self._serve(
+            "http://good.example.com", info_hash, tracker_response(info_hash, 1, 2)
+        )
 
-        self.assertEqual(mock_get.call_args.kwargs, {"timeout": 15})
+        self._scrape(path)
+
+        self.assertEqual([timeout for _url, timeout in self.http.requests], [15])
 
     def test_returns_none_when_no_tracker_usable(self):
         path, _info_hash = write_torrent(self, ["udp://only.example.com:1337/announce"])
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = self._scrape(path, udp=OSError("unreachable"))
-        mock_get.assert_not_called()
+        result = self._scrape(path, udp=OSError("unreachable"))
+
+        self.assertEqual(self.http.requests, [])
         self.assertIsNone(result)
 
     def test_returns_none_when_no_tracker_has_stats_for_the_hash(self):
-        path, _info_hash = write_torrent(self, ["http://good.example.com/announce"])
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(OTHER_HASH, 9, 9)
-        ):
-            self.assertIsNone(self._scrape(path))
+        path, info_hash = write_torrent(self, ["http://good.example.com/announce"])
+        self._serve(
+            "http://good.example.com", info_hash, tracker_response(OTHER_HASH, 9, 9)
+        )
+
+        self.assertIsNone(self._scrape(path))
 
     def test_skips_udp_tracker_resolving_to_a_private_address(self):
         path, info_hash = write_torrent(
@@ -1037,10 +1044,13 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://real-tracker.example.com/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ):
-            result = self._scrape(path, private=("internal.example.com",))
+        self._serve(
+            "http://real-tracker.example.com",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
+        )
+
+        result = self._scrape(path, private=("internal.example.com",))
 
         self.assertEqual(
             result,
@@ -1064,78 +1074,65 @@ class ScrapeTorrentTests(unittest.TestCase):
                 "http://real-tracker.example.com/announce",
             ],
         )
-        with unittest.mock.patch.object(
-            ts.requests, "get", return_value=tracker_response(info_hash, 3, 4)
-        ) as mock_get:
-            result = self._scrape(path, private=("internal.example.com",))
-
-        self.assertEqual(
-            mock_get.call_args_list,
-            [
-                unittest.mock.call(
-                    "http://real-tracker.example.com/scrape?info_hash="
-                    + percent_encoded(info_hash),
-                    timeout=15,
-                )
-            ],
+        url = self._serve(
+            "http://real-tracker.example.com",
+            info_hash,
+            tracker_response(info_hash, 3, 4),
         )
+
+        result = self._scrape(path, private=("internal.example.com",))
+
+        self.assertEqual(self.http.requests, [(url, 15)])
         self.assertEqual(result["tracker"], "http://real-tracker.example.com/scrape")
 
     def test_returns_none_when_every_tracker_resolves_privately(self):
         path, _info_hash = write_torrent(self, ["http://internal.example.com/announce"])
-        with unittest.mock.patch.object(ts.requests, "get") as mock_get:
-            result = ts.scrape_torrent(
-                path,
-                resolve=lambda _hostname: ["169.254.169.254"],
-            )
-        mock_get.assert_not_called()
+        result = ts.scrape_torrent(path, resolve=lambda _hostname: ["169.254.169.254"])
+
+        self.assertEqual(self.http.requests, [])
         self.assertIsNone(result)
 
 
 class ScrapeTorrentUdpWireTests(unittest.TestCase):
-    """scrape_torrent() with its real resolve=/udp_scrape= defaults, down to
-    socket.getaddrinfo and an autospec'd UDP socket: what goes on the wire
-    for a public tracker, and that nothing does for a private one."""
+    """scrape_torrent() with its real resolve=/udp_scrape= defaults and
+    transaction ids, down to socket.getaddrinfo and helpers.FakeUdpSocket:
+    what goes on the wire for a public tracker, and that nothing does for a
+    private one."""
 
     ANNOUNCE = "udp://tracker.example.com:80/announce"
 
     def _scrape(self, address, replies=()):
         """Runs scrape_torrent on a one-UDP-tracker .torrent whose host
-        resolves to `address`, with `replies` as what recvfrom returns and
-        transaction ids 1, 2. Returns (result, info_hash, fake socket)."""
+        resolves to `address`, with `replies` as what the tracker answers.
+        Returns (result, info_hash, fake socket)."""
         path, info_hash = write_torrent(self, [self.ANNOUNCE])
-        fake_sock = unittest.mock.create_autospec(socket.socket, instance=True)
-        fake_sock.recvfrom.side_effect = replies
+        sock = helpers.FakeUdpSocket(replies)
+        sock.patch(self)
         infos = [(socket.AF_INET, socket.SOCK_DGRAM, 17, "", (address, 0))]
-        ids = [(1).to_bytes(4, "big"), (2).to_bytes(4, "big")]
-        with (
-            unittest.mock.patch.object(ts.socket, "getaddrinfo", return_value=infos),
-            unittest.mock.patch.object(ts.socket, "socket", return_value=fake_sock),
-            unittest.mock.patch.object(ts.os, "urandom", side_effect=ids),
-        ):
+        with unittest.mock.patch.object(ts.socket, "getaddrinfo", return_value=infos):
             result = ts.scrape_torrent(path)
-        return result, info_hash, fake_sock
+        return result, info_hash, sock
 
     def test_public_tracker_is_scraped_over_bep15(self):
-        result, info_hash, fake_sock = self._scrape(
+        result, info_hash, sock = self._scrape(
             PUBLIC_IP,
             [
-                (_connect_response(transaction_id=1, connection_id=0xCAFEBABE), None),
-                (_scrape_response(2, seeders=5, completed=2, leechers=3), None),
+                _echo_connect(connection_id=0xCAFEBABE),
+                _echo_scrape(seeders=5, completed=2, leechers=3),
             ],
         )
 
         addr = ("tracker.example.com", 80)
+        (connect, connect_addr), (scrape, scrape_addr) = sock.sent
+        self.assertEqual((connect_addr, scrape_addr), (addr, addr))
+        # The ids (bytes 12-16) are random; the echoing tracker checks them.
         self.assertEqual(
-            fake_sock.sendto.call_args_list,
-            [
-                unittest.mock.call(struct.pack(">QII", 0x41727101980, 0, 1), addr),
-                unittest.mock.call(
-                    struct.pack(">QII", 0xCAFEBABE, 2, 2) + info_hash, addr
-                ),
-            ],
+            (connect[:12], len(connect)), (struct.pack(">QI", 0x41727101980, 0), 16)
         )
-        fake_sock.settimeout.assert_called_once_with(15)
+        self.assertEqual(
+            (scrape[:12], scrape[16:]), (struct.pack(">QI", 0xCAFEBABE, 2), info_hash)
+        )
+        self.assertEqual((sock.timeout, sock.closed), (15, True))
         self.assertEqual(
             result,
             {
@@ -1147,9 +1144,9 @@ class ScrapeTorrentUdpWireTests(unittest.TestCase):
         )
 
     def test_private_tracker_gets_no_packet(self):
-        result, _info_hash, fake_sock = self._scrape("127.0.0.1")
+        result, _info_hash, sock = self._scrape("127.0.0.1")
 
-        fake_sock.sendto.assert_not_called()
+        self.assertEqual(sock.sent, [])
         self.assertIsNone(result)
 
 

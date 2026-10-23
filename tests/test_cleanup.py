@@ -778,9 +778,7 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
 
         ft.cleanup_stagnant_torrents(transmission, today=today)
 
-        self.assertEqual(
-            transmission.calls, ["get_torrents", ("remove_torrent", 2, True)]
-        )
+        self.assertEqual(transmission.removals, [(2, True)])
 
     def test_cleanup_stagnant_torrents_judges_over_a_30_day_window_by_default(self):
         # Exactly 30 days of flat ratio: stagnant under the default window,
@@ -1068,9 +1066,7 @@ class EnforceDiskUsageLimitTests(unittest.TestCase):
     def test_removal_deletes_the_downloaded_data(self):
         self._enforce(95, self._disk(base_used=86))
 
-        self.assertEqual(
-            self.transmission.calls, ["get_torrents", ("remove_torrent", 3, True)]
-        )
+        self.assertEqual(self.transmission.removals, [(3, True)])
 
     def test_usage_exactly_at_threshold_triggers_cleanup(self):
         # 85 + 10 = 95% used: at the threshold counts as exceeded.

@@ -523,6 +523,7 @@ class RunTests(RunTestCase):
         )
 
     def test_rpc_credentials_from_config_are_used_for_ratio_logging(self):
+        self.world.rpc.credentials = ("alice", "hunter2")
         self._run(
             FETCH_TORRENTS_DISTROS="arch",
             TRANSMISSION_RPC_USERNAME="alice",

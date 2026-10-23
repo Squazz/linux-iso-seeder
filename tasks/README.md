@@ -249,10 +249,10 @@ Issues the round-3 agents found and left alone because they were outside their t
 
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| 52 | [Ratio logging must work when RPC credentials are set](52-rpc-handshake-auth.md) | P2 (suspected bug) | NO_REFACTOR | — | open |
-| 53 | [Lint and test workflow-only changes in CI](53-lint-workflow-only-changes.md) | P3 | CI | — | open |
+| 52 | [Ratio logging must work when RPC credentials are set](52-rpc-handshake-auth.md) | P2 (suspected bug) | NO_REFACTOR | — | done |
+| 53 | [Lint and test workflow-only changes in CI](53-lint-workflow-only-changes.md) | P3 | CI | — | done |
 | 54 | [Verify the build-once release flow on GitHub](54-verify-release-flow-on-ci.md) | P2 | CI (manual) | 39, 48 | open |
-| 55 | [Round-3 hygiene leftovers: `record=` seam, tracker double marker](55-record-fixtures-main-seam.md) | P3 | REFACTOR_REQUIRED | 49 | open |
+| 55 | [Round-3 hygiene leftovers: `record=` seam, tracker double marker](55-record-fixtures-main-seam.md) | P3 | REFACTOR_REQUIRED | 49 | done |
 
 Suggested order: 54 as soon as the round-3 PR runs, then 52 (step 1 decides whether it is a bug at all), 53, and 55.
 
@@ -262,9 +262,9 @@ A 2026-10-22 review asked whether the suite breaks when the implementation chang
 
 | # | Task | Priority | Class | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| 56 | [UDP scrape tests: assert on datagrams, not socket method calls](56-udp-scrape-fake-socket.md) | P4 (optional) | NO_REFACTOR | — | open |
-| 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | open |
-| 58 | [Tests that pin private helpers' internals](58-private-helper-tests.md) | P4 (optional) | NO_REFACTOR | 56 (soft) | open |
-| 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | open |
+| 56 | [UDP scrape tests: assert on datagrams, not socket method calls](56-udp-scrape-fake-socket.md) | P4 (optional) | NO_REFACTOR | — | done |
+| 57 | [HTTP scrape tests: assert on the requested URL, not `requests.get`'s arguments](57-http-scrape-assert-on-requested-url.md) | P4 (optional) | NO_REFACTOR | — | done |
+| 58 | [Tests that pin private helpers' internals](58-private-helper-tests.md) | P4 (optional) | NO_REFACTOR | 56 (soft) | done |
+| 59 | [Cleanup tests that pin the exact RPC call sequence](59-cleanup-exact-rpc-sequence.md) | P4 (optional) | NO_REFACTOR | — | done |
 
 Suggested order: 59 (smallest), then 56 and 58 together, then 57. Each task says how to prove the change worked: temporarily make the refactor the old test would have blocked, check the suite stays green, then revert it.

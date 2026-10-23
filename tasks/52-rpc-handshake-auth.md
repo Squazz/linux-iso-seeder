@@ -14,3 +14,9 @@
 4. Pass `auth=auth` on the first POST too. Keep `auth=None` meaning no credentials on both requests.
 5. Make the drift job cover it: start the `transmission` job's daemon with RPC credentials set, and have `scripts/transmission_roundtrip.py` read the same credentials into its config. Check its offline tests in `tests/test_transmission_roundtrip.py` still pass.
 6. Full suite, ruff, ruff format, mypy and the coverage gate are green.
+
+## Result
+- Step 1, confirmed from source: Alpine v3.22 ships `transmission-daemon` 4.0.6-r4. In 4.0.6's `libtransmission/rpc-server.cc` `handle_request()`, `isAuthorized()` runs before `test_session_id()`. A request without the right Basic auth gets `401` with `WWW-Authenticate: Basic realm="Transmission"` and no `X-Transmission-Session-Id`. The session-id check (`409` carrying the id) only comes after auth passes. So the bug was real: with credentials set, the first POST got a 401 and `r.headers["X-Transmission-Session-Id"]` raised `KeyError`. (Docker wasn't available to check against a running daemon; the drift job's round trip now does that.)
+- `FakeTransmissionRpc.credentials` makes the fake refuse wrong auth the same way, before the session id (`tests/test_helpers.py`).
+- `log_seed_ratios_via_http()` sends `auth` on both POSTs. `test_authenticates_against_a_daemon_that_requires_credentials` failed with the `KeyError` before the fix. The daily-run credentials test now runs against a fake that requires them.
+- The drift job's daemon starts with `TRANSMISSION_RPC_USERNAME`/`_PASSWORD`; the round trip reads them through `load_config(os.environ)` as before, so only the workflow changed. Verified by the next drift run.

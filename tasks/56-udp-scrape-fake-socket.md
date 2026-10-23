@@ -17,3 +17,9 @@
 4. Prove the change works: temporarily rewrite `scrape_udp_tracker()` to use `with socket.socket(...)` and `connect`/`send`. The suite stays green. Revert the rewrite.
 5. The `torrent_scrape.py` mutation score doesn't drop (task 50: 252/254).
 6. Full suite, ruff, ruff format, mypy and the coverage gate are green.
+
+## Result
+- `helpers.FakeUdpSocket` records datagrams from `sendto` and `connect`+`send` alike, serves scripted replies (bytes, an exception, or a function of the last payload, so a fake tracker can echo random transaction ids), records its `timeout`, and is `closed` by `close()` or leaving a `with` block. A closed one refuses I/O. `patch()` serves it for any UDP socket (IPv4 or IPv6) and refuses anything else, so "it's UDP" is pinned by the double, not by a test. Tested in `tests/test_helpers.py`, including that every method it fakes exists on `socket.socket`.
+- `ScrapeUdpTrackerTests` and `ScrapeTorrentUdpWireTests` assert on `sent`, the result or exception, `closed` and `timeout`. `test_opens_a_udp_socket` is gone. The wire test no longer patches `os.urandom`: an echoing tracker answers whatever ids are sent, and the test pins everything but the id bytes.
+- Proved by rewriting `scrape_udp_tracker()` with `with socket.socket(...)` and `connect`/`send`/`recv`: the new suite stayed green, the old `tests/test_torrent_scrape.py` failed 7 tests. Reverted.
+- Mutation: `torrent_scrape.py` at e1d1329 (after tasks 56–58) is 99.2% (252/254), the same as task 50. The two survivors are the accepted `usedforsecurity` and `safe=` equivalents; the other 16 are exception-message literals, excluded under task 41's rule.

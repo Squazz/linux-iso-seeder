@@ -53,8 +53,10 @@ docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile
 docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
 ```
 
-`docker-image.yml` doesn't run for a change that only touches the other
-workflows (`paths-ignore`), so run actionlint locally when you edit one.
+A pull request that only touches workflows still runs the `test` job, so
+actionlint checks it before merge. A push to `main` that only touches the
+other workflows doesn't run `docker-image.yml` (`paths-ignore`), so it
+doesn't push a new `latest`.
 
 ## Upstream drift
 

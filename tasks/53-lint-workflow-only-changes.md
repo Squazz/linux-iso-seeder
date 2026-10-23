@@ -15,3 +15,7 @@
 2. A push to `main` that only edits a workflow still does not push a new `latest`.
 3. Keep the actionlint image pin in one place, or add a comment at each copy saying to bump them together, the way task 48 did for `PYTHON_VERSION`.
 4. Update `CONTRIBUTING.md` and `.claude/CLAUDE.md` to match. Verify locally with actionlint, and note in the commit that the trigger itself is only verified by the first workflow-only PR.
+
+## Result
+- Took the second option: `docker-image.yml`'s `pull_request` trigger no longer ignores `.github/workflows/**`, so a workflow-only PR runs the whole `test` job (actionlint included) and the `build` job's PR path, which never pushes. `push` keeps the ignore, so a workflow-only push to `main` still doesn't push `latest` (an edit to `docker-image.yml` itself still runs, as before). This keeps the actionlint image pin in one place, and a PR that reworks `docker-image.yml` now also gets its build path exercised before merge. The cost is a full test + build run on workflow-only PRs.
+- Checked locally with actionlint 1.7.12 (no findings; without shellcheck installed, so the `run:` scripts weren't shell-linted). The trigger itself is only verified by the first workflow-only PR.

@@ -351,7 +351,9 @@ class SafeWatchPathTests(unittest.TestCase):
     _remove_watch_file(), and check_old_releases_for_demand() all rely on to
     keep a torrent name confined to a single file directly under watch_dir -
     defense in depth against a future fetch_*() parser turning scraped
-    upstream content into a path escape."""
+    upstream content into a path escape. The tests call these private
+    helpers directly on purpose: they are security guards, pinned by input
+    and output."""
 
     def setUp(self):
         self.watch_dir = helpers.use_watch_dir(self)
