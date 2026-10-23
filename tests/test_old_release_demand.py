@@ -322,6 +322,20 @@ class CheckOldReleasesSociableTests(unittest.TestCase):
     def _watch_files(self):
         return sorted(os.listdir(self.tmp_watch_dir))
 
+    def test_release_transmission_already_loaded_is_not_downloaded_again(self):
+        # transmission-daemon renames a loaded watch file to .torrent.added.
+        loaded = kali(4)
+        candidates = {loaded: self.tracker.candidate(loaded, helpers.swarm(50, 1))}
+        with open(
+            os.path.join(self.tmp_watch_dir, f"{loaded}.torrent.added"), "wb"
+        ) as f:
+            f.write(b"already seeding")
+
+        added, skipped, _state = self._check({"kali": lambda: candidates})
+
+        self.assertEqual((added, skipped), (0, 0))
+        self.assertEqual(self._watch_files(), [f"{loaded}.torrent.added"])
+
     def test_every_outcome_is_counted_and_later_candidates_still_checked(self):
         removed_a, removed_b = kali(1), kali(1, "live")
         unsafe = "kali-linux-../../etc/cron.d/evil"

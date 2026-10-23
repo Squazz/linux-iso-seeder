@@ -639,8 +639,8 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         helpers.use_state_files(self)
         self.tmp_watch_dir = helpers.use_watch_dir(self)
 
-    def _touch_watch_file(self, name):
-        path = os.path.join(self.tmp_watch_dir, f"{name}.torrent")
+    def _touch_watch_file(self, name, suffix=".torrent"):
+        path = os.path.join(self.tmp_watch_dir, f"{name}{suffix}")
         with open(path, "w", encoding="utf-8") as f:
             f.write("fake torrent bytes")
         return path
@@ -676,6 +676,22 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
                 }
             },
         )
+
+    def test_cleanup_old_versions_removes_the_added_watch_file(self):
+        # transmission-daemon renames a loaded watch file to .torrent.added.
+        old_path = self._touch_watch_file(
+            "ubuntu-23.10-desktop-amd64.iso", ".torrent.added"
+        )
+        new_path = self._touch_watch_file(
+            "ubuntu-24.04-desktop-amd64.iso", ".torrent.added"
+        )
+
+        ft.cleanup_old_versions(
+            self._transmission(), today=date(2026, 8, 1), skip_ratio_check=True
+        )
+
+        self.assertFalse(os.path.exists(old_path))
+        self.assertTrue(os.path.exists(new_path))
 
     def test_missing_watch_file_does_not_raise(self):
         # No .torrent file created for the superseded version - cleanup must
