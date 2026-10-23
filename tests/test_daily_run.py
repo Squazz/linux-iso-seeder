@@ -28,6 +28,7 @@ from datetime import date
 from unittest.mock import MagicMock
 
 import helpers
+import transmission_rpc.error
 
 import fetch_torrents as ft
 
@@ -83,6 +84,7 @@ class FakeWorld:
         self.rpc_up = True
         self.disk_used_percent = 10
         self.disk_paths = []
+        self.connect_error = None
 
     def hold_current_and_superseded_ubuntu(self, superseded_ratio=2.0):
         """Transmission holds Ubuntu 24.04 (ratio 2.0) and the 23.10 it
@@ -97,6 +99,8 @@ class FakeWorld:
 
     def connect(self):
         self.events.append("connect")
+        if self.connect_error is not None:
+            raise self.connect_error
         return self.transmission
 
     def disk_usage(self, path):
@@ -531,6 +535,49 @@ class RunTests(RunTestCase):
         )
 
         self.assertEqual(self.world.rpc.auths, [("alice", "hunter2")])
+
+    def test_a_login_the_daemon_rejects_is_logged_with_how_to_fix_it(self):
+        # The real Client raises TransmissionAuthError from its constructor
+        # on the same 401 the ratio query gets.
+        self.world.rpc.credentials = ("alice", "hunter2")
+        self.world.connect_error = transmission_rpc.error.TransmissionAuthError(
+            "transmission daemon require auth"
+        )
+
+        _summary, messages = self._run(
+            FETCH_TORRENTS_DISTROS="arch",
+            TRANSMISSION_RPC_USERNAME="alice",
+            TRANSMISSION_RPC_PASSWORD="wrong-password",
+        )
+
+        rejected = (
+            "Transmission rejected the RPC login for user 'alice'. "
+            "TRANSMISSION_RPC_USERNAME/TRANSMISSION_RPC_PASSWORD must match the "
+            "daemon's rpc-username/rpc-password in settings.json."
+        )
+        self.assertIn(f"Could not query Transmission: {rejected}", messages)
+        self.assertIn(f"Could not clean up old versions: {rejected}", messages)
+        self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
+
+    def test_localhost_off_the_whitelist_is_logged_as_that_not_as_a_login(self):
+        # transmission_rpc raises TransmissionAuthError for a 403 too.
+        self.world.rpc.address_allowed = False
+        self.world.connect_error = transmission_rpc.error.TransmissionAuthError(
+            "transmission daemon require auth",
+            original=helpers.fake_response(status=403),
+        )
+
+        _summary, messages = self._run(FETCH_TORRENTS_DISTROS="arch")
+
+        forbidden = (
+            "Transmission refused this script's RPC connection from localhost "
+            "(403 Forbidden): rpc-whitelist in settings.json must include "
+            "127.0.0.1. Setting TRANSMISSION_RPC_WHITELIST adds it on the next "
+            "container start."
+        )
+        self.assertIn(f"Could not query Transmission: {forbidden}", messages)
+        self.assertIn(f"Could not clean up old versions: {forbidden}", messages)
+        self.assertEqual(messages[-1], ARCH_FAILED_SUMMARY)
 
     def test_ratio_logging_sends_no_credentials_when_none_are_configured(self):
         self._run(FETCH_TORRENTS_DISTROS="arch")

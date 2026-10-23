@@ -24,12 +24,23 @@ class BuildRpcOverridesTests(unittest.TestCase):
     def test_no_relevant_env_vars_yields_no_overrides(self):
         self.assertEqual(ct.build_rpc_overrides({}), {})
 
-    def test_whitelist_env_var_broadens_and_keeps_whitelist_enabled(self):
+    def test_whitelist_env_var_adds_to_localhost_and_keeps_whitelist_enabled(self):
+        # The fetch script talks to the daemon from inside the container, so
+        # replacing Transmission's 127.0.0.1,::1 default would lock it out.
         overrides = ct.build_rpc_overrides({"TRANSMISSION_RPC_WHITELIST": "10.0.0.*"})
 
         self.assertEqual(
             overrides,
-            {"rpc-whitelist-enabled": True, "rpc-whitelist": "10.0.0.*"},
+            {"rpc-whitelist-enabled": True, "rpc-whitelist": "127.0.0.1,::1,10.0.0.*"},
+        )
+
+    def test_whitelist_env_var_entries_are_trimmed_and_localhost_not_repeated(self):
+        overrides = ct.build_rpc_overrides(
+            {"TRANSMISSION_RPC_WHITELIST": " 10.0.0.* , 127.0.0.1,, 192.168.1.5 "}
+        )
+
+        self.assertEqual(
+            overrides["rpc-whitelist"], "::1,10.0.0.*,127.0.0.1,192.168.1.5"
         )
 
     def test_blank_whitelist_env_var_is_ignored(self):
@@ -77,7 +88,7 @@ class BuildRpcOverridesTests(unittest.TestCase):
             overrides,
             {
                 "rpc-whitelist-enabled": True,
-                "rpc-whitelist": "*",
+                "rpc-whitelist": "127.0.0.1,::1,*",
                 "rpc-authentication-required": True,
                 "rpc-username": "alice",
                 "rpc-password": "hunter2",
@@ -355,7 +366,9 @@ class MainTests(unittest.TestCase):
             stderr,
             r"\AWARNING: TRANSMISSION_RPC_WHITELIST is set .+ authentication\.\n\Z",
         )
-        self.assertEqual(self._read_settings()["rpc-whitelist"], "10.0.0.*")
+        self.assertEqual(
+            self._read_settings()["rpc-whitelist"], "127.0.0.1,::1,10.0.0.*"
+        )
 
     def test_invalid_peer_limits_are_dropped_silently(self):
         # Pins current behavior; whether these should warn is a product call.
@@ -379,7 +392,7 @@ class MainTests(unittest.TestCase):
         self.assertIn("starting fresh", stderr)
         self.assertEqual(
             self._read_settings(),
-            {"rpc-whitelist-enabled": True, "rpc-whitelist": "10.0.0.*"},
+            {"rpc-whitelist-enabled": True, "rpc-whitelist": "127.0.0.1,::1,10.0.0.*"},
         )
 
     def test_running_the_script_calls_main(self):

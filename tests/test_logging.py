@@ -337,6 +337,52 @@ class LogSeedRatiosViaHttpTests(unittest.TestCase):
 
         self.assertIn(f"[ratio] {'a.iso':<50} → 1.500", logs.output[-3])
 
+    def test_a_login_the_daemon_requires_but_was_not_sent_says_how_to_fix_it(self):
+        # A 401 carries no session id: report the login, not a KeyError.
+        self.rpc.credentials = ("alice", "hunter2")
+
+        with self.assertRaises(ft.RpcRefusedError) as raised:
+            ft.log_seed_ratios_via_http(auth=None)
+
+        self.assertEqual(
+            str(raised.exception),
+            "Transmission requires an RPC login and none was sent. Set both "
+            "TRANSMISSION_RPC_USERNAME and TRANSMISSION_RPC_PASSWORD to the "
+            "daemon's login (rpc-username/rpc-password in settings.json), or "
+            "turn its rpc-authentication-required off.",
+        )
+
+    def test_a_rejected_login_names_the_user_but_not_the_password(self):
+        self.rpc.credentials = ("alice", "hunter2")
+
+        with self.assertRaises(ft.RpcRefusedError) as raised:
+            ft.log_seed_ratios_via_http(auth=("alice", "wrong-password"))
+
+        self.assertEqual(
+            str(raised.exception),
+            "Transmission rejected the RPC login for user 'alice'. "
+            "TRANSMISSION_RPC_USERNAME/TRANSMISSION_RPC_PASSWORD must match the "
+            "daemon's rpc-username/rpc-password in settings.json.",
+        )
+        self.assertEqual(len(self.rpc.calls), 1)
+
+    def test_a_connection_off_the_whitelist_says_localhost_is_missing(self):
+        # Transmission's rpc-whitelist replaces its localhost default, and
+        # refuses anything off it with a 403 before checking the login.
+        self.rpc.address_allowed = False
+
+        with self.assertRaises(ft.RpcRefusedError) as raised:
+            ft.log_seed_ratios_via_http(auth=None)
+
+        self.assertEqual(
+            str(raised.exception),
+            "Transmission refused this script's RPC connection from localhost "
+            "(403 Forbidden): rpc-whitelist in settings.json must include "
+            "127.0.0.1. Setting TRANSMISSION_RPC_WHITELIST adds it on the next "
+            "container start.",
+        )
+        self.assertEqual(len(self.rpc.calls), 1)
+
     def test_logs_ratios_highest_first_with_none_as_zero(self):
         self.transmission.torrents = [
             helpers.FakeTorrent("low.iso", 1, ratio=0.5),
