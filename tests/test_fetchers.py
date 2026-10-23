@@ -346,6 +346,29 @@ class DownloadTorrentAtomicWriteTests(unittest.TestCase):
         self.assertFalse(seen[0].endswith(".torrent"), seen[0])
 
 
+class DownloadTorrentAddedWatchFileTests(unittest.TestCase):
+    """transmission-daemon renames a watch file it has loaded to
+    <name>.torrent.added, so that counts as already fetched too - otherwise
+    every run downloads every torrent again."""
+
+    NAME = "ubuntu-24.04-desktop-amd64.iso"
+
+    def setUp(self):
+        self.tmp_watch_dir = helpers.use_watch_dir(self)
+
+    def test_added_watch_file_is_existing_without_any_request(self):
+        added = os.path.join(self.tmp_watch_dir, f"{self.NAME}.torrent.added")
+        with open(added, "wb") as f:
+            f.write(b"loaded by transmission")
+
+        with unittest.mock.patch.object(ft.requests, "get") as mock_get:
+            status = ft.download_torrent(self.NAME, "https://example.invalid/x.torrent")
+
+        mock_get.assert_not_called()
+        self.assertEqual(status, "existing")
+        self.assertEqual(os.listdir(self.tmp_watch_dir), [f"{self.NAME}.torrent.added"])
+
+
 class SafeWatchPathTests(unittest.TestCase):
     """_safe_watch_path() is the shared guard download_torrent(),
     _remove_watch_file(), and check_old_releases_for_demand() all rely on to

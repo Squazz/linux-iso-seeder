@@ -541,6 +541,21 @@ def _safe_watch_path(name):
     return os.path.join(watch_dir, f"{name}.torrent")
 
 
+# transmission-daemon renames a watch file to this once it has loaded it.
+ADDED_SUFFIX = ".added"
+
+
+def _watch_file_paths(dest):
+    """dest and the name transmission-daemon renames it to once loaded."""
+    return (dest, dest + ADDED_SUFFIX)
+
+
+def _watch_file_present(dest):
+    """Whether dest was already fetched: still waiting in /watch, or loaded
+    and renamed by transmission-daemon."""
+    return any(os.path.exists(path) for path in _watch_file_paths(dest))
+
+
 def _write_watch_file(dest, data):
     """Write data to dest atomically: into a dot-prefixed .part file beside
     it, then os.replace() into place. transmission-daemon watches *.torrent
@@ -566,7 +581,7 @@ def download_torrent(name, url):
         logger.error("Refusing to save torrent with unsafe name: %r", name)
         return "failed"
 
-    if os.path.exists(dest):
+    if _watch_file_present(dest):
         logger.info("Skip %s – torrent already present.", os.path.basename(dest))
         return "existing"
 
@@ -1118,7 +1133,7 @@ def check_old_releases_for_demand(
                 logger.error("Refusing to save old release with unsafe name: %r", name)
                 skipped += 1
                 continue
-            if os.path.exists(dest):
+            if _watch_file_present(dest):
                 continue
 
             if name in removed_history:
@@ -1334,12 +1349,13 @@ def _remove_watch_file(name):
     if path is None:
         logger.warning("Refusing to remove watch file with unsafe name: %r", name)
         return
-    try:
-        os.remove(path)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        logger.warning("Could not remove watch-folder file for %s: %s", name, exc)
+    for watch_path in _watch_file_paths(path):
+        try:
+            os.remove(watch_path)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            logger.warning("Could not remove watch-folder file for %s: %s", name, exc)
 
 
 def plan_cleanup(torrents, skip_ratio_check=False, min_ratio=1.0):
