@@ -1507,18 +1507,26 @@ def save_ratio_history(path, history):
 # remaining torrent keeps at most ~(window_days / interval) samples - one
 # taken every RATIO_HISTORY_SAMPLE_INTERVAL_DAYS, pruned once older than
 # window_days + the interval. That's a fixed handful of small numbers per
-# torrent forever, not one entry per run.
+# torrent forever, not one entry per run. Samples dated on or before a
+# torrent's removed_history (record_removal()) entry belong to the copy that
+# was removed: a re-added torrent starts over at Transmission's fresh ratio,
+# so judging it against them would remove it again on the spot.
 def update_ratio_history(
     history,
     current_ratios,
     today,
     sample_interval_days=RATIO_HISTORY_SAMPLE_INTERVAL_DAYS,
     window_days=30,
+    removed_history=None,
 ):
     max_age_days = window_days + sample_interval_days
+    removed_history = removed_history or {}
     updated = {}
     for name, ratio in current_ratios.items():
         samples = list(history.get(name, []))
+        if name in removed_history:
+            removed_date = removed_history[name]["removed_date"]
+            samples = [s for s in samples if s["date"] > removed_date]
         if (
             not samples
             or (today - date.fromisoformat(samples[-1]["date"])).days
@@ -1580,9 +1588,14 @@ def cleanup_stagnant_torrents(tc, *, today, window_days=30, min_ratio_delta=0.02
     torrents = tc.get_torrents()
 
     history = load_ratio_history(ratio_history_file)
+    removed_history = load_removed_history(removed_history_file)
     current_ratios = {t.name: float(getattr(t, "ratio", 0.0) or 0.0) for t in torrents}
     history = update_ratio_history(
-        history, current_ratios, today, window_days=window_days
+        history,
+        current_ratios,
+        today,
+        window_days=window_days,
+        removed_history=removed_history,
     )
 
     to_remove, to_keep = plan_stagnation_cleanup(
@@ -1603,7 +1616,6 @@ def cleanup_stagnant_torrents(tc, *, today, window_days=30, min_ratio_delta=0.02
                 delta,
                 window_days,
             )
-    removed_history = load_removed_history(removed_history_file)
     for torrent in to_remove:
         logger.info(
             "Removing stagnant torrent: %s (no meaningful ratio growth in %d days)",

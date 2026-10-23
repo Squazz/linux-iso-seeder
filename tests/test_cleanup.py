@@ -416,6 +416,38 @@ class UpdateRatioHistoryTests(unittest.TestCase):
             updated["a.iso"], [{"date": self._days_ago(today, 6), "ratio": 1.0}]
         )
 
+    def test_samples_from_before_a_removal_are_forgotten(self):
+        # Cleanup removed a.iso two days ago and it's back (re-added), with
+        # Transmission's ratio starting over. The earlier copy's samples must
+        # not survive to be its stagnation anchor.
+        today = date(2026, 8, 29)
+        history = {
+            "a.iso": [
+                {"date": self._days_ago(today, 33), "ratio": 0.8},
+                {"date": self._days_ago(today, 5), "ratio": 0.9},
+            ]
+        }
+        removed = {"a.iso": {"removed_date": self._days_ago(today, 2)}}
+
+        updated = ft.update_ratio_history(
+            history, {"a.iso": 0.0}, today, removed_history=removed
+        )
+
+        self.assertEqual(updated["a.iso"], [{"date": today.isoformat(), "ratio": 0.0}])
+
+    def test_samples_taken_after_a_removal_are_kept(self):
+        today = date(2026, 8, 29)
+        history = {"a.iso": [{"date": self._days_ago(today, 3), "ratio": 0.4}]}
+        removed = {"a.iso": {"removed_date": self._days_ago(today, 20)}}
+
+        updated = ft.update_ratio_history(
+            history, {"a.iso": 0.5}, today, removed_history=removed
+        )
+
+        self.assertEqual(
+            updated["a.iso"], [{"date": self._days_ago(today, 3), "ratio": 0.4}]
+        )
+
     def test_prune_horizon_defaults_to_window_plus_interval(self):
         # Defaults: window 30 + interval 7 = 37 days. A sample exactly 37
         # days old is kept; 38 days old is pruned.
@@ -902,6 +934,64 @@ class CleanupRemovesWatchFileTests(unittest.TestCase):
         self.assertEqual(
             ft.load_ratio_history(ft.ratio_history_file),
             {"ubuntu-24.04-desktop-amd64.iso": [{"date": "2026-08-01", "ratio": 0.0}]},
+        )
+
+    def test_daily_runs_only_add_a_sample_every_seven_days(self):
+        # Eight consecutive daily runs, ratio growing every day: the saved
+        # history only gains a sample on the first and the eighth.
+        start = date(2026, 8, 1)
+        for day in range(8):
+            transmission = helpers.FakeTransmission(
+                [
+                    helpers.FakeTorrent(
+                        "ubuntu-24.04-desktop-amd64.iso", 1, ratio=1.0 + day
+                    )
+                ]
+            )
+            ft.cleanup_stagnant_torrents(
+                transmission, today=start + timedelta(days=day)
+            )
+
+        self.assertEqual(
+            ft.load_ratio_history(ft.ratio_history_file),
+            {
+                "ubuntu-24.04-desktop-amd64.iso": [
+                    {"date": "2026-08-01", "ratio": 1.0},
+                    {"date": "2026-08-08", "ratio": 8.0},
+                ]
+            },
+        )
+
+    def test_re_added_torrent_is_not_judged_by_its_removed_copys_history(self):
+        # 23.10 was removed yesterday and re-added (e.g. by the old-release
+        # check with FETCH_TORRENTS_OLD_RELEASE_SKIP_REMOVED=false), so
+        # Transmission reports a fresh 0.0. The 32-day-old 0.8 sample belongs
+        # to the removed copy; judging against it would remove the torrent
+        # again in the run that just downloaded it.
+        today = date(2026, 8, 1)
+        name = "ubuntu-23.10-desktop-amd64.iso"
+        self._write_ratio_history(
+            {name: [{"date": (today - timedelta(days=32)).isoformat(), "ratio": 0.8}]}
+        )
+        ft.save_removed_history(
+            ft.removed_history_file,
+            ft.record_removal({}, name, today - timedelta(days=1), "stagnant", 0.8),
+        )
+        transmission = helpers.FakeTransmission(
+            [
+                helpers.FakeTorrent("ubuntu-24.04-desktop-amd64.iso", 1, ratio=2.0),
+                helpers.FakeTorrent(name, 2, ratio=0.0),
+            ]
+        )
+
+        with self.assertLogs(ft.logger, level="INFO") as logs:
+            ft.cleanup_stagnant_torrents(transmission, today=today)
+
+        self.assertEqual(transmission.removals, [])
+        self.assertIn(
+            f"Keeping old version {name} – not enough ratio history yet "
+            "(need 30 days).",
+            [r.getMessage() for r in logs.records],
         )
 
     def test_cleanup_stagnant_torrents_records_todays_sample(self):
